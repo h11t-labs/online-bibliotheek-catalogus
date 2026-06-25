@@ -262,8 +262,7 @@ def bulk_load(conn: sqlite3.Connection, records: Iterable[dict[str, Any]],
     distinct = sorted({s for _, s in pairs})
     cur.executemany("INSERT OR IGNORE INTO genres(name) VALUES (?)",
                     [(n,) for n in distinct])
-    gid = {name: i for i, name in
-           ((row["name"], row["id"]) for row in cur.execute("SELECT id, name FROM genres"))}
+    gid = {row["name"]: row["id"] for row in cur.execute("SELECT id, name FROM genres")}
     cur.executemany("INSERT OR IGNORE INTO book_genres(book_ppn, genre_id) VALUES (?, ?)",
                     [(ppn, gid[s]) for ppn, s in pairs if s in gid])
 

@@ -17,8 +17,8 @@ from pathlib import Path
 
 from . import db
 from .log import logger
-from .textnorm import (canonical_publisher, detect_series, fold, match_key,
-                       publisher_key, split_authors)
+from .textnorm import (canonical_author, canonical_publisher, detect_series, fold,
+                       match_key, publisher_key, split_authors, valid_language)
 
 RAW_DIR = Path("data/raw")
 RECORDS_DIR = RAW_DIR / "records"
@@ -82,7 +82,13 @@ def load_records(raw_dir: Path = RAW_DIR) -> list[dict]:
             continue
         if have_ereader and r.get("format") == "ebook":
             r["ereader"] = 1 if ppn in ereader else 0
-        r["authors"] = split_authors(r.get("author"))
+        # drop non-language junk in the taal field
+        r["language"] = valid_language(r.get("language"))
+        # split + canonicalise authors (merge known aliases like Bernlef/J. Bernlef)
+        authors = [canonical_author(a) for a in split_authors(r.get("author"))]
+        r["authors"] = list(dict.fromkeys(a for a in authors if a))
+        if r["authors"]:
+            r["author"] = ", ".join(r["authors"])
         # merge facet-derived genres with any detail-page subjects
         if ppn in genres_map:
             r["subjects"] = list(dict.fromkeys((r.get("subjects") or []) + genres_map[ppn]))

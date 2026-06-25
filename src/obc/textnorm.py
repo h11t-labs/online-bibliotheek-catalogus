@@ -64,6 +64,46 @@ def fold(value: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
 
+# Author aliases: fold(variant) -> canonical display name. The catalog sometimes
+# lists the same person under shortened/variant names; collapse them here. Extend
+# as you spot more (left side is the folded form of any spelling that should map).
+AUTHOR_ALIASES: dict[str, str] = {
+    "bernlef": "J. Bernlef",
+}
+
+
+def canonical_author(name: str | None) -> str | None:
+    if not name:
+        return name
+    return AUTHOR_ALIASES.get(fold(name), name)
+
+
+# The `taal` field is occasionally polluted with non-language strings ("Fictie",
+# "Verzameld werk", stray sentence fragments). Languages are a closed vocabulary,
+# so we keep only known names; anything else becomes NULL (excluded from facets).
+_VALID_LANG_NAMES = [
+    "Nederlands", "Engels", "Duits", "Frans", "Spaans", "Italiaans", "Portugees",
+    "Latijn", "Grieks", "Nieuwgrieks", "Russisch", "Pools", "Tsjechisch",
+    "Slowaaks", "Hongaars", "Roemeens", "Bulgaars", "Servisch", "Kroatisch",
+    "Bosnisch", "Sloveens", "Oekraïens", "Wit-Russisch", "Macedonisch", "Albanees",
+    "Zweeds", "Noors", "Deens", "Fins", "IJslands", "Ests", "Lets", "Litouws",
+    "Turks", "Arabisch", "Hebreeuws", "Jiddisch", "Perzisch", "Koerdisch",
+    "Chinees", "Japans", "Koreaans", "Hindi", "Urdu", "Bengaals", "Indonesisch",
+    "Maleis", "Thais", "Vietnamees", "Afrikaans", "Swahili", "Armeens",
+    "Georgisch", "Catalaans", "Galicisch", "Baskisch", "Iers", "Schots", "Welsh",
+    "Bretons", "Papiaments", "Fries", "Westerlauwers Fries", "Limburgs",
+    "Esperanto", "Sanskriet", "meerdere talen",
+]
+VALID_LANGUAGES = {fold(n) for n in _VALID_LANG_NAMES}
+
+
+def valid_language(name: str | None) -> str | None:
+    """Return the language if it's a known language name, else None."""
+    if name and fold(name) in VALID_LANGUAGES:
+        return name
+    return None
+
+
 def match_key(title: str | None, author: str | None) -> str:
     """Catalog-match key from title + first author surname token."""
     a = fold(author).split()

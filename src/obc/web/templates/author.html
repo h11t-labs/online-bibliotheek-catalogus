@@ -2,12 +2,24 @@
 {% from "_macros.html" import fmt_icons %}
 {% block title %}{{ name }} · Bibliotheek{% endblock %}
 {% block style %}
-  .bio{display:flex;gap:18px;align-items:flex-start;background:var(--card);border:1px solid var(--line);
-    border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);margin:0 0 26px}
-  .bio img{width:96px;height:96px;border-radius:12px;object-fit:cover;flex:none}
-  .bio .x{font-size:14.5px;line-height:1.6;color:var(--ink-soft)}
-  .bio .x a{color:var(--accent);text-decoration:underline dotted}
-  @media(max-width:560px){.bio img{width:64px;height:64px}}
+  .authorcard{display:flex;gap:22px;align-items:flex-start;background:var(--card);
+    border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:var(--radius);
+    padding:24px 26px;box-shadow:var(--shadow);margin:0 0 30px}
+  .authorcard .photo{width:120px;height:120px;border-radius:14px;object-fit:cover;flex:none;
+    box-shadow:var(--shadow)}
+  .authorcard .body{min-width:0}
+  .authorcard .eyebrow{font-size:12px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;
+    color:var(--accent);margin-bottom:7px}
+  .authorcard .x{font-size:15px;line-height:1.65;color:var(--ink-soft);margin:0}
+  .authorcard .x a{color:var(--accent);text-decoration:underline dotted}
+  .awards{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+  .awards .ttl{width:100%;font-size:12px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
+    color:var(--ink-soft);margin-bottom:2px}
+  .awards a{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;
+    padding:6px 12px;border-radius:999px;background:color-mix(in srgb,var(--accent) 16%,transparent);
+    color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent)}
+  .awards a:hover{background:color-mix(in srgb,var(--accent) 26%,transparent);text-decoration:none}
+  @media(max-width:560px){.authorcard{flex-direction:column;gap:16px}.authorcard .photo{width:88px;height:88px}}
 {% endblock %}
 {% block body %}
 <main>
@@ -17,10 +29,23 @@
     <div class="sub">{{ total }} {{ 'titel' if total==1 else 'titels' }} in de bibliotheek
       · <a class="flink" style="text-decoration:underline dotted" href="/?author={{ name|urlencode }}">filter in zoeken ›</a></div>
   </div>
-  {% if bio %}
-  <div class="bio">
-    {% if bio.thumb %}<img src="{{ bio.thumb }}" alt="{{ name }}">{% endif %}
-    <div class="x">{{ bio.extract }}{% if bio.url %} <a href="{{ bio.url }}" target="_blank" rel="noopener">meer op Wikipedia ↗</a>{% endif %}</div>
+  {% if bio or author_lists %}
+  <div class="authorcard">
+    {% if bio and bio.thumb %}<img class="photo" src="{{ bio.thumb }}" alt="{{ name }}">{% endif %}
+    <div class="body">
+      {% if bio %}
+      <div class="eyebrow">Over de auteur</div>
+      <p class="x">{{ bio.extract }}{% if bio.url %} <a href="{{ bio.url }}" target="_blank" rel="noopener">meer op Wikipedia ↗</a>{% endif %}</p>
+      {% endif %}
+      {% if author_lists %}
+      <div class="awards">
+        <span class="ttl">Op lijsten &amp; prijzen</span>
+        {% for l in author_lists %}
+        <a href="/list/{{ l.slug }}"><svg width="13" height="13"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% endif %}</a>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
   </div>
   {% endif %}
   <div class="grid">
