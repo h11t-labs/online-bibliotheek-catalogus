@@ -14,3 +14,5 @@ data/*.db-wal
 data/*.db-shm
 data/checkpoint.json
 .env
+
+data/*.log
