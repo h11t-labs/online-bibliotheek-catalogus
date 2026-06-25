@@ -1,9 +1,34 @@
-# Deploying to Railway
+# Deploying
 
-The app is a single FastAPI web service backed by a SQLite file. On Railway we run
-it from the `Dockerfile`, keep the database on a **persistent volume**, and let the
-service refresh itself on a schedule (Railway volumes attach to one service, so the
-"cron" runs inside the web service — see below).
+The app is a single FastAPI web service backed by a SQLite file, run from the
+`Dockerfile`, with the database on a **persistent disk/volume**. Scheduled refresh
+runs in-process (`OBC_SYNC_HOURS` / `OBC_LISTS_HOURS`) because the disk attaches to
+a single service.
+
+## Render (current target, EU/Frankfurt) — `render.yaml`
+
+Render builds the Dockerfile straight from the **private** GitHub repo (via the
+Render GitHub App), so there's no image registry/token to manage.
+
+1. **Render → New → Blueprint** → connect this repo. Render reads `render.yaml`
+   (web service, Frankfurt, persistent disk at `/app/data`, health check `/healthz`).
+2. Pick a paid instance (**Starter**+) — persistent disks aren't on the free tier.
+3. Set the `NYT_API_KEY` env var in the dashboard (optional, for NYT lists).
+4. First deploy: the site shows a friendly "wordt opgebouwd" page until the DB is on
+   the disk. Populate it by SSHing into the service (Render → service → **Shell**)
+   and running `uv run obc scrape --full && uv run obc lists update && uv run obc
+   normalize`, **or** upload a locally built `data/catalog.db` to `/app/data` via the
+   Render shell.
+
+`autoDeploy: true` ships on every push to `main`. The `/healthz` endpoint stays 200
+even before the DB exists, so health checks pass.
+
+---
+
+# Railway (alternative)
+
+On Railway we run from the `Dockerfile`, keep the database on a **persistent volume**,
+and the "cron" runs inside the web service (Railway volumes attach to one service).
 
 ## Scripted setup (Railway CLI)
 
