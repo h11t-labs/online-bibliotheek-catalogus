@@ -53,10 +53,12 @@ bump, update the Railway image tag once (e.g. `:0.2` → `:0.3`).
      Settings → Tokens). The `infra`/`deploy` jobs skip cleanly until this exists,
      so releases stay green before Railway is set up.
    - secret **`NYT_API_KEY`** — optional, enables the NYT bestseller lists.
+4. **GitHub variable** **`RAILWAY_PROJECT_ID`** — the project id (`railway status`
+   or the dashboard URL). The CLI links by id non-interactively (linking by name
+   is unreliable in CI). The service name is hardcoded to `web`.
 
-The service name is hardcoded to `web` (matches `railway-setup.sh`); no variable
-needed. After the token is set, every **version tag** ships automatically (build →
-infra → deploy). Plain pushes to `main` only test + build.
+After the token + project id are set, every **version tag** ships automatically
+(build → infra → deploy). Plain pushes to `main` only test + build.
 
 ## Manual alternative — let Railway build from the repo
 
