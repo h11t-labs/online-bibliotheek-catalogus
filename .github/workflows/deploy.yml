@@ -75,9 +75,27 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md --verify-tag
 
-  deploy:
+  infra:
     needs: build
-    # Deploy only tagged versions, once the Railway service name is configured.
+    # Converge Railway infra on tagged versions, once the service name is configured.
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && vars.RAILWAY_SERVICE != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+      - name: Converge Railway infra (idempotent)
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          SERVICE_NAME: ${{ vars.RAILWAY_SERVICE }}
+          NYT_API_KEY: ${{ secrets.NYT_API_KEY }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          export IMAGE="ghcr.io/${{ github.repository }}:${VERSION%.*}"  # minor tag
+          ./infrastructure/railway-setup.sh
+
+  deploy:
+    needs: infra
     if: ${{ startsWith(github.ref, 'refs/tags/v') && vars.RAILWAY_SERVICE != '' }}
     runs-on: ubuntu-latest
     steps:
