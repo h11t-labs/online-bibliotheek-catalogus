@@ -1,0 +1,6 @@
+{% macro fmt_icons(formats) -%}
+<div class="fmt-icons">
+  {% if 'ebook' in formats %}<span class="fmt-ic book" title="E-book"><svg width="15" height="15"><use href="#ic-book"/></svg></span>{% endif %}
+  {% if 'audiobook' in formats %}<span class="fmt-ic audio" title="Luisterboek"><svg width="15" height="15"><use href="#ic-audio"/></svg></span>{% endif %}
+</div>
+{%- endmacro %}

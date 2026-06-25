@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Statistiek · Bibliotheek{% endblock %}
+{% block style %}
+  main{max-width:1000px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:0 0 32px}
+  .stat-card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:16px 18px;box-shadow:var(--shadow)}
+  .stat-card .v{font-family:var(--serif);font-size:26px;color:var(--accent)}
+  .stat-card .k{font-size:13px;color:var(--ink-soft);margin-top:2px}
+  .panel{margin:0 0 34px}
+  .panel h2{font-family:var(--serif);font-size:20px;margin:0 0 14px}
+  .bars{display:flex;flex-direction:column;gap:7px}
+  .bar{display:grid;grid-template-columns:150px 1fr 56px;align-items:center;gap:10px;font-size:13.5px}
+  .bar .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-soft)}
+  .bar .track{background:var(--bg-soft);border-radius:6px;height:18px;overflow:hidden;border:1px solid var(--line)}
+  .bar .fill{height:100%;background:var(--accent);border-radius:6px 0 0 6px}
+  .bar .num{text-align:right;font-variant-numeric:tabular-nums;color:var(--ink-soft)}
+  .yearchart{display:flex;align-items:flex-end;gap:3px;height:160px;border-bottom:1px solid var(--line);padding-top:8px}
+  .yearchart .yb{flex:1;background:var(--accent);border-radius:3px 3px 0 0;min-height:2px;position:relative}
+  .yearchart .yb:hover{filter:brightness(1.1)}
+  .yearlabels{display:flex;gap:3px;margin-top:6px;font-size:10.5px;color:var(--ink-soft)}
+  .yearlabels span{flex:1;text-align:center}
+  @media (max-width:640px){ .bar{grid-template-columns:110px 1fr 44px} }
+{% endblock %}
+{% block body %}
+<main>
+  <div class="pagehead"><h1>Statistiek</h1>
+    <div class="sub">Samenstelling van de catalogus.</div></div>
+
+  {% macro fmt(n) %}{{ "{:,}".format(n).replace(",", ".") }}{% endmacro %}
+  <div class="cards">
+    <div class="stat-card"><div class="v">{{ fmt(s.total) }}</div><div class="k">titels totaal</div></div>
+    <div class="stat-card"><div class="v">{{ fmt(s.ebooks) }}</div><div class="k">e-books</div></div>
+    <div class="stat-card"><div class="v">{{ fmt(s.audiobooks) }}</div><div class="k">luisterboeken</div></div>
+    <div class="stat-card"><div class="v">{{ fmt(s.ereader) }}</div><div class="k">voor e-reader</div></div>
+    <div class="stat-card"><div class="v">{{ fmt(s.authors) }}</div><div class="k">auteurs</div></div>
+    <div class="stat-card"><div class="v">{{ fmt(s.publishers) }}</div><div class="k">uitgevers</div></div>
+    <div class="stat-card"><div class="v">{{ fmt(s.lists) }}</div><div class="k">lijsten</div></div>
+  </div>
+
+  {% if s.years %}
+  {% set ymax = (s.years|map(attribute=1)|list|max) or 1 %}
+  <div class="panel">
+    <h2>Titels per jaar (vanaf 2000)</h2>
+    <div class="yearchart">
+      {% for y in s.years %}<div class="yb" style="height:{{ (y[1]*100//ymax) }}%" title="{{ y[0] }}: {{ y[1] }}"></div>{% endfor %}
+    </div>
+    <div class="yearlabels">
+      {% for y in s.years %}<span>{{ y[0] if loop.index0 % 3 == 0 else '' }}</span>{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% macro barlist(title, items, link=None) %}
+  {% set m = (items|map(attribute=1)|list|max) or 1 %}
+  <div class="panel"><h2>{{ title }}</h2><div class="bars">
+    {% for it in items %}
+    <div class="bar">
+      <span class="lbl">{% if link %}<a class="flink" style="text-decoration:underline dotted" href="{{ link }}{{ it[0]|urlencode }}">{{ it[0] }}</a>{% else %}{{ it[0] }}{% endif %}</span>
+      <div class="track"><div class="fill" style="width:{{ (it[1]*100//m) }}%"></div></div>
+      <span class="num">{{ "{:,}".format(it[1]).replace(",", ".") }}</span>
+    </div>
+    {% endfor %}
+  </div></div>
+  {% endmacro %}
+
+  {{ barlist('Genres', s.genres, '/?genre=') }}
+  {{ barlist('Talen', s.languages, '/?language=') }}
+  {{ barlist('Topauteurs', s.top_authors, '/author/') }}
+  {{ barlist('Topuitgevers', s.top_publishers, '/?publisher=') }}
+</main>
+{% endblock %}

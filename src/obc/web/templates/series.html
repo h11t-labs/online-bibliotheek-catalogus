@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "_macros.html" import fmt_icons %}
+{% block title %}{{ name }} · Reeks · Bibliotheek{% endblock %}
+{% block style %}
+  .book .cover .sno{position:absolute;right:8px;top:8px;z-index:2;min-width:24px;height:24px;
+    padding:0 6px;display:grid;place-items:center;border-radius:7px;background:var(--accent);
+    color:var(--accent-ink);font-weight:800;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+{% endblock %}
+{% block body %}
+<main>
+  <div class="pagehead">
+    <div class="crumb"><a href="javascript:history.back()">‹ Terug</a></div>
+    <h1>{{ name }}</h1>
+    <div class="sub">Reeks · {{ total }} {{ 'deel' if total==1 else 'delen' }} in de bibliotheek</div>
+  </div>
+  <div class="grid">
+    {% for b in books %}
+    <a class="book" href="/book/{{ b['ppn'] }}">
+      <div class="cover">
+        {{ fmt_icons(formats_map.get(b['ppn'], [b['format']])) }}
+        {% if b['series_no'] %}<span class="sno">{{ b['series_no'] }}</span>{% endif %}
+        <img loading="lazy" src="{{ b['cover_url']|coverw(400) }}" alt="">
+      </div>
+      <span class="t">{{ b['title'] or '—' }}</span>
+      <span class="a">{{ b['author'] or '' }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</main>
+{% endblock %}

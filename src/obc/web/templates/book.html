@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}{{ b['title'] }} — {{ b['author'] }} · Bibliotheek{% endblock %}
+{% block style %}
+  .back{display:inline-flex;align-items:center;gap:6px;color:var(--ink-soft);font-size:14px;margin-bottom:22px}
+  .back:hover{color:var(--accent)}
+  .detail{display:grid;grid-template-columns:300px 1fr;gap:48px;align-items:start}
+  .poster{position:sticky;top:90px}
+  .poster .cover{position:relative;aspect-ratio:2/3;border-radius:16px;overflow:hidden;
+    box-shadow:var(--shadow);border:1px solid var(--line);
+    background:linear-gradient(145deg,var(--line),var(--bg-soft))}
+  .editions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+  .linkbadge{cursor:pointer;border:1px dashed currentColor;background:transparent}
+  .linkbadge:hover{background:var(--accent-soft)}
+  .listbadge{background:var(--accent);color:var(--accent-ink)}
+  .listbadge:hover{filter:brightness(1.07)}
+  /* clickable filter links: dotted underline affordance */
+  .flink{color:inherit;text-decoration:underline dotted;text-decoration-color:var(--accent);
+    text-underline-offset:3px;text-decoration-thickness:1.5px;cursor:pointer}
+  .flink:hover{color:var(--accent);text-decoration-style:solid}
+  .info .author .flink{color:var(--ink-soft)}
+  .info .author .flink:hover{color:var(--accent)}
+  .poster .cover img{width:100%;height:100%;object-fit:cover}
+  .poster .btn{width:100%;justify-content:center;margin-top:18px}
+  .info h1{font-family:var(--serif);font-size:clamp(26px,4vw,38px);line-height:1.1;margin:6px 0 8px;letter-spacing:-.4px}
+  .info .author{font-size:18px;color:var(--ink-soft);margin:0 0 16px}
+  .info .author a:hover{color:var(--accent)}
+  .summary{font-size:16px;line-height:1.7;max-width:62ch;margin:20px 0 26px}
+  .genres{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 28px}
+  .meta{border-top:1px solid var(--line);max-width:620px}
+  .meta .r{display:grid;grid-template-columns:170px 1fr;gap:16px;padding:11px 0;border-bottom:1px solid var(--line)}
+  .meta .k{color:var(--ink-soft);font-size:14px}
+  .meta .v{font-size:15px}
+  @media (max-width:720px){ .detail{grid-template-columns:1fr;gap:26px}
+    .poster{position:static;max-width:230px} .meta .r{grid-template-columns:130px 1fr} }
+{% endblock %}
+{% block body %}
+<main>
+  <a class="back" href="javascript:history.back()">‹ Terug</a>
+  <article class="detail">
+    <div class="poster">
+      <div class="cover">
+        <div class="fmt-icons">
+          {% if 'ebook' in editions %}<span class="fmt-ic book" title="E-book"><svg width="15" height="15"><use href="#ic-book"/></svg></span>{% endif %}
+          {% if 'audiobook' in editions %}<span class="fmt-ic audio" title="Luisterboek"><svg width="15" height="15"><use href="#ic-audio"/></svg></span>{% endif %}
+        </div>
+        <img src="{{ b['cover_url']|coverw(600) }}" alt="Omslag van {{ b['title'] }}">
+      </div>
+      {% if b['url'] %}<a class="btn" href="{{ b['url'] }}" target="_blank" rel="noopener">Lenen op onlinebibliotheek.nl ↗</a>{% endif %}
+    </div>
+    <div class="info">
+      <div class="editions">
+        {% for fmt in ['ebook','audiobook'] if fmt in editions %}
+          {% if editions[fmt] == b['ppn'] %}
+          <span class="badge {{ 'audio' if fmt=='audiobook' }}">{{ 'Luisterboek' if fmt=='audiobook' else 'E-book' }}</span>
+          {% else %}
+          <a class="badge linkbadge {{ 'audio' if fmt=='audiobook' }}" href="/book/{{ editions[fmt] }}">Ook als {{ 'luisterboek' if fmt=='audiobook' else 'e-book' }} →</a>
+          {% endif %}
+        {% endfor %}
+      </div>
+      <h1>{{ b['title'] or '—' }}</h1>
+      {% if authors %}<p class="author">door
+        {% for a in authors %}<a class="flink" href="/author/{{ a|urlencode }}">{{ a }}</a>{{ ', ' if not loop.last }}{% endfor %}
+      </p>{% elif b['author'] %}<p class="author">door {{ b['author'] }}</p>{% endif %}
+
+      {% if b['series'] %}
+      <div class="editions">
+        <a class="badge listbadge" href="/series/{{ b['series']|urlencode }}"><svg width="12" height="12" style="vertical-align:-2px"><use href="#ic-list"/></svg> {% if b['series_no'] %}Deel {{ b['series_no'] }} · {% endif %}{{ b['series'] }}</a>
+      </div>
+      {% endif %}
+
+      {% if book_lists %}
+      <div class="editions">
+        {% for l in book_lists %}<a class="badge listbadge" href="/?list={{ l.slug }}"><svg width="12" height="12" style="vertical-align:-2px"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% elif l.position %} #{{ l.position }}{% endif %}</a>{% endfor %}
+      </div>
+      {% endif %}
+
+      {% if genres %}
+      <div class="genres">
+        {% for g in genres %}<a class="chip" href="/?genre={{ g|urlencode }}">{{ g }}</a>{% endfor %}
+      </div>
+      {% endif %}
+
+      {% if b['summary'] %}<p class="summary">{{ b['summary'] }}</p>{% endif %}
+
+      <div class="meta">
+        {% macro r(label, val) %}{% if val %}<div class="r"><div class="k">{{ label }}</div><div class="v">{{ val }}</div></div>{% endif %}{% endmacro %}
+        {% macro rlink(label, val, param) %}{% if val %}<div class="r"><div class="k">{{ label }}</div><div class="v"><a class="flink" href="/?{{ param }}={{ val|urlencode }}">{{ val }}</a></div></div>{% endif %}{% endmacro %}
+        {{ rlink('Taal', b['language'], 'language') }}
+        {{ r('Verschenen', b['year']) }}
+        {{ rlink('Uitgever', b['publisher'], 'publisher') }}
+        {{ r('ISBN', b['isbn']) }}
+        {{ r("Aantal pagina's", b['pages']) }}
+        {{ r('Speelduur', b['duration']) }}
+        {{ r('Verteller', b['narrator']) }}
+        {{ r('Omvang', b['size']) }}
+        {{ r('Bestandstype', b['features']) }}
+        {% if b['format']=='ebook' and b['ereader'] is not none %}{{ r('Voor e-reader', 'Ja' if b['ereader'] else 'Nee (alleen in de app)') }}{% endif %}
+        {{ r('Doelgroep', b['audience']) }}
+        {{ r('Ook beschikbaar als', b['also_available_as']) }}
+      </div>
+    </div>
+  </article>
+</main>
+{% endblock %}
