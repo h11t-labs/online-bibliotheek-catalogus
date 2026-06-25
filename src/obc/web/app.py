@@ -409,9 +409,18 @@ def author_page(request: Request, name: str):
     formats_map = _formats_map(conn, rows)
     lists_map = _lists_map(conn, rows)
     conn.close()
+    # distinct lists/awards across this author's books (newest year first)
+    seen, author_lists = set(), []
+    for entries in lists_map.values():
+        for e in entries:
+            if e["slug"] not in seen:
+                seen.add(e["slug"])
+                author_lists.append(e)
+    author_lists.sort(key=lambda e: -(e.get("year") or 0))
     return _templates.TemplateResponse(request, "author.html", {
         "name": name, "books": rows, "total": len(rows),
-        "formats_map": formats_map, "lists_map": lists_map, "bio": _author_bio(name)})
+        "formats_map": formats_map, "lists_map": lists_map,
+        "author_lists": author_lists, "bio": _author_bio(name)})
 
 
 _LIST_SORTS = {

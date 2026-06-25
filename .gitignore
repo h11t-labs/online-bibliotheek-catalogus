@@ -16,3 +16,6 @@ data/checkpoint.json
 .env
 
 data/*.log
+
+# macOS
+.DS_Store
