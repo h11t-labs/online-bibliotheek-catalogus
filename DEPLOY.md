@@ -5,11 +5,42 @@ it from the `Dockerfile`, keep the database on a **persistent volume**, and let 
 service refresh itself on a schedule (Railway volumes attach to one service, so the
 "cron" runs inside the web service — see below).
 
-## 1. Create the service
+## CI/CD: build in GitHub Actions, deploy to Railway
+
+`.github/workflows/deploy.yml` runs on every push to `main`:
+
+1. **test** — `uv sync` + `uv run pytest`.
+2. **build** — builds the Docker image and pushes it to **GHCR**
+   (`ghcr.io/<owner>/online-bibliotheek-catalogus:latest` and `:sha-…`).
+3. **deploy** — runs `railway redeploy`, so Railway pulls the freshly built image.
+
+### One-time setup
+
+1. **Railway service from the image.** Create the service with source =
+   **Docker image** → `ghcr.io/mymix/online-bibliotheek-catalogus:latest`
+   (Railway → New → Docker Image). Add the volume + env vars as below.
+2. **Let Railway pull the image.** The repo is private, so the GHCR package is
+   private too. Either:
+   - make the package public (Repo → Packages → the image → *Package settings →
+     Change visibility*), since the image bakes in no secrets; **or**
+   - in the Railway service add registry credentials: variables
+     `ghcr.io` username `<github-user>` + a PAT with `read:packages`.
+3. **GitHub secrets/variables** (Repo → Settings → Secrets and variables → Actions):
+   - secret **`RAILWAY_TOKEN`** — a Railway *project* token (Railway → project →
+     Settings → Tokens).
+   - variable **`RAILWAY_SERVICE`** — the exact Railway service name. The `deploy`
+     job is skipped until this variable exists, so earlier pushes still build fine.
+
+After that, every push to `main` ships automatically. You can also trigger it from
+the Actions tab (**Run workflow**).
+
+## Manual alternative — let Railway build from the repo
+
+If you'd rather not use GHCR, skip the workflow and instead:
 
 1. Push this repo to GitHub (private is fine).
 2. Railway → **New Project → Deploy from GitHub repo** → pick this repo.
-   Railway detects `railway.json` / `Dockerfile` and builds the image.
+   Railway detects `railway.json` / `Dockerfile` and builds the image itself.
 
 ## 2. Add a volume (persistent SQLite)
 
