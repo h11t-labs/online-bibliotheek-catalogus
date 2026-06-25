@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}{{ lst['name'] }} · Bibliotheek{% endblock %}
+{% block style %}
+  .lh{margin:6px 0 22px}
+  .lh .crumb{color:var(--ink-soft);font-size:14px}
+  .lh .crumb a:hover{color:var(--accent)}
+  .lh h1{font-family:var(--serif);font-size:clamp(26px,4vw,40px);margin:6px 0 8px}
+  .lh p{color:var(--ink-soft);margin:0 0 8px;max-width:62ch}
+  .lh .stat b{color:var(--accent)}
+  .lh .src{font-size:13px}
+  .avail-filter{max-width:520px;margin-top:14px}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:24px 18px}
+  .item{display:flex;flex-direction:column;gap:9px;position:relative}
+  .item.avail{transition:transform .16s ease}
+  .item.avail:hover{transform:translateY(-4px)}
+  .item.gone{opacity:.42;filter:grayscale(.3)}
+  .cover{position:relative;aspect-ratio:2/3;border-radius:11px;overflow:hidden;
+    background:linear-gradient(145deg,var(--line),var(--bg-soft));box-shadow:var(--shadow);
+    border:1px solid var(--line)}
+  .cover img{width:100%;height:100%;object-fit:cover}
+  .rank{position:absolute;left:8px;top:8px;z-index:2;min-width:26px;height:26px;padding:0 7px;
+    display:grid;place-items:center;border-radius:8px;background:var(--accent);color:var(--accent-ink);
+    font-weight:800;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+  .rank.yr{font-size:12px;letter-spacing:.2px}
+  .tag{position:absolute;left:0;right:0;bottom:0;z-index:2;text-align:center;font-size:11px;
+    font-weight:700;padding:5px;background:rgba(20,15,10,.72);color:#fff}
+  .t{font-family:var(--serif);font-size:15px;line-height:1.25;display:-webkit-box;
+    -webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .a{font-size:12.5px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+{% endblock %}
+{% block body %}
+<main>
+  <div class="lh">
+    <div class="crumb"><a href="/lists">‹ Lijsten</a></div>
+    <h1>{{ lst['name'] }}</h1>
+    {% if lst['description'] %}<p>{{ lst['description'] }}</p>{% endif %}
+    <div class="stat"><b>{{ available }}</b> van {{ total }} titels beschikbaar in de bibliotheek</div>
+    {% if lst['url'] %}<div class="src"><a class="flink" href="{{ lst['url'] }}" target="_blank" rel="noopener" style="text-decoration:underline dotted">bron: {{ lst['url'] }} ↗</a></div>{% endif %}
+    <div class="seg avail-filter">
+      <a class="seg-opt {{ 'on' if not show }}" href="/list/{{ lst['slug'] }}">Alles ({{ total }})</a>
+      <a class="seg-opt {{ 'on' if show=='available' }}" href="/list/{{ lst['slug'] }}?show=available">Beschikbaar ({{ available }})</a>
+      <a class="seg-opt {{ 'on' if show=='unavailable' }}" href="/list/{{ lst['slug'] }}?show=unavailable">Niet beschikbaar ({{ total - available }})</a>
+    </div>
+  </div>
+
+  <div class="grid">
+    {% for it in items %}
+    {% if it['ppn'] %}
+    <a class="item avail" href="/book/{{ it['ppn'] }}">
+      <div class="cover">
+        {% if it['year'] %}<span class="rank yr">{{ it['year'] }}</span>{% elif it['position'] %}<span class="rank">{{ it['position'] }}</span>{% endif %}
+        <span class="fmt-icons">
+          {% if it['bformat']=='audiobook' %}<span class="fmt-ic audio"><svg width="15" height="15"><use href="#ic-audio"/></svg></span>
+          {% else %}<span class="fmt-ic book"><svg width="15" height="15"><use href="#ic-book"/></svg></span>{% endif %}
+        </span>
+        <img loading="lazy" src="{{ (it['bcover'] or it['cover_url'])|coverw(400) }}" alt="">
+      </div>
+      <span class="t">{{ it['title'] or '—' }}</span>
+      <span class="a">{{ it['author'] or '' }}</span>
+    </a>
+    {% else %}
+    <div class="item gone" title="Niet beschikbaar in de bibliotheek">
+      <div class="cover">
+        {% if it['year'] %}<span class="rank yr">{{ it['year'] }}</span>{% elif it['position'] %}<span class="rank">{{ it['position'] }}</span>{% endif %}
+        {% if it['cover_url'] %}<img loading="lazy" src="{{ it['cover_url'] }}" alt="">{% endif %}
+        <span class="tag">niet in bibliotheek</span>
+      </div>
+      <span class="t">{{ it['title'] or '—' }}</span>
+      <span class="a">{{ it['author'] or '' }}</span>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+</main>
+{% endblock %}

@@ -1,0 +1,10 @@
+.git
+.venv
+data/raw
+data/covers
+data/catalog.db
+data/*.log
+__pycache__
+*.pyc
+.pytest_cache
+.env

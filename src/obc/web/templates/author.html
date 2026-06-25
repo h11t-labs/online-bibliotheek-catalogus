@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% from "_macros.html" import fmt_icons %}
+{% block title %}{{ name }} · Bibliotheek{% endblock %}
+{% block style %}
+  .bio{display:flex;gap:18px;align-items:flex-start;background:var(--card);border:1px solid var(--line);
+    border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow);margin:0 0 26px}
+  .bio img{width:96px;height:96px;border-radius:12px;object-fit:cover;flex:none}
+  .bio .x{font-size:14.5px;line-height:1.6;color:var(--ink-soft)}
+  .bio .x a{color:var(--accent);text-decoration:underline dotted}
+  @media(max-width:560px){.bio img{width:64px;height:64px}}
+{% endblock %}
+{% block body %}
+<main>
+  <div class="pagehead">
+    <div class="crumb"><a href="javascript:history.back()">‹ Terug</a></div>
+    <h1>{{ name }}</h1>
+    <div class="sub">{{ total }} {{ 'titel' if total==1 else 'titels' }} in de bibliotheek
+      · <a class="flink" style="text-decoration:underline dotted" href="/?author={{ name|urlencode }}">filter in zoeken ›</a></div>
+  </div>
+  {% if bio %}
+  <div class="bio">
+    {% if bio.thumb %}<img src="{{ bio.thumb }}" alt="{{ name }}">{% endif %}
+    <div class="x">{{ bio.extract }}{% if bio.url %} <a href="{{ bio.url }}" target="_blank" rel="noopener">meer op Wikipedia ↗</a>{% endif %}</div>
+  </div>
+  {% endif %}
+  <div class="grid">
+    {% for b in books %}
+    <a class="book" href="/book/{{ b['ppn'] }}">
+      <div class="cover">
+        {{ fmt_icons(formats_map.get(b['ppn'], [b['format']])) }}
+        <img loading="lazy" src="{{ b['cover_url']|coverw(400) }}" alt="">
+      </div>
+      <span class="t">{{ b['title'] or '—' }}</span>
+      <span class="a">{{ b['year'] or '' }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</main>
+{% endblock %}

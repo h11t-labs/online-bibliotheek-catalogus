@@ -1,0 +1,28 @@
+[project]
+name = "online-bibliotheek-catalogus"
+version = "0.1.0"
+description = "Own searchable catalog of the Dutch online bibliotheek (onlinebibliotheek.nl)"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "tenacity>=8.2",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "jinja2>=3.1",
+    "loguru>=0.7.3",
+]
+
+[project.scripts]
+obc = "obc.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+obc = ["web/templates/*.html", "web/static/*"]

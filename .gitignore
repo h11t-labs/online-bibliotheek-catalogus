@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Project data
+data/raw/
+data/covers/
+data/catalog.db
+data/*.db-wal
+data/*.db-shm
+data/checkpoint.json
+.env

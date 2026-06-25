@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Lijsten · Bibliotheek{% endblock %}
+{% block style %}
+  main{width:100%;max-width:1000px}
+  .page-h{font-family:var(--serif);font-size:clamp(26px,4vw,40px);margin:8px 0 6px}
+  .page-sub{color:var(--ink-soft);margin:0 0 26px}
+  .listcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px}
+  .listcard{display:block;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:22px;box-shadow:var(--shadow);transition:transform .15s ease}
+  .listcard:hover{transform:translateY(-3px);text-decoration:none}
+  .listcard .ic{width:34px;height:34px;display:grid;place-items:center;border-radius:10px;
+    background:var(--accent);color:var(--accent-ink);margin-bottom:12px}
+  .listcard h2{font-family:var(--serif);font-size:21px;margin:0 0 6px}
+  .listcard p{color:var(--ink-soft);font-size:14px;margin:0 0 14px;line-height:1.5}
+  .listcard .meta{font-size:13px;color:var(--ink-soft)}
+  .listcard .meta b{color:var(--accent);font-size:16px;font-family:var(--serif)}
+  .empty{color:var(--ink-soft);padding:40px 0}
+  .sortbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 22px;font-size:13px}
+  .sortbar .lbl{color:var(--ink-soft)}
+  .sortbar a{padding:5px 12px;border-radius:999px;border:1px solid var(--line);
+    background:var(--card);color:var(--ink-soft);text-decoration:none}
+  .sortbar a.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+{% endblock %}
+{% block body %}
+<main>
+  <h1 class="page-h">Lijsten</h1>
+  <p class="page-sub">Bestsellers, prijzen en nominaties — met aanduiding welke titels in de bibliotheek beschikbaar zijn.</p>
+  {% if lists %}
+  <div class="sortbar">
+    <span class="lbl">Sorteer:</span>
+    <a href="/lists?sort=name" class="{{ 'on' if sort=='name' }}">Naam</a>
+    <a href="/lists?sort=available" class="{{ 'on' if sort=='available' }}">Meeste beschikbaar</a>
+    <a href="/lists?sort=total" class="{{ 'on' if sort=='total' }}">Meeste titels</a>
+    <a href="/lists?sort=pct" class="{{ 'on' if sort=='pct' }}">Hoogste dekking</a>
+  </div>
+  <div class="listcards">
+    {% for l in lists %}
+    <a class="listcard" href="/list/{{ l['slug'] }}">
+      <div class="ic"><svg width="18" height="18"><use href="#ic-award"/></svg></div>
+      <h2>{{ l['name'] }}</h2>
+      {% if l['description'] %}<p>{{ l['description'] }}</p>{% endif %}
+      <div class="meta"><b>{{ l['available'] or 0 }}</b> van {{ l['total'] }} beschikbaar in de bibliotheek</div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">Nog geen lijsten. Draai <code>obc lists update</code> en daarna <code>obc normalize</code>.</p>
+  {% endif %}
+</main>
+{% endblock %}
