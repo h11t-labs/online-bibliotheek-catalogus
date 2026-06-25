@@ -1,41 +1,43 @@
-# Infrastructure (Terraform → Railway)
+# Infrastructure (Railway)
 
-Declarative Railway setup: project, web service (from the GHCR image), persistent
-volume, env vars, and a public domain. Uses the community provider
-[`terraform-community-providers/railway`](https://registry.terraform.io/providers/terraform-community-providers/railway/latest/docs).
+The simplest way to provision Railway is the **CLI script** here — it uses your
+logged-in Railway session, so there's no provider, no state file, and no token to
+manage for setup.
 
-## Usage
+## One-time provisioning
 
 ```bash
+railway login            # once, opens the browser
 cd infrastructure
-cp terraform.tfvars.example terraform.tfvars   # then fill in railway_token
-terraform init
-terraform plan
-terraform apply
+./railway-setup.sh       # creates project + service (from the GHCR image) + volume + domain
 ```
 
-Instead of putting the token in `terraform.tfvars` you can export it:
+Override defaults with env vars:
 
 ```bash
-export RAILWAY_TOKEN=...        # read by the provider
-# or
-export TF_VAR_railway_token=... # read as the Terraform variable
+NYT_API_KEY=xxx IMAGE=ghcr.io/h11t-labs/online-bibliotheek-catalogus:0.2 ./railway-setup.sh
 ```
 
-Get a token in the Railway dashboard → Account/Team Settings → Tokens.
+What it sets up:
 
-## After apply
+- project `online-bibliotheek-catalogus`
+- service `web` from `ghcr.io/.../:0.1` with env vars (`OBC_DB`, `OBC_SYNC_HOURS`,
+  `OBC_LISTS_HOURS`, optional `NYT_API_KEY`)
+- a volume mounted at `/app/data` (persistent SQLite + raw data)
+- a public `*.up.railway.app` domain
 
-- `terraform output service_name` → set this as the GitHub Actions **`RAILWAY_SERVICE`**
-  variable so the deploy job runs (`gh variable set RAILWAY_SERVICE --body "$(terraform output -raw service_name)"`).
-- `terraform output public_url` → the live site.
+## Deploy settings as code
+
+Per-deploy settings (builder, start command, restart policy) live in the repo's
+[`railway.json`](../railway.json) — Railway reads it automatically. The in-app
+scheduler handles periodic refresh via the `OBC_*_HOURS` env vars (no separate cron
+service needed).
 
 ## Notes
 
-- The repo is private, so the GHCR image is private too. Either make the package
-  public (no secrets are baked into the image) or add registry credentials to the
-  service in the Railway dashboard so it can pull `ghcr.io/...`.
-- State is local (`terraform.tfstate`) and gitignored along with `terraform.tfvars`.
-  For team use, point `terraform` at a remote backend.
-- Provider attribute names can shift between provider versions; if `plan` errors,
-  check the provider docs for the pinned version and adjust.
+- Private repo ⇒ private GHCR image: make the package public, or add registry
+  credentials to the service in the dashboard so Railway can pull it.
+- CI auto-deploy on version tags needs the `RAILWAY_SERVICE` variable and
+  `RAILWAY_TOKEN` secret in GitHub (see the end of `railway-setup.sh` and `DEPLOY.md`).
+- Prefer full infra-as-code with Terraform instead? An earlier Terraform version of
+  this folder is in the git history.

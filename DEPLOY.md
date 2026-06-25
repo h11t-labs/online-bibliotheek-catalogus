@@ -5,12 +5,12 @@ it from the `Dockerfile`, keep the database on a **persistent volume**, and let 
 service refresh itself on a schedule (Railway volumes attach to one service, so the
 "cron" runs inside the web service — see below).
 
-## Declarative setup (Terraform)
+## Scripted setup (Railway CLI)
 
-Prefer infra-as-code? `infrastructure/` contains Terraform that creates the Railway
-project, web service (from the GHCR image), volume, env vars and public domain. See
-[`infrastructure/README.md`](infrastructure/README.md). The manual dashboard steps
-below are the alternative.
+Quickest path: `infrastructure/railway-setup.sh` provisions the project, service
+(from the GHCR image), volume, env vars and domain using your logged-in CLI — no
+Terraform/state. See [`infrastructure/README.md`](infrastructure/README.md). The
+manual dashboard steps below are the alternative.
 
 ## CI/CD: build in GitHub Actions, deploy to Railway
 
