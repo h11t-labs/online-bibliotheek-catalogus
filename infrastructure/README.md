@@ -1,16 +1,27 @@
 # Infrastructure (Railway)
 
-The simplest way to provision Railway is the **CLI script** here — it uses your
-logged-in Railway session, so there's no provider, no state file, and no token to
-manage for setup.
+Railway is provisioned by an **idempotent CLI script** — no provider, no state
+file. It only creates what's missing and upserts variables, so it's safe to run
+repeatedly. The CI/CD pipeline runs it automatically on every version tag (the
+`infra` job, before `deploy`); you can also run it by hand.
 
-## One-time provisioning
+## First-time / local run
 
 ```bash
-railway login            # once, opens the browser
+railway login                       # once, opens the browser
 cd infrastructure
-./railway-setup.sh       # creates project + service (from the GHCR image) + volume + domain
+CREATE_PROJECT=1 ./railway-setup.sh # first run: also creates + links the project
 ```
+
+After the project exists, `railway link` it (or rely on `RAILWAY_TOKEN`) and just
+run `./railway-setup.sh` to converge.
+
+## In CI
+
+The `infra` job runs `railway-setup.sh` with `RAILWAY_TOKEN` (a project token
+scopes everything to the project), `SERVICE_NAME` from the `RAILWAY_SERVICE`
+variable, the minor image tag, and the optional `NYT_API_KEY` secret. Because it's
+idempotent, re-runs are no-ops except for variable updates.
 
 Override defaults with env vars:
 
