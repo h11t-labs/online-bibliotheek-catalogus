@@ -18,10 +18,12 @@ run `./railway-setup.sh` to converge.
 
 ## In CI
 
-The `infra` job runs `railway-setup.sh` with `RAILWAY_TOKEN` (a project token
-scopes everything to the project), `SERVICE_NAME` from the `RAILWAY_SERVICE`
-variable, the minor image tag, and the optional `NYT_API_KEY` secret. Because it's
-idempotent, re-runs are no-ops except for variable updates.
+On a version tag, the `infra` job runs `railway-setup.sh` with `RAILWAY_TOKEN` (a
+project token scopes everything to the project), the minor image tag, and the
+optional `NYT_API_KEY` secret. The service name is hardcoded to `web`. Both the
+`infra` and `deploy` jobs skip cleanly if no `RAILWAY_TOKEN` is set, so releases
+stay green before Railway is configured. Because it's idempotent, re-runs are
+no-ops except for variable updates.
 
 Override defaults with env vars:
 
@@ -48,7 +50,7 @@ service needed).
 
 - Private repo ⇒ private GHCR image: make the package public, or add registry
   credentials to the service in the dashboard so Railway can pull it.
-- CI auto-deploy on version tags needs the `RAILWAY_SERVICE` variable and
-  `RAILWAY_TOKEN` secret in GitHub (see the end of `railway-setup.sh` and `DEPLOY.md`).
+- CI auto-deploy on version tags just needs the `RAILWAY_TOKEN` secret in GitHub
+  (the service name is hardcoded to `web`); see `DEPLOY.md`.
 - Prefer full infra-as-code with Terraform instead? An earlier Terraform version of
   this folder is in the git history.
