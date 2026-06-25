@@ -1,0 +1,37 @@
+# Fly.io config — https://fly.io/docs/reference/configuration/
+# Private by default: `fly deploy` builds the Dockerfile and stores the image in
+# your private Fly registry. SQLite lives on a Fly Volume mounted at /app/data.
+app = "online-bibliotheek-catalogus"   # must be globally unique; change if taken
+primary_region = "ams"                  # Amsterdam (EU)
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8000"
+  OBC_DB = "/app/data/catalog.db"
+  OBC_SYNC_HOURS = "24"
+  OBC_LISTS_HOURS = "0"     # off: a full normalize is memory-heavy for a small VM;
+                           # refresh lists locally + re-upload, or scale up briefly.
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1  # one machine: single SQLite writer + the scheduler
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+
+[mounts]
+  source = "catalog_data"
+  destination = "/app/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
