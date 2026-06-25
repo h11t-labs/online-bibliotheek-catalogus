@@ -1,4 +1,4 @@
-name: CI / Release / Deploy
+name: CI / Release
 
 on:
   push:
@@ -75,39 +75,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md --verify-tag
 
-  infra:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')   # version tags only
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: Install Railway CLI
-        run: npm i -g @railway/cli
-      - name: Converge Railway infra (idempotent; skips if not configured)
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
-          NYT_API_KEY: ${{ secrets.NYT_API_KEY }}
-        run: |
-          if [ -z "$RAILWAY_TOKEN" ]; then echo "No RAILWAY_TOKEN set — skipping infra."; exit 0; fi
-          VERSION="${GITHUB_REF_NAME#v}"
-          export IMAGE="ghcr.io/${{ github.repository }}:${VERSION%.*}"  # minor tag
-          ./infrastructure/railway-setup.sh
-
-  deploy:
-    needs: infra
-    if: startsWith(github.ref, 'refs/tags/v')   # version tags only
-    runs-on: ubuntu-latest
-    steps:
-      - name: Install Railway CLI
-        run: npm i -g @railway/cli
-      - name: Redeploy on Railway (skips if not configured)
-        # Railway tracks the minor tag (e.g. ghcr.io/...:0.1); CI just pushed the
-        # updated image for this version, so redeploy re-pulls it.
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
-        run: |
-          if [ -z "$RAILWAY_TOKEN" ]; then echo "No RAILWAY_TOKEN set — skipping deploy."; exit 0; fi
-          railway link -p "$RAILWAY_PROJECT_ID" -e production >/dev/null
-          railway redeploy --service web --yes
+  # Deployment is handled by Render: it builds the Dockerfile from this repo and
+  # auto-deploys on push to main (see render.yaml).
