@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Fly.io deploy config (`fly.toml`): private image via Fly's registry, SQLite on a
+  Fly Volume, region Amsterdam (EU). DEPLOY.md documents it as the primary target.
+
 ## [0.1.2] - 2026-06-25
 
 ### Added

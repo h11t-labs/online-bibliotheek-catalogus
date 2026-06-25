@@ -1,12 +1,48 @@
-# Deploying (Render, EU/Frankfurt)
+# Deploying
 
 The app is a single FastAPI web service backed by a SQLite file, run from the
-`Dockerfile`, with the database on a **persistent disk**. Scheduled refresh runs
-in-process (`OBC_SYNC_HOURS` / `OBC_LISTS_HOURS`) because the disk attaches to a
-single service.
+`Dockerfile`, with the database on a **persistent volume/disk**. Scheduled refresh
+runs in-process (`OBC_SYNC_HOURS` / `OBC_LISTS_HOURS`) because the volume attaches
+to a single instance.
+
+## Fly.io (recommended: cheap, private, EU/Amsterdam) — `fly.toml`
+
+`fly deploy` builds the Dockerfile and stores the image in your **private** Fly
+registry (nothing public), with SQLite on a Fly Volume. ~€2–3.5/month. Fly requires
+a payment method on the account.
+
+```bash
+brew install flyctl            # or: curl -L https://fly.io/install.sh | sh
+fly auth login
+fly apps create online-bibliotheek-catalogus      # pick a unique name (match fly.toml)
+fly volumes create catalog_data --region ams --size 1
+fly secrets set NYT_API_KEY=...                    # optional (NYT lists)
+fly deploy
+```
+
+First deploy shows the friendly "wordt opgebouwd" page until the DB is on the volume.
+Seed it by uploading your locally built DB (avoids a memory-heavy scrape on a small
+VM):
+
+```bash
+fly ssh sftp shell
+> put data/catalog.db /app/data/catalog.db
+```
+
+(or run `fly ssh console -C "..."` to scrape on the box, but bump the VM memory first).
+
+Notes:
+- One machine only (`min_machines_running = 1`) — SQLite is single-writer.
+- `OBC_LISTS_HOURS=0` in `fly.toml`: a full `normalize` is memory-heavy for a 512MB
+  VM. Refresh lists locally and re-upload, or temporarily `fly scale memory 1024`.
+
+---
+
+## Render (alternative, EU/Frankfurt) — `render.yaml`
 
 Render builds the Dockerfile straight from the **private** GitHub repo (via the
-Render GitHub App), so there's no image registry or token to manage.
+Render GitHub App), so there's no image registry or token to manage. ~€6.70/month
+(Starter + 1GB disk).
 
 ## Setup — `render.yaml`
 
