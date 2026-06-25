@@ -88,6 +88,22 @@ def _start_scheduler() -> None:
     scheduler.start()  # no-op unless OBC_SYNC_HOURS / OBC_LISTS_HOURS are set
 
 
+@app.exception_handler(sqlite3.OperationalError)
+async def _db_unavailable(request: Request, exc: sqlite3.OperationalError):
+    """Friendly page when the catalog DB isn't present yet (e.g. fresh volume)."""
+    return HTMLResponse(
+        "<!doctype html><html lang='nl'><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>De catalogus wordt opgebouwd</title>"
+        "<body style='font-family:system-ui,sans-serif;max-width:38rem;margin:16vh auto;"
+        "padding:0 1.5rem;text-align:center;color:#3a2c20'>"
+        "<div style='font-size:3rem'>📚</div>"
+        "<h1 style='font-weight:800'>De catalogus wordt opgebouwd</h1>"
+        "<p style='color:#7a6a5a;line-height:1.6'>De database is nog niet geladen. "
+        "Kom over een moment terug.</p></body></html>",
+        status_code=503)
+
+
 @app.get("/favicon.svg", include_in_schema=False)
 def favicon():
     return FileResponse(_STATIC / "favicon.svg", media_type="image/svg+xml")
