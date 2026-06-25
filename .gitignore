@@ -19,10 +19,3 @@ data/*.log
 
 # macOS
 .DS_Store
-
-# Terraform
-infrastructure/.terraform/
-infrastructure/*.tfstate
-infrastructure/*.tfstate.*
-infrastructure/terraform.tfvars
-infrastructure/*.tfplan
