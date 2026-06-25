@@ -104,6 +104,12 @@ async def _db_unavailable(request: Request, exc: sqlite3.OperationalError):
         status_code=503)
 
 
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    """Liveness probe — independent of the catalog DB (used by the host's health check)."""
+    return {"status": "ok"}
+
+
 @app.get("/favicon.svg", include_in_schema=False)
 def favicon():
     return FileResponse(_STATIC / "favicon.svg", media_type="image/svg+xml")

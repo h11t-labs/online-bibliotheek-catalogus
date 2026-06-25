@@ -96,6 +96,7 @@ def test_lists_pages(client):
 def test_stats_and_static(client):
     assert client.get("/stats").status_code == 200
     assert client.get("/favicon.svg").status_code == 200
+    assert client.get("/healthz").json() == {"status": "ok"}
 
 
 def test_series_404(client):
