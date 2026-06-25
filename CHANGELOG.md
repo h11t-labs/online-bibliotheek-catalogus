@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-06-25
+
+### Added
+- Render (EU/Frankfurt) deployment via `render.yaml` Blueprint, with a persistent
+  disk for the catalog and an in-process refresh scheduler.
+- `/healthz` liveness endpoint and a friendly "wordt opgebouwd" page shown while the
+  catalog database isn't present yet.
+
+### Removed
+- Railway deployment (CI jobs, `railway.json`, `infrastructure/`) — replaced by Render.
+
 ## [0.1.1] - 2026-06-25
 
 ### Added
@@ -46,6 +57,7 @@ First tagged release.
 - `book_genres` was never populated (inverted id map), leaving genres empty.
 - Non-language values ("Fictie", "Verzameld werk", …) polluting the language facet.
 
-[Unreleased]: https://github.com/mymix/online-bibliotheek-catalogus/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/mymix/online-bibliotheek-catalogus/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/mymix/online-bibliotheek-catalogus/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/mymix/online-bibliotheek-catalogus/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mymix/online-bibliotheek-catalogus/releases/tag/v0.1.0
