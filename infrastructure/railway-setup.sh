@@ -43,15 +43,20 @@ sys.exit(0 if target in set(names(data)) else 1)
 ' "$1"
 }
 
-# 0. Project context.
-if ! railway status >/dev/null 2>&1; then
-  if [ "${CREATE_PROJECT:-0}" = "1" ]; then
-    echo "▶ creating project '$PROJECT'…"
-    railway init --name "$PROJECT" >/dev/null
-  else
-    echo "No linked Railway project. Run 'railway link' (local) or set CREATE_PROJECT=1." >&2
-    exit 1
-  fi
+# 0. Project context. Linking by ID is reliable non-interactively (linking by
+# name prompts and doesn't persist in CI), so prefer RAILWAY_PROJECT_ID.
+ENVIRONMENT="${RAILWAY_ENVIRONMENT:-production}"
+if [ -n "${RAILWAY_PROJECT_ID:-}" ]; then
+  railway link -p "$RAILWAY_PROJECT_ID" -e "$ENVIRONMENT" >/dev/null 2>&1 \
+    || { echo "Could not link project $RAILWAY_PROJECT_ID." >&2; exit 1; }
+elif railway status >/dev/null 2>&1; then
+  :  # already linked (local)
+elif [ "${CREATE_PROJECT:-0}" = "1" ]; then
+  echo "▶ creating project '$PROJECT'…"
+  railway init --name "$PROJECT" >/dev/null
+else
+  echo "No project context. Set RAILWAY_PROJECT_ID (CI) or run 'railway link', or CREATE_PROJECT=1." >&2
+  exit 1
 fi
 
 # 1. Service — create only if absent.
@@ -71,20 +76,23 @@ if [ -n "${NYT_API_KEY:-}" ]; then
   railway variable set "NYT_API_KEY=$NYT_API_KEY" --service "$SERVICE" --skip-deploys >/dev/null
 fi
 
-# 3. Volume at /app/data — create only if absent.
+# Make the service the active one so volume/domain attach to it.
+railway service "$SERVICE" >/dev/null 2>&1 || true
+
+# 3. Volume at /app/data — create only if absent (attaches to the active service).
 if railway volume list --json 2>/dev/null | grep -q "/app/data"; then
   echo "✓ volume at /app/data already exists"
 else
   echo "▶ adding volume at /app/data…"
-  railway volume add --service "$SERVICE" --mount-path /app/data
+  railway volume add --mount-path /app/data
 fi
 
 # 4. Public domain — generate only if none.
-if railway domain list --service "$SERVICE" --json 2>/dev/null | grep -q "railway.app"; then
+if railway domain list --json 2>/dev/null | grep -q "railway.app"; then
   echo "✓ public domain already exists"
 else
   echo "▶ generating public domain…"
-  railway domain --service "$SERVICE" || true
+  railway domain || true
 fi
 
 echo "✓ infra converged."

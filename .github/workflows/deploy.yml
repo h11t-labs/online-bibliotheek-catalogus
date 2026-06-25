@@ -86,6 +86,7 @@ jobs:
       - name: Converge Railway infra (idempotent; skips if not configured)
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
           NYT_API_KEY: ${{ secrets.NYT_API_KEY }}
         run: |
           if [ -z "$RAILWAY_TOKEN" ]; then echo "No RAILWAY_TOKEN set — skipping infra."; exit 0; fi
@@ -105,6 +106,8 @@ jobs:
         # updated image for this version, so redeploy re-pulls it.
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
         run: |
           if [ -z "$RAILWAY_TOKEN" ]; then echo "No RAILWAY_TOKEN set — skipping deploy."; exit 0; fi
+          railway link -p "$RAILWAY_PROJECT_ID" -e production >/dev/null
           railway redeploy --service web --yes
