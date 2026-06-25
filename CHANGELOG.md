@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-25
+
+### Added
+- Declarative, idempotent Railway provisioning via `infrastructure/railway-setup.sh`
+  (creates only what's missing; upserts variables). Runs as the CI `infra` step.
+
+### Changed
+- CI/CD: versioned image tags only (no `latest`); GitHub Releases generated from the
+  changelog; `infra`/`deploy` run on version tags only and skip cleanly when
+  `RAILWAY_TOKEN` is unset; service name hardcoded to `web`.
+- Bump GitHub Actions runner actions to Node 24 (`checkout@v5`, `setup-uv@v6`).
+
 ## [0.1.0] - 2026-06-25
 
 First tagged release.
@@ -34,5 +46,6 @@ First tagged release.
 - `book_genres` was never populated (inverted id map), leaving genres empty.
 - Non-language values ("Fictie", "Verzameld werk", …) polluting the language facet.
 
-[Unreleased]: https://github.com/mymix/online-bibliotheek-catalogus/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/mymix/online-bibliotheek-catalogus/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/mymix/online-bibliotheek-catalogus/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mymix/online-bibliotheek-catalogus/releases/tag/v0.1.0
