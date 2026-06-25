@@ -26,3 +26,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 obc = ["web/templates/*.html", "web/static/*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
