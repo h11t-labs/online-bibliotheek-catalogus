@@ -69,6 +69,14 @@ def _url_without(state: dict, key: str, value: str) -> str:
 
 _templates.env.globals["url_with"] = _url_with
 _templates.env.globals["url_without"] = _url_without
+
+try:
+    from importlib.metadata import version as _pkg_version
+    APP_VERSION = _pkg_version("online-bibliotheek-catalogus")
+except Exception:
+    APP_VERSION = "dev"
+_templates.env.globals["app_version"] = APP_VERSION
+
 app = FastAPI(title="online bibliotheek — eigen catalogus")
 
 _STATIC = Path(__file__).parent / "static"

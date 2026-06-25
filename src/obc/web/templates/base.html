@@ -258,6 +258,7 @@
   {% block body %}{% endblock %}
   <footer>
     Een zelfgemaakte zoekgids voor de collectie van de online Bibliotheek — om makkelijk je volgende boek te vinden.
+    {% if app_version %}<span style="opacity:.6"> · v{{ app_version }}</span>{% endif %}
   </footer>
   <script>
   (function(){

@@ -7,18 +7,34 @@ service refresh itself on a schedule (Railway volumes attach to one service, so 
 
 ## CI/CD: build in GitHub Actions, deploy to Railway
 
-`.github/workflows/deploy.yml` runs on every push to `main`:
+`.github/workflows/deploy.yml`:
 
-1. **test** — `uv sync` + `uv run pytest`.
-2. **build** — builds the Docker image and pushes it to **GHCR**
-   (`ghcr.io/<owner>/online-bibliotheek-catalogus:latest` and `:sha-…`).
-3. **deploy** — runs `railway redeploy`, so Railway pulls the freshly built image.
+- **on every push to `main`** → **test** + **build** a `:sha-…` image to GHCR
+  (no `latest` tag — images are versioned, see below).
+- **on a version tag `vX.Y.Z`** → test + build the versioned image, create a
+  **GitHub Release** from the matching `CHANGELOG.md` section, and **deploy** to
+  Railway.
+
+### Releasing a version
+
+Versions follow SemVer and are tracked in `CHANGELOG.md`. To cut a release:
+
+```bash
+scripts/release.sh 0.2.0          # bumps pyproject + CHANGELOG, commits, tags v0.2.0
+git push origin main --follow-tags
+```
+
+The tag push builds and pushes immutable `ghcr.io/<owner>/…:0.2.0` **and** the
+moving minor tag `:0.2`. Railway is configured to track the **minor** tag
+(`…:0.2`), so `railway redeploy` re-pulls the freshly built image. On a minor/major
+bump, update the Railway image tag once (e.g. `:0.2` → `:0.3`).
 
 ### One-time setup
 
 1. **Railway service from the image.** Create the service with source =
-   **Docker image** → `ghcr.io/mymix/online-bibliotheek-catalogus:latest`
-   (Railway → New → Docker Image). Add the volume + env vars as below.
+   **Docker image** → `ghcr.io/mymix/online-bibliotheek-catalogus:0.1`
+   (the current minor tag; Railway → New → Docker Image). Add the volume + env
+   vars as below.
 2. **Let Railway pull the image.** The repo is private, so the GHCR package is
    private too. Either:
    - make the package public (Repo → Packages → the image → *Package settings →
