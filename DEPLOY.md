@@ -48,14 +48,15 @@ bump, update the Railway image tag once (e.g. `:0.2` → `:0.3`).
      Change visibility*), since the image bakes in no secrets; **or**
    - in the Railway service add registry credentials: variables
      `ghcr.io` username `<github-user>` + a PAT with `read:packages`.
-3. **GitHub secrets/variables** (Repo → Settings → Secrets and variables → Actions):
+3. **GitHub secrets** (Repo → Settings → Secrets and variables → Actions):
    - secret **`RAILWAY_TOKEN`** — a Railway *project* token (Railway → project →
-     Settings → Tokens).
-   - variable **`RAILWAY_SERVICE`** — the exact Railway service name. The `deploy`
-     job is skipped until this variable exists, so earlier pushes still build fine.
+     Settings → Tokens). The `infra`/`deploy` jobs skip cleanly until this exists,
+     so releases stay green before Railway is set up.
+   - secret **`NYT_API_KEY`** — optional, enables the NYT bestseller lists.
 
-After that, every push to `main` ships automatically. You can also trigger it from
-the Actions tab (**Run workflow**).
+The service name is hardcoded to `web` (matches `railway-setup.sh`); no variable
+needed. After the token is set, every **version tag** ships automatically (build →
+infra → deploy). Plain pushes to `main` only test + build.
 
 ## Manual alternative — let Railway build from the repo
 
