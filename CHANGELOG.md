@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fly.io deploy config (`fly.toml`): private image via Fly's registry, SQLite on a
   Fly Volume, region Amsterdam (EU). DEPLOY.md documents it as the primary target.
 
+### Changed
+- `normalize` now streams records in batches (`db.stream_rebuild`) instead of loading
+  the whole catalog into memory — peak RSS ~190MB instead of ~600MB, so the weekly
+  refresh runs on a 512MB box. Output is identical.
+
+### Fixed
+- Scheduler ran a non-existent `obc sync`; it now runs `scrape --sync` + `normalize`.
+
 ## [0.1.2] - 2026-06-25
 
 ### Added

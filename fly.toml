@@ -10,9 +10,10 @@ primary_region = "ams"                  # Amsterdam (EU)
 [env]
   PORT = "8000"
   OBC_DB = "/app/data/catalog.db"
-  OBC_SYNC_HOURS = "24"
-  OBC_LISTS_HOURS = "0"     # off: a full normalize is memory-heavy for a small VM;
-                           # refresh lists locally + re-upload, or scale up briefly.
+  # Weekly automated refresh. normalize streams in batches (~190MB peak), so this
+  # runs fine on the 512MB VM below — no scaling needed.
+  OBC_SYNC_HOURS = "168"    # scrape --sync + normalize (incremental, weekly)
+  OBC_LISTS_HOURS = "168"   # lists update + normalize (weekly)
 
 [http_service]
   internal_port = 8000
