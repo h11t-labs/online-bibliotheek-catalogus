@@ -19,6 +19,10 @@
     padding:6px 12px;border-radius:999px;background:color-mix(in srgb,var(--accent) 16%,transparent);
     color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent)}
   .awards a:hover{background:color-mix(in srgb,var(--accent) 26%,transparent);text-decoration:none}
+  .list-ribbon{position:absolute;left:0;bottom:0;right:0;display:flex;align-items:center;
+    gap:5px;padding:6px 9px;font-size:11.5px;font-weight:700;color:#fff;z-index:2;
+    background:linear-gradient(0deg,rgba(154,59,46,.96),rgba(154,59,46,.7));}
+  .list-ribbon svg{width:12px;height:12px;flex:none}
   @media(max-width:560px){.authorcard{flex-direction:column;gap:16px}.authorcard .photo{width:88px;height:88px}}
 {% endblock %}
 {% block body %}
@@ -53,6 +57,8 @@
     <a class="book" href="/book/{{ b['ppn'] }}">
       <div class="cover">
         {{ fmt_icons(formats_map.get(b['ppn'], [b['format']])) }}
+        {% set bl = lists_map.get(b['ppn']) %}
+        {% if bl %}<span class="list-ribbon"><svg><use href="#ic-award"/></svg>{{ bl[0].name }}{% if bl[0].year %} {{ bl[0].year }}{% elif bl[0].position %} #{{ bl[0].position }}{% endif %}</span>{% endif %}
         <img loading="lazy" src="{{ b['cover_url']|coverw(400) }}" alt="">
       </div>
       <span class="t">{{ b['title'] or '—' }}</span>
