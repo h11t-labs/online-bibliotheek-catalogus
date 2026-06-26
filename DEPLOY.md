@@ -1,9 +1,9 @@
 # Deploying
 
 The app is a single FastAPI web service backed by a SQLite file, run from the
-`Dockerfile`, with the database on a **persistent volume/disk**. Scheduled refresh
-runs in-process (`OBC_SYNC_HOURS` / `OBC_LISTS_HOURS`) because the volume attaches
-to a single instance.
+`Dockerfile`, with the database on a **persistent volume/disk**. The weekly
+refresh runs in the web machine (where the volume is), triggered by a scheduled
+cron machine hitting a token-protected endpoint — see below.
 
 ## Fly.io (recommended: cheap, private, EU/Amsterdam) — `fly.toml`
 
@@ -46,8 +46,7 @@ Then `scripts/release.sh X.Y.Z && git push origin main --follow-tags` ships it.
 
 Notes:
 - One machine only (`min_machines_running = 1`) — SQLite is single-writer.
-- `OBC_LISTS_HOURS=0` in `fly.toml`: a full `normalize` is memory-heavy for a 512MB
-  VM. Refresh lists locally and re-upload, or temporarily `fly scale memory 1024`.
+- `normalize` streams (~190MB peak), so the weekly refresh runs on the 512MB VM.
 
 ---
 
@@ -93,9 +92,7 @@ fly secrets set OBC_REFRESH_TOKEN=$(openssl rand -hex 32)   # shared secret
 scripts/fly-cron.sh                                         # create the weekly cron machine
 ```
 
-`normalize` streams at ~190MB, so this runs on the 512MB VM — no scaling. (For
-hosts without scheduled machines you can instead set `OBC_SYNC_HOURS` /
-`OBC_LISTS_HOURS` to run the same work on an in-process interval.)
+`normalize` streams at ~190MB, so this runs on the 512MB VM — no scaling.
 
 ## Environment variables
 
@@ -104,8 +101,6 @@ hosts without scheduled machines you can instead set `OBC_SYNC_HOURS` /
 | `OBC_DB`           | `/app/data/catalog.db` | DB path (set in `fly.toml`/`render.yaml` + Dockerfile)|
 | `OBC_REFRESH_TOKEN`| `…` (secret)           | Bearer token guarding `POST /admin/refresh`           |
 | `NYT_API_KEY`      | `…` (secret)           | Optional — enables the NYT bestseller lists           |
-| `OBC_SYNC_HOURS`   | `0`                    | Optional fallback: in-process interval (0 = off)      |
-| `OBC_LISTS_HOURS`  | `0`                    | Optional fallback: in-process interval (0 = off)      |
 
 `PORT` is provided by the host automatically.
 
