@@ -31,6 +31,19 @@ fly ssh sftp shell
 
 (or run `fly ssh console -C "..."` to scrape on the box, but bump the VM memory first).
 
+### Auto-deploy via CI
+
+The `deploy` job in `.github/workflows/deploy.yml` runs `flyctl deploy` on every
+version tag. Add a deploy token once:
+
+```bash
+fly tokens create deploy           # copy the token
+gh secret set FLY_API_TOKEN --repo h11t-labs/online-bibliotheek-catalogus   # paste it
+```
+
+Then `scripts/release.sh X.Y.Z && git push origin main --follow-tags` ships it.
+(Without the secret the job skips, so releases stay green.)
+
 Notes:
 - One machine only (`min_machines_running = 1`) — SQLite is single-writer.
 - `OBC_LISTS_HOURS=0` in `fly.toml`: a full `normalize` is memory-heavy for a 512MB
