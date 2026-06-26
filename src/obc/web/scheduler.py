@@ -49,9 +49,11 @@ def start() -> None:
     sync_h = _hours("OBC_SYNC_HOURS")
     lists_h = _hours("OBC_LISTS_HOURS")
     if sync_h > 0:
-        threading.Thread(target=_loop, args=(sync_h * 3600, [["sync"]]),
-                         daemon=True).start()
-        logger.info(f"[cron] sync every {sync_h}h")
+        # `obc sync` is not a command — sync lives behind `scrape --sync`, and the
+        # DB only reflects new records after a normalize.
+        threading.Thread(target=_loop, args=(sync_h * 3600,
+                         [["scrape", "--sync"], ["normalize"]]), daemon=True).start()
+        logger.info(f"[cron] sync+normalize every {sync_h}h")
     if lists_h > 0:
         threading.Thread(target=_loop, args=(lists_h * 3600,
                          [["lists", "update"], ["normalize"]]), daemon=True).start()
