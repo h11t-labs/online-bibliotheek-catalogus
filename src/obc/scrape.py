@@ -22,12 +22,13 @@ import datetime
 import json
 import re
 import sys
+from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Iterable, Iterator
 
 from .client import Client
 from .listing import parse_listing
 from .log import logger
+from .util import read_json, write_json
 
 RECORDS_DIR = Path("data/raw/records")
 CHECKPOINT = Path("data/checkpoint.json")
@@ -66,6 +67,11 @@ GENRES_JD = {
     "21.0": "Verhalenboeken", "9.0": "Sport & Vrije tijd", "6.0": "Sprookjes",
     "15.0": "Samenleving",
 }
+
+
+def _merge(base: dict, new: dict) -> dict:
+    """Overlay only the truthy values of ``new`` onto ``base`` (a shallow copy)."""
+    return {**base, **{k: v for k, v in new.items() if v}}
 
 
 # --------------------------------------------------------------------------- #
@@ -141,7 +147,6 @@ def collect_genres(client: Client) -> dict[str, list[str]]:
     """Tag books with genres by paging each subject (onderwerp) facet directly —
     no detail-page fetching. Split by language so the dominant Dutch subjects
     mostly stay under the 10k cap. Writes ppn -> [genre names] to GENRES_FILE."""
-    import json as _json
     ppn_genres: dict[str, set] = {}
     for fmt in FORMATS:
         for doel, table, param in (("volwassenen", GENRES_VW, "onderwerpVolwassenen"),
@@ -157,8 +162,7 @@ def collect_genres(client: Client) -> dict[str, list[str]]:
                 logger.info(f"  {fmt}/{doel}/{name}: +{len(ppn_genres)-before} "
                       f"(total {len(ppn_genres)})")
     out = {ppn: sorted(g) for ppn, g in ppn_genres.items()}
-    GENRES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    GENRES_FILE.write_text(_json.dumps(out, ensure_ascii=False))
+    write_json(GENRES_FILE, out)
     logger.info(f"Tagged {len(out)} books with genres")
     return out
 
@@ -166,7 +170,6 @@ def collect_genres(client: Client) -> dict[str, list[str]]:
 def collect_recent(client: Client, max_page: int = 250) -> dict[str, int]:
     """Rank the most recently licensed titles (newest first) for a
     'Recent toegevoegd' sort. Writes ppn -> rank (0 = newest) to RECENT_FILE."""
-    import json as _json
     rank: dict[str, int] = {}
     n, page = 0, 1
     while page <= max_page:
@@ -179,8 +182,7 @@ def collect_recent(client: Client, max_page: int = 250) -> dict[str, int]:
                 rank[r["ppn"]] = n
                 n += 1
         page += 1
-    RECENT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    RECENT_FILE.write_text(_json.dumps(rank))
+    write_json(RECENT_FILE, rank)
     logger.info(f"Recency-ranked {len(rank)} recently added titles")
     return rank
 
@@ -190,8 +192,7 @@ def collect_ereader(client: Client) -> set[str]:
     seen: set[str] = set()
     ppns: set[str] = set()
     browse_all(client, ["ebook"], seen, lambda r: ppns.add(r["ppn"]), ereader=True)
-    EREADER_FILE.parent.mkdir(parents=True, exist_ok=True)
-    EREADER_FILE.write_text(json.dumps(sorted(ppns)))
+    write_json(EREADER_FILE, sorted(ppns))
     logger.info(f"e-reader-available e-books: {len(ppns)}")
     return ppns
 
@@ -227,17 +228,11 @@ def enumerate_from_file(path: Path) -> Iterator[tuple[str, str]]:
 # checkpoint + record writing
 # --------------------------------------------------------------------------- #
 def _load_done() -> set[str]:
-    if CHECKPOINT.exists():
-        try:
-            return set(json.loads(CHECKPOINT.read_text()))
-        except (json.JSONDecodeError, OSError):
-            pass
-    return set()
+    return set(read_json(CHECKPOINT, default=[]) or [])
 
 
 def _save_done(done: set[str]) -> None:
-    CHECKPOINT.parent.mkdir(parents=True, exist_ok=True)
-    CHECKPOINT.write_text(json.dumps(sorted(done)))
+    write_json(CHECKPOINT, sorted(done))
 
 
 def _writer():
@@ -263,9 +258,8 @@ def enrich(rate: float, limit=None) -> None:
     write = _writer()
     todo = []
     for path in sorted(RECORDS_DIR.glob("*.json")):
-        try:
-            rec = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        rec = read_json(path)
+        if not isinstance(rec, dict):
             continue
         if rec.get("isbn") or not rec.get("slug"):
             continue
@@ -276,7 +270,7 @@ def enrich(rate: float, limit=None) -> None:
         for rec in todo:
             detail = client.fetch_detail(rec["ppn"], rec["slug"])
             if detail:
-                merged = {**rec, **{k: v for k, v in detail.items() if v}}
+                merged = _merge(rec, detail)
                 merged["source"] = "listing+detail"
                 write(merged)
                 n += 1
@@ -327,12 +321,13 @@ def sync(rate: float, max_pages: int = 300, streak_stop: int = 120) -> None:
                 break
             for r in recs:
                 path = RECORDS_DIR / f"{r['ppn']}.json"
-                if path.exists():
-                    old = json.loads(path.read_text(encoding="utf-8"))
-                    if _sig(old) == _sig({**old, **{k: v for k, v in r.items() if v}}):
+                old = read_json(path) if path.exists() else None
+                if isinstance(old, dict):
+                    merged = _merge(old, r)
+                    if _sig(old) == _sig(merged):
                         streak += 1
                         continue
-                    write({**old, **{k: v for k, v in r.items() if v}})
+                    write(merged)
                     updated += 1
                 else:
                     write(r)
@@ -352,12 +347,10 @@ def reconcile(rate: float, formats: Iterable[str]) -> set[str]:
     stamp = datetime.datetime.now().isoformat(timespec="seconds")
     for ppn in removed:
         path = RECORDS_DIR / f"{ppn}.json"
-        try:
-            rec = json.loads(path.read_text(encoding="utf-8"))
+        rec = read_json(path)
+        if isinstance(rec, dict):
             rec["removed_at"] = stamp
-            path.write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
-        except (OSError, json.JSONDecodeError):
-            pass
+            write_json(path, rec)
     logger.info(f"reconcile: {len(seen)} live, {len(removed)} marked removed")
     return removed
 

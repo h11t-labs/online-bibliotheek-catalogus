@@ -21,6 +21,8 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 
+from .htmlutil import node_text
+
 # Dutch <dt> label -> normalised field name. The "Onderwerpen" label varies
 # ("Onderwerpen: Volwassenen" / "Onderwerpen: Jeugd") so it is matched by prefix.
 _LABEL_MAP = {
@@ -43,10 +45,6 @@ _CANONICAL_RE = re.compile(r"/catalogus/([0-9xX]+)/([^/?#]+)")
 _CANONICAL_TITEL_RE = re.compile(r"/catalogus/titel\.([0-9xX]+)\.html/?([^/?#]*)")
 # cover URL carries the PPN: .../id/PPN%3A{ppn} or PPN:{ppn}
 _COVER_PPN_RE = re.compile(r"PPN(?:%3A|:)([0-9xX]+)", re.IGNORECASE)
-
-
-def _text(node) -> str:
-    return re.sub(r"\s+", " ", node.get_text(" ", strip=True)).strip() if node else ""
 
 
 def parse_detail(html: str, ppn: str | None = None) -> dict[str, Any]:
@@ -85,13 +83,13 @@ def parse_detail(html: str, ppn: str | None = None) -> dict[str, Any]:
     rec["cover_url"] = cover_url or _cover_fallback(ppn)
 
     # --- title / author ----------------------------------------------------
-    rec["title"] = _text(soup.select_one("span.title")) or None
-    creators = [_text(c) for c in soup.select("span.creator")]
+    rec["title"] = node_text(soup.select_one("span.title")) or None
+    creators = [node_text(c) for c in soup.select("span.creator")]
     creators = [c for c in creators if c]
     rec["author"] = " ; ".join(dict.fromkeys(creators)) or None
 
     # --- format from <title>: "Title - Author | e-book | de online Bib..." --
-    title_tag = _text(soup.find("title"))
+    title_tag = node_text(soup.find("title"))
     rec["format"] = _format_from_title(title_tag)
 
     # Fallback title/author from <title> if the spans were empty.
@@ -115,8 +113,8 @@ def parse_detail(html: str, ppn: str | None = None) -> dict[str, Any]:
         dd = dt.find_next_sibling("dd")
         if dd is None:
             continue
-        label = _text(dt).rstrip(":").strip()
-        value = _text(dd)
+        label = node_text(dt).rstrip(":").strip()
+        value = node_text(dd)
         low = label.lower()
 
         if low.startswith("onderwerpen"):

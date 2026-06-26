@@ -10,11 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Fly.io deploy config (`fly.toml`): private image via Fly's registry, SQLite on a
   Fly Volume, region Amsterdam (EU). DEPLOY.md documents it as the primary target.
+- Token-protected `POST /admin/refresh` endpoint + `scripts/fly-cron.sh`: a stateless
+  Fly scheduled (cron) machine triggers the weekly refresh, which runs in-process
+  (where the volume is). Guarded by `OBC_REFRESH_TOKEN`.
+- `ruff` lint/format config and a **hermetic** test suite: a tiny fixture catalog is
+  built in-memory via `db.bulk_load` (see `tests/conftest.py`/`tests/sampledata.py`),
+  so the db, normalize, query and web tests run anywhere without the real
+  `catalog.db`. New `test_db`, `test_normalize`, `test_queries`, `test_lists`.
 
 ### Changed
 - `normalize` now streams records in batches (`db.stream_rebuild`) instead of loading
   the whole catalog into memory — peak RSS ~190MB instead of ~600MB, so the weekly
   refresh runs on a 512MB box. Output is identical.
+- Web layer restructured for single-responsibility: all SQL moved to `obc.web.queries`
+  (a read-only repository), the Wikipedia author-bio to `obc.web.bio`, leaving
+  `obc.web.app` as thin routes. FastAPI `on_event` → `lifespan`. Shared helpers
+  `obc.htmlutil.node_text` and `obc.util.read_json`/`write_json` de-duplicate the
+  listing/detail parsers and the harvest/load pipeline. No behaviour change.
 
 ### Fixed
 - Scheduler ran a non-existent `obc sync`; it now runs `scrape --sync` + `normalize`.

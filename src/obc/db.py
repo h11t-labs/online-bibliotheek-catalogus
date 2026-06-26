@@ -390,16 +390,20 @@ def stream_rebuild(conn: sqlite3.Connection, records: Iterable[dict[str, Any]],
 
     def flush():
         if book_rows:
-            cur.executemany(book_sql, book_rows); book_rows.clear()
+            cur.executemany(book_sql, book_rows)
+            book_rows.clear()
         if bg_rows:
             cur.executemany("INSERT OR IGNORE INTO book_genres(book_ppn, genre_id) "
-                            "VALUES (?, ?)", bg_rows); bg_rows.clear()
+                            "VALUES (?, ?)", bg_rows)
+            bg_rows.clear()
         if ba_rows:
             cur.executemany("INSERT OR IGNORE INTO book_authors(book_ppn, author_id, "
-                            "position) VALUES (?, ?, ?)", ba_rows); ba_rows.clear()
+                            "position) VALUES (?, ?, ?)", ba_rows)
+            ba_rows.clear()
         if fts_rows:
             cur.executemany("INSERT INTO books_fts(ppn, title, author, subjects, "
-                            "summary) VALUES (?, ?, ?, ?, ?)", fts_rows); fts_rows.clear()
+                            "summary) VALUES (?, ?, ?, ?, ?)", fts_rows)
+            fts_rows.clear()
 
     for r in records:
         ppn = r.get("ppn")
@@ -431,28 +435,6 @@ def stream_rebuild(conn: sqlite3.Connection, records: Iterable[dict[str, Any]],
     _insert_lists(cur, lists or [])
     conn.commit()
     return n
-
-
-def _insert_lists(cur: sqlite3.Cursor, lists: list[dict]) -> None:
-    for lst in lists:
-        cur.execute(
-            "INSERT INTO lists(slug, name, url, description, updated_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (lst["slug"], lst.get("name"), lst.get("url"),
-             lst.get("description"), lst.get("updated_at")))
-        list_id = cur.lastrowid
-        items = lst.get("items", [])
-        cur.executemany(
-            "INSERT INTO list_items(list_id, position, year, title, author, isbn, cover_url, ppn) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [(list_id, it.get("position"), it.get("year"), it.get("title"),
-              it.get("author"), it.get("isbn"), it.get("cover_url"), it.get("ppn"))
-             for it in items])
-        cur.executemany(
-            "INSERT OR IGNORE INTO book_lists(book_ppn, list_id, position, year) "
-            "VALUES (?, ?, ?, ?)",
-            [(it["ppn"], list_id, it.get("position"), it.get("year"))
-             for it in items if it.get("ppn")])
 
 
 def stats(conn: sqlite3.Connection) -> dict[str, Any]:
