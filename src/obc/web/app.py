@@ -16,7 +16,6 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
-from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -85,14 +84,7 @@ _templates.env.globals["app_version"] = APP_VERSION
 # --------------------------------------------------------------------------- #
 # app + connection
 # --------------------------------------------------------------------------- #
-@asynccontextmanager
-async def _lifespan(app: FastAPI):
-    from . import scheduler
-    scheduler.start()  # no-op unless OBC_SYNC_HOURS / OBC_LISTS_HOURS are set
-    yield
-
-
-app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan)
+app = FastAPI(title="online bibliotheek — eigen catalogus")
 
 
 def _conn() -> sqlite3.Connection:

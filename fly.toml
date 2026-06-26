@@ -14,7 +14,6 @@ primary_region = "ams"                  # Amsterdam (EU)
   # /admin/refresh; the work runs in-process here (normalize streams at ~190MB, so
   # the 512MB VM below is fine). Set the shared secret with:
   #   fly secrets set OBC_REFRESH_TOKEN=$(openssl rand -hex 32)
-  # The in-process interval scheduler stays off (OBC_SYNC_HOURS/OBC_LISTS_HOURS).
 
 [http_service]
   internal_port = 8000
