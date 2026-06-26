@@ -17,8 +17,8 @@ import datetime
 import json
 from pathlib import Path
 
-from . import bestseller60, nyt, wikiprize
 from ..log import logger
+from . import bestseller60, nyt, wikiprize
 
 LISTS_DIR = Path("data/raw/lists")
 

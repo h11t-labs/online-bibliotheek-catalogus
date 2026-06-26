@@ -30,4 +30,28 @@ obc = ["web/templates/*.html", "web/static/*"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "ruff>=0.6",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+src = ["src"]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# E/W pycodestyle, F pyflakes, I import-sorting, B bugbear, UP pyupgrade,
+# A flake8-builtins, C4 comprehensions, SIM simplify.
+select = ["E", "W", "F", "I", "B", "UP", "A", "C4", "SIM"]
+ignore = [
+    "E501",   # line length is handled by the formatter, not enforced hard
+    "SIM105", # contextlib.suppress over try/except/pass — explicit reads fine here
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]              # fixtures imported after warning filters
+"src/obc/web/app.py" = ["B008"]   # FastAPI Query(...) in defaults is the idiom

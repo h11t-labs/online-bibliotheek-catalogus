@@ -54,14 +54,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "initdb":
         from . import db
-        conn = db.connect(); db.init_db(conn); conn.close()
+        conn = db.connect()
+        db.init_db(conn)
+        conn.close()
         print("schema created at", db.DEFAULT_DB)
     elif args.cmd == "normalize":
         from .normalize import normalize
         normalize()
     elif args.cmd == "stats":
         from . import db
-        conn = db.connect(); print(db.stats(conn)); conn.close()
+        conn = db.connect()
+        print(db.stats(conn))
+        conn.close()
     elif args.cmd == "serve":
         import uvicorn
         uvicorn.run("obc.web.app:app", host=args.host, port=args.port, reload=args.reload)

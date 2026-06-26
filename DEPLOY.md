@@ -80,20 +80,34 @@ uv run obc scrape --full && uv run obc lists update && uv run obc normalize
 `obc scrape --full` takes a while and is resumable. Alternatively upload a locally
 built `data/catalog.db` to `/app/data` via the Render shell.
 
-After the first build, the in-process scheduler keeps it fresh: `obc sync` every
-`OBC_SYNC_HOURS` and `obc lists update` + `obc normalize` every `OBC_LISTS_HOURS`
-(loguru lines prefixed `[cron]` in the logs).
+## Weekly refresh (Fly cron → protected endpoint)
+
+The refresh must run in the machine that owns the volume, so a stateless **Fly
+scheduled (cron) machine** just triggers `POST /admin/refresh` over Fly's private
+network; the app then runs `scrape --sync` + `lists update` + `normalize` in a
+background thread (returns 202 immediately). The endpoint is protected by a bearer
+token so only the cron can call it.
+
+```bash
+fly secrets set OBC_REFRESH_TOKEN=$(openssl rand -hex 32)   # shared secret
+scripts/fly-cron.sh                                         # create the weekly cron machine
+```
+
+`normalize` streams at ~190MB, so this runs on the 512MB VM — no scaling. (For
+hosts without scheduled machines you can instead set `OBC_SYNC_HOURS` /
+`OBC_LISTS_HOURS` to run the same work on an in-process interval.)
 
 ## Environment variables
 
-| Variable          | Example                | Purpose                                            |
-|-------------------|------------------------|----------------------------------------------------|
-| `OBC_DB`          | `/app/data/catalog.db` | DB path (set in `render.yaml` + Dockerfile)        |
-| `NYT_API_KEY`     | `…`                    | Optional — enables the NYT bestseller lists        |
-| `OBC_SYNC_HOURS`  | `24`                   | Run `obc sync` every N hours (0/unset = off)       |
-| `OBC_LISTS_HOURS` | `168`                  | Run `obc lists update` + `obc normalize` every N h |
+| Variable           | Example                | Purpose                                               |
+|--------------------|------------------------|-------------------------------------------------------|
+| `OBC_DB`           | `/app/data/catalog.db` | DB path (set in `fly.toml`/`render.yaml` + Dockerfile)|
+| `OBC_REFRESH_TOKEN`| `…` (secret)           | Bearer token guarding `POST /admin/refresh`           |
+| `NYT_API_KEY`      | `…` (secret)           | Optional — enables the NYT bestseller lists           |
+| `OBC_SYNC_HOURS`   | `0`                    | Optional fallback: in-process interval (0 = off)      |
+| `OBC_LISTS_HOURS`  | `0`                    | Optional fallback: in-process interval (0 = off)      |
 
-`PORT` is provided by Render automatically.
+`PORT` is provided by the host automatically.
 
 ## Releasing a version
 

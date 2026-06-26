@@ -17,13 +17,11 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 
+from .htmlutil import node_text
+
 _PPN_RE = re.compile(r"/catalogus/([0-9xX]+)/([^/?#\"]+)")
 _PAGER_RE = re.compile(r"zoekresultaten\.catalogus\.(\d+)\.html")
 _YEAR_RE = re.compile(r"\b(1\d{3}|20\d{2})\b")
-
-
-def _text(node) -> str:
-    return re.sub(r"\s+", " ", node.get_text(" ", strip=True)).strip() if node else ""
 
 
 def max_page(html: str) -> int:
@@ -49,10 +47,10 @@ def parse_listing(html: str) -> tuple[list[dict[str, Any]], int]:
             "ppn": ppn,
             "slug": slug,
             "url": f"https://www.onlinebibliotheek.nl/catalogus/{ppn}/{slug}",
-            "title": _text(li.select_one("span.title")) or None,
-            "author": (_text(li.select_one("span.creator")).rstrip(" |").strip()
+            "title": node_text(li.select_one("span.title")) or None,
+            "author": (node_text(li.select_one("span.creator")).rstrip(" |").strip()
                        or None),
-            "summary": _text(li.select_one("p.maintext")) or None,
+            "summary": node_text(li.select_one("p.maintext")) or None,
             "source": "listing",
         }
 
@@ -63,7 +61,7 @@ def parse_listing(html: str) -> tuple[list[dict[str, Any]], int]:
         # format from the "medium" line classes / text
         medium = li.select_one("p.additional.medium, p[class*='medium']")
         cls = " ".join(medium.get("class", [])) if medium else ""
-        mtext = _text(medium).lower() if medium else ""
+        mtext = node_text(medium).lower() if medium else ""
         if "digitalaudiobook" in cls or "luisterboek" in mtext:
             rec["format"] = "audiobook"
         elif "ebook" in cls or "e-book" in mtext:
@@ -78,7 +76,7 @@ def parse_listing(html: str) -> tuple[list[dict[str, Any]], int]:
 def _parse_additional(li, rec: dict[str, Any]) -> None:
     """Parse the ``p.additional`` lines: category + 'lang | extent | pub | year'."""
     for p in li.select("p.additional"):
-        txt = _text(p)
+        txt = node_text(p)
         if not txt:
             continue
         low = txt.lower()
