@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-26
+
 ### Added
 - Fly.io deploy config (`fly.toml`): private image via Fly's registry, SQLite on a
   Fly Volume, region Amsterdam (EU). DEPLOY.md documents it as the primary target.
@@ -29,7 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   listing/detail parsers and the harvest/load pipeline. No behaviour change.
 
 ### Fixed
-- Scheduler ran a non-existent `obc sync`; it now runs `scrape --sync` + `normalize`.
+- List detail pages: a generic `.row` CSS rule leaked the card border/background onto
+  the site header; scoped it under `.booklist`.
+- Author pages now show the curated-list / prize ribbon on book covers, matching the
+  search overview (the route already provided the data; only the template lacked it).
+
+### Removed
+- In-process interval scheduler — the weekly refresh is cron-triggered only (a Fly
+  scheduled machine → `POST /admin/refresh`), so the web process holds no timers.
 
 ## [0.1.2] - 2026-06-25
 
