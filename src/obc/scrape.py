@@ -266,7 +266,9 @@ def enrich(rate: float, limit=None) -> None:
         todo.append(rec)
     logger.info(f"Enriching {len(todo)} record(s) lacking detail fields")
     n = 0
-    with Client(per_second=rate) as client:
+    # cache=False: don't accumulate ~2GB of detail HTML on the volume — the merged
+    # record itself is the persistent result, and already-enriched records are skipped.
+    with Client(per_second=rate, cache=False) as client:
         for rec in todo:
             detail = client.fetch_detail(rec["ppn"], rec["slug"])
             if detail:

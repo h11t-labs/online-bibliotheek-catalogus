@@ -37,7 +37,20 @@ _LABEL_MAP = {
     "speelduur": "duration",
     "aantekening": "note",
     "ook beschikbaar als": "also_available_as",
+    "leeftijd": "age",        # children's books, e.g. "9-12 jaar" / "AA" / "AVI…"
+    "inhoud": "category",     # "Fictie" / "Non-fictie"
 }
+
+
+def _parse_serie(value: str) -> tuple[str | None, int | None]:
+    """'De spannende avonturen met Dolfi (7)' -> ('De spannende avonturen met Dolfi', 7)."""
+    value = (value or "").strip()
+    if not value:
+        return None, None
+    m = re.search(r"\(\s*(\d+)\s*\)\s*$", value)
+    no = int(m.group(1)) if m else None
+    name = re.sub(r"\s*\(\s*\d+\s*\)\s*$", "", value).strip(" .,;")
+    return (name or None), no
 
 # onlinebibliotheek.nl: /catalogus/{ppn}/{slug}
 _CANONICAL_RE = re.compile(r"/catalogus/([0-9xX]+)/([^/?#]+)")
@@ -108,6 +121,7 @@ def parse_detail(html: str, ppn: str | None = None) -> dict[str, Any]:
 
     # --- dt/dd metadata ----------------------------------------------------
     subjects: list[str] = []
+    keywords: list[str] = []
     audience = None
     for dt in soup.find_all("dt"):
         dd = dt.find_next_sibling("dd")
@@ -118,10 +132,17 @@ def parse_detail(html: str, ppn: str | None = None) -> dict[str, Any]:
         low = label.lower()
 
         if low.startswith("onderwerpen"):
-            # "Onderwerpen: Volwassenen" -> audience = Volwassenen
-            if ":" in label:
+            parts = [s.strip() for s in re.split(r"[|·•]", value) if s.strip()]
+            if ":" in label:  # "Onderwerpen: Jeugd" -> the curated genre facets
                 audience = label.split(":", 1)[1].strip() or None
-            subjects.extend(s.strip() for s in re.split(r"[|·•]", value) if s.strip())
+                subjects.extend(parts)
+            else:             # plain "Onderwerpen" -> free keyword tags
+                keywords.extend(parts)
+            continue
+        if low == "serie":
+            s, no = _parse_serie(value)
+            if s:
+                rec["series"], rec["series_no"] = s, no
             continue
 
         field = _LABEL_MAP.get(low)
@@ -138,11 +159,16 @@ def parse_detail(html: str, ppn: str | None = None) -> dict[str, Any]:
             if rec.get("duration") and ":" not in value:
                 continue
             rec["duration"] = value
+        elif field == "category":
+            low_v = value.lower()
+            rec["category"] = ("nonfictie" if "non" in low_v
+                               else "fictie" if "fictie" in low_v else value)
         else:
             rec.setdefault(field, value)
 
     rec["audience"] = audience
-    rec["subjects"] = list(dict.fromkeys(subjects))  # dedupe, keep order
+    rec["subjects"] = list(dict.fromkeys(subjects))   # dedupe, keep order
+    rec["keywords"] = list(dict.fromkeys(keywords))
     return rec
 
 

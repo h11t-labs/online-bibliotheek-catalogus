@@ -37,3 +37,16 @@ def test_cover_and_ppn_present():
     assert r["ppn"] == "416728413"
     assert "leibniz.zbkb.nl" in r["cover_url"]
     assert r["pages"] == 728
+
+
+def test_jeugd_detail_enrichment():
+    # a children's book carries Leeftijd, an explicit Serie, Inhoud + keyword tags
+    r = _parse("detail_jeugd_422516414.html")
+    assert r["ppn"] == "422516414"
+    assert r["age"] == "9-12 jaar"
+    assert r["series"] == "De spannende avonturen met Dolfi"
+    assert r["series_no"] == 7
+    assert r["category"] == "fictie"
+    # curated jeugd genres -> subjects; the plain "Onderwerpen" -> keywords
+    assert "Natuur & Dieren" in r["subjects"]
+    assert "Dolfijnen" in r["keywords"] and "Dolfijnen" not in r["subjects"]

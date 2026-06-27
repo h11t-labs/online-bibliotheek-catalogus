@@ -9,6 +9,7 @@ endpoint, which calls :func:`trigger_refresh`. The work (incremental sync + list
 
 from __future__ import annotations
 
+import os
 import subprocess
 import threading
 
@@ -32,9 +33,15 @@ def _seeded() -> bool:
 
 def _default_cmds() -> list[list[str]]:
     """The refresh pipeline: harvest (full on an empty volume, else incremental),
-    refresh curated lists, then a single normalize that reflects both."""
+    optionally enrich detail-only fields (age/series/keywords), refresh curated
+    lists, then a single normalize that reflects it all. Enrich is gated by
+    ``OBC_ENRICH=1`` since the first full pass fetches every detail page (slow)."""
     harvest = ["scrape", "--sync"] if _seeded() else ["scrape", "--full"]
-    return [harvest, ["lists", "update"], ["normalize"]]
+    cmds = [harvest]
+    if os.environ.get("OBC_ENRICH") == "1":
+        cmds.append(["scrape", "--enrich"])
+    cmds += [["lists", "update"], ["normalize"]]
+    return cmds
 
 
 def _run(cmds: list[list[str]]) -> None:

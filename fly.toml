@@ -17,6 +17,11 @@ primary_region = "ams"                  # Amsterdam (EU)
   # harvest on a fresh volume, otherwise an incremental sync. Runs in-process in a
   # background thread. Local dev leaves this unset, so it never scrapes.
   OBC_REFRESH_ON_STARTUP = "1"
+  # Enrich detail-only fields (Leeftijd, explicit Serie, keywords) from the detail
+  # pages during the refresh. The first pass fetches every detail page (~hours,
+  # resumable, zero-downtime); afterwards only new titles are fetched. Set to "0" to
+  # pause it.
+  OBC_ENRICH = "1"
   # Weekly refresh is driven by a Fly scheduled (cron) machine that POSTs to
   # /admin/refresh; the work runs in-process here (normalize streams at ~190MB, so
   # the 512MB VM below is fine). Set the shared secret with:

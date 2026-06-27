@@ -97,6 +97,8 @@
         {{ r('Bestandstype', b['features']) }}
         {% if b['format']=='ebook' and b['ereader'] is not none %}{{ r('Voor e-reader', 'Ja' if b['ereader'] else 'Nee (alleen in de app)') }}{% endif %}
         {{ r('Doelgroep', b['audience']) }}
+        {{ r('Leeftijd', b['age']) }}
+        {{ r('Trefwoorden', b['keywords']) }}
         {{ r('Ook beschikbaar als', b['also_available_as']) }}
       </div>
     </div>
