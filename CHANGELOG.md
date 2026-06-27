@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.13] - 2026-06-27
+
 ### Fixed
 - Book detail pages showed "de catalogus wordt opgebouwd" (503) on a catalog DB built
   before the v0.3.12 `genres.code/parent` columns: the genre query referenced columns
