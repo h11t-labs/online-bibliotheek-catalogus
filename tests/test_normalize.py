@@ -48,7 +48,7 @@ def _enrich(raw):
     """Run the read-only half of the pipeline; return (records, by_isbn, by_key)."""
     paths = sorted((raw / "records").rglob("*.json"))
     aux = normalize._load_aux()
-    canon, by_isbn, by_key = normalize._prepass(paths)
+    canon, by_isbn, by_key, _ = normalize._prepass(paths)
     records = {r["ppn"]: r for r in normalize.iter_records(paths, aux, canon)}
     return records, by_isbn, by_key
 

@@ -77,7 +77,7 @@
 
       {% if genres %}
       <div class="genres">
-        {% for g in genres %}<a class="chip" href="/?genre={{ g|urlencode }}">{{ g }}</a>{% endfor %}
+        {% for g in genres %}<a class="chip" href="/?genre={{ g.name|urlencode }}">{% if g.parent %}<span style="opacity:.6">{{ g.parent }} › </span>{% endif %}{{ g.name }}</a>{% endfor %}
       </div>
       {% endif %}
 
