@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-06-27
+
 ### Added
 - "Last updated" dates: the footer shows when the catalogus was last (re)built, and
   each list (on `/lists` and the list page) shows its `Bijgewerkt op` date.
