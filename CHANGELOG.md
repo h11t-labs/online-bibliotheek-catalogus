@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Header **theme switcher** cycling System / Light / Dark, persisted in
+  localStorage. The dark palette now applies via an explicit `data-theme` override
+  too (not only `prefers-color-scheme`), so a theme can be forced.
+- **`/over`** — a static About page (project, data source, how it works), rendered
+  independently of the catalog DB.
+
+### Changed
+- The catalog now **builds/refreshes itself** — no manual seeding:
+  - **After every deploy**: the new machine triggers a refresh on startup
+    (`OBC_REFRESH_ON_STARTUP=1`), self-seeding — a full harvest on a fresh volume,
+    otherwise an incremental sync, then lists + normalize, in a background thread.
+  - **On a schedule**: a weekly Fly **cron machine** (`catalog-cron`) POSTs the
+    token-protected `/admin/refresh` over Fly's private network. It is provisioned
+    **by the deploy pipeline** (idempotently), not by hand.
+
 ## [0.2.0] - 2026-06-26
 
 ### Added
