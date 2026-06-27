@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.12] - 2026-06-27
+
 ### Added
 - **Genre hierarchy**: the curated genres form a tree (e.g. *Natuur & Dieren* →
   *Dolfijnen & Walvissen* / *Wilde dieren*), derived from the detail-page facet codes
