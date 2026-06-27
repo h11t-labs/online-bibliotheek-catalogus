@@ -40,6 +40,7 @@
       <h2>{{ l['name'] }}</h2>
       {% if l['description'] %}<p>{{ l['description'] }}</p>{% endif %}
       <div class="meta"><b>{{ l['available'] or 0 }}</b> van {{ l['total'] }} beschikbaar in de bibliotheek</div>
+      {% if l['updated_at'] %}<div class="meta" style="margin-top:4px;opacity:.7">Bijgewerkt op {{ l['updated_at'] | nldate }}</div>{% endif %}
     </a>
     {% endfor %}
   </div>

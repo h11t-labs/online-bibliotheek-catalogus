@@ -39,6 +39,7 @@
     <h1>{{ lst['name'] }}</h1>
     {% if lst['description'] %}<p>{{ lst['description'] }}</p>{% endif %}
     <div class="stat"><b>{{ available }}</b> van {{ total }} titels beschikbaar in de bibliotheek</div>
+    {% if lst['updated_at'] %}<div class="src" style="opacity:.7">Lijst bijgewerkt op {{ lst['updated_at'] | nldate }}</div>{% endif %}
     {% if lst['url'] %}<div class="src"><a class="flink" href="{{ lst['url'] }}" target="_blank" rel="noopener" style="text-decoration:underline dotted">bron: {{ lst['url'] }} ↗</a></div>{% endif %}
     <div class="seg avail-filter">
       <a class="seg-opt {{ 'on' if not show }}" href="/list/{{ lst['slug'] }}">Alles ({{ total }})</a>
