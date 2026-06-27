@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.14] - 2026-06-27
+
 ### Added
 - Custom domain wired into the deploy pipeline: with the `OBC_DOMAIN` repo variable set,
   the deploy stages `OBC_SITE_URL=https://<domain>` (canonical/sitemap/OG) and
