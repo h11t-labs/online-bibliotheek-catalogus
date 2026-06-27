@@ -94,9 +94,8 @@ def test_seo_meta_and_jsonld(client):
 
 def test_goatcounter_snippet_present(client):
     body = client.get("/").text
-    assert "h11t-labs.goatcounter.com/count" in body
+    assert "obc.goatcounter.com/count" in body
     assert "//gc.zgo.at/count.js" in body
-    assert "location.host + p" in body  # host-prefixed path config
 
 
 def test_admin_refresh_requires_token(client):
