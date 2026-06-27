@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- GoatCounter is now wired to the `h11t-labs` counter with the host-prefixed `path`
+  config (so one account can tell sites apart by host), replacing the env-driven
+  placeholder. count.js skips localhost, so dev stays out of the stats.
+
 ## [0.3.7] - 2026-06-27
 
 ### Added
