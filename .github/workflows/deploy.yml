@@ -88,3 +88,27 @@ jobs:
         run: |
           if [ -z "$FLY_API_TOKEN" ]; then echo "No FLY_API_TOKEN set — skipping deploy."; exit 0; fi
           flyctl deploy --remote-only
+
+      - name: Trigger catalog refresh after deploy
+        env:
+          OBC_REFRESH_TOKEN: ${{ secrets.OBC_REFRESH_TOKEN }}
+        run: |
+          # Rebuild/refresh the catalog on the new release (the work runs in the
+          # web machine where the volume lives; the call returns 202 immediately).
+          # On a fresh volume the app does a full harvest; otherwise an incremental
+          # sync. Non-fatal: a failed trigger must not fail the deploy.
+          if [ -z "$OBC_REFRESH_TOKEN" ]; then
+            echo "No OBC_REFRESH_TOKEN — skipping post-deploy refresh."; exit 0
+          fi
+          url="https://online-bibliotheek-catalogus.fly.dev/admin/refresh"
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -m 30 -X POST "$url" \
+              -H "Authorization: Bearer $OBC_REFRESH_TOKEN" || echo 000)
+            echo "attempt $i -> HTTP $code"
+            case "$code" in
+              202) echo "refresh started"; exit 0 ;;
+              409) echo "refresh already running"; exit 0 ;;
+            esac
+            sleep 10
+          done
+          echo "post-deploy refresh did not start (non-fatal)"; exit 0

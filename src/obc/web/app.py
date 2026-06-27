@@ -277,6 +277,12 @@ def stats_page(request: Request):
     return _templates.TemplateResponse(request, "stats.html", {"s": data})
 
 
+@app.get("/over", response_class=HTMLResponse)
+def about(request: Request):
+    """Static 'about' page — independent of the catalog DB so it always renders."""
+    return _templates.TemplateResponse(request, "over.html", {})
+
+
 @app.get("/author/{name}", response_class=HTMLResponse)
 def author_page(request: Request, name: str):
     conn = _conn()
