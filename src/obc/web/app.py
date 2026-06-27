@@ -34,9 +34,6 @@ PAGE_SIZE = 24
 # Absolute site origin for canonical/OG/sitemap URLs (e.g. https://…fly.dev). Empty
 # locally → those fall back to the request's own base URL.
 SITE_URL = os.environ.get("OBC_SITE_URL", "").rstrip("/")
-# GoatCounter counter URL (privacy-friendly analytics), e.g.
-# https://yourcode.goatcounter.com/count. Unset → no analytics script is emitted.
-GOATCOUNTER = os.environ.get("OBC_GOATCOUNTER", "").strip()
 SITEMAP_PAGE = 45000  # book URLs per sitemap file (under the 50k/file limit)
 
 _templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -111,7 +108,6 @@ _templates.env.globals["url_with"] = _url_with
 _templates.env.globals["url_without"] = _url_without
 _templates.env.globals["data_updated"] = _data_updated
 _templates.env.globals["site_url"] = SITE_URL
-_templates.env.globals["goatcounter"] = GOATCOUNTER
 
 try:
     from importlib.metadata import version as _pkg_version
