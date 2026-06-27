@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-06-27
+
+### Fixed
+- Refresh still hit `ENOSPC` on the 1GB volume because the old `catalog.db` (~DB-sized)
+  sat next to the rebuild. The reclaim step now also drops the DB file itself up front
+  (it is rebuilt from `data/raw`), and logs free space + record count so a stubborn
+  full volume is diagnosable.
+
 ## [0.3.2] - 2026-06-27
 
 ### Fixed
