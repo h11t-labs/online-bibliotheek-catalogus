@@ -45,5 +45,21 @@ def test_wikiprize_parses_years_and_orders_newest_first():
     items = wikiprize.parse_wikitext(wikitext)
     assert len(items) == 2
     assert items[0] == {"title": "De Ontdekking", "author": "Anna Vrij", "isbn": None,
-                        "cover_url": None, "year": 2014, "position": 1}
+                        "cover_url": None, "year": 2014, "position": 1, "won": 1}
     assert items[1]["year"] == 2013  # sorted newest first
+
+
+def test_wikiprize_marks_nominees_vs_winners():
+    wt = ("=== Genomineerden 2020 ===\n"
+          "* [[Anna Vrij]], ''Genomineerd Boek''\n"
+          "== Winnaars ==\n"
+          "* [[Cara Licht]], ''Winnend Boek''\n")
+    by_title = {it["title"]: it for it in wikiprize.parse_wikitext(wt)}
+    assert by_title["Genomineerd Boek"]["won"] == 0  # under a nominee heading
+    assert by_title["Winnend Boek"]["won"] == 1       # winner section -> won
+
+
+def test_bestseller60_period_from_week():
+    p = bestseller60.period("… Week 26 - 2026 …")
+    assert p and p.startswith("week 26 · ") and "t/m" in p and "2026" in p
+    assert bestseller60.period("no week here") is None

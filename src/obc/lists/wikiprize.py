@@ -37,13 +37,18 @@ def _clean(text: str) -> str:
 
 
 _YEAR4 = re.compile(r"\b(19\d{2}|20\d{2})\b")
+# A section heading that introduces nominees rather than winners.
+_NOMINEE_SECTION = re.compile(r"genomineerd|nominat|shortlist|longlist|voordracht", re.I)
 
 
 def parse_wikitext(wt: str) -> list[dict]:
     items, seen = [], set()
     cur_year = None
+    nominee_ctx = False
     for line in wt.splitlines():
         line = line.strip()
+        if line.startswith("="):  # section heading: winners vs nominees context
+            nominee_ctx = bool(_NOMINEE_SECTION.search(line))
         # a section/line that names a year (e.g. "=== 2014 ===" or "* 2014:")
         ym = _YEAR4.search(line)
         if ym and (line.startswith("=") or line.startswith("*") or line.startswith("|")):
@@ -65,8 +70,12 @@ def parse_wikitext(wt: str) -> list[dict]:
             continue
         seen.add(key)
         line_year = int(ym.group(1)) if ym else cur_year
+        # Winner unless we're under a nominee section (a bold entry there is the
+        # winner). Winner-centric tables (e.g. Libris) have no nominee section,
+        # so everything defaults to won=1.
+        won = 0 if (nominee_ctx and "'''" not in line) else 1
         items.append({"title": title, "author": author, "isbn": None,
-                      "cover_url": None, "year": line_year})
+                      "cover_url": None, "year": line_year, "won": won})
     # newest prizes first; position is just a stable ordinal
     items.sort(key=lambda it: (-(it["year"] or 0)))
     for i, it in enumerate(items, 1):

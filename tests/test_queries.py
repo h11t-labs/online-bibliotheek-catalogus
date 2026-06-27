@@ -82,7 +82,8 @@ def test_book_detail(ro_conn):
     assert detail["row"]["title"] == "De Ontdekking"
     assert detail["editions"].get("audiobook") == "002"  # the audiobook edition
     assert "Anna Vrij" in detail["authors"]
-    assert any(bl["slug"] == "test-top" for bl in detail["book_lists"])
+    bl = next(b for b in detail["book_lists"] if b["slug"] == "test-top")
+    assert bl["won"] == 1  # carried through from the list item
     assert Q.book_detail(ro_conn, "nope") is None
 
 

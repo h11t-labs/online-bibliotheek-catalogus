@@ -6,12 +6,39 @@ at clean sub-paths; each renders with the same card markup.
 
 from __future__ import annotations
 
+import datetime
 import html
 import re
 
 import httpx
 
 from ..log import logger
+
+_NL_MONTHS = ("", "januari", "februari", "maart", "april", "mei", "juni", "juli",
+              "augustus", "september", "oktober", "november", "december")
+
+
+def period(page: str) -> str | None:
+    """Render the page's 'Week N - YYYY' as 'week N · D t/m D maand jaar' (the
+    Mon–Sun range the bestseller list covers)."""
+    m = re.search(r"Week\s*(\d{1,2})\s*[-–]\s*(20\d\d)", page)
+    if not m:
+        return None
+    week, year = int(m.group(1)), int(m.group(2))
+    try:
+        mon = datetime.date.fromisocalendar(year, week, 1)
+        sun = datetime.date.fromisocalendar(year, week, 7)
+    except ValueError:
+        return None
+    if mon.month == sun.month:
+        rng = f"{mon.day} t/m {sun.day} {_NL_MONTHS[sun.month]} {sun.year}"
+    elif mon.year == sun.year:
+        rng = (f"{mon.day} {_NL_MONTHS[mon.month]} t/m "
+               f"{sun.day} {_NL_MONTHS[sun.month]} {sun.year}")
+    else:
+        rng = (f"{mon.day} {_NL_MONTHS[mon.month]} {mon.year} t/m "
+               f"{sun.day} {_NL_MONTHS[sun.month]} {sun.year}")
+    return f"week {week} · {rng}"
 
 URL = "https://www.debestseller60.nl"
 _UA = "online-bibliotheek-catalogus/0.1 (personal project)"
@@ -62,6 +89,7 @@ def parse(page: str) -> list[dict]:
 
 def fetch_all() -> list[dict]:
     out = []
+    span = None  # the week/date range, read once from the main page
     with httpx.Client(headers={"User-Agent": _UA}, timeout=30,
                       follow_redirects=True) as client:
         for slug, name, path, desc in SUBLISTS:
@@ -69,11 +97,14 @@ def fetch_all() -> list[dict]:
             try:
                 r = client.get(url)
                 r.raise_for_status()
-                items = parse(r.text)
             except (httpx.HTTPError, httpx.HTTPStatusError) as e:
                 logger.warning(f"{slug}: fetch failed ({e})")
                 continue
+            if span is None:
+                span = period(r.text)
+            items = parse(r.text)
             if items:
+                full_desc = f"{desc} — {span}" if span else desc
                 out.append({"slug": slug, "name": name, "url": url,
-                            "description": desc, "items": items})
+                            "description": full_desc, "items": items})
     return out

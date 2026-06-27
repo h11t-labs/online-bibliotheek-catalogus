@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- "Last updated" dates: the footer shows when the catalogus was last (re)built, and
+  each list (on `/lists` and the list page) shows its `Bijgewerkt op` date.
+- The Bestseller 60 lists now show the **week + date range** they cover
+  (e.g. "week 26 · 22 t/m 28 juni 2026").
+- Award lists now distinguish **winners from nominees** — entries show
+  "· gewonnen" / "· genomineerd" on book, author and list pages (parsed from the
+  Wikipedia section structure).
+
+### Changed
+- The **About page** (`/over`) is rewritten for visitors: plain language about what
+  the site is and how to borrow, without the technical jargon.
+
 ## [0.3.4] - 2026-06-27
 
 ### Fixed
