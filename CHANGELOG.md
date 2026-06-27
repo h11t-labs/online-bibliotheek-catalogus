@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.11] - 2026-06-27
+
 ### Added
 - **Detail-page enrichment**: books now carry **Leeftijd** (reading age), an explicit
   **Serie** (name + number, more reliable than guessing it from the title),
