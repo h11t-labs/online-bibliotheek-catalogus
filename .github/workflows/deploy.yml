@@ -82,6 +82,30 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Ensure catalog volume is at least 2 GB
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          # 68k+ per-book record files exhaust the inode table of a 1GB ext4 volume,
+          # so writes fail with ENOSPC even with free blocks. 2GB ~doubles the inode
+          # budget. Idempotent (extend only when smaller). Runs *before* deploy so the
+          # machine remounts (and resize2fs grows) the filesystem on its restart.
+          if [ -z "$FLY_API_TOKEN" ]; then echo "No FLY_API_TOKEN — skipping volume check."; exit 0; fi
+          app=online-bibliotheek-catalogus; target=2
+          vol=$(flyctl volumes list --app "$app" --json 2>/dev/null \
+                | jq -r 'first(.[] | select(.name=="catalog_data"))')
+          id=$(echo "$vol" | jq -r '.id // empty')
+          size=$(echo "$vol" | jq -r '.size_gb // 0')
+          echo "volume '$id' is ${size}GB (target ${target}GB)"
+          if [ -n "$id" ] && [ "${size:-0}" -lt "$target" ]; then
+            flyctl volumes extend "$id" -s "$target" --app "$app" -y \
+              && echo "extended to ${target}GB" \
+              || echo "WARNING: volume extend failed (check FLY_API_TOKEN scope)."
+          else
+            echo "volume already >= ${target}GB; nothing to do."
+          fi
+
       - name: Deploy to Fly.io (skips if not configured)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

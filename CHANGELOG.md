@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-06-27
+
+### Fixed
+- Root cause of the persistent `ENOSPC`: the ~64k per-book record files exhausted the
+  **inode table** of the 1GB ext4 volume (plenty of free blocks, but no free inodes),
+  so any new file write failed. The deploy pipeline now ensures the catalog volume is
+  **≥ 2GB** (idempotent — extend only when smaller, before deploy so the machine
+  remounts the grown filesystem), and `fly.toml` sizes a fresh volume at 2GB.
+
 ## [0.3.3] - 2026-06-27
 
 ### Fixed
