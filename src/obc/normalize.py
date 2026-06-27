@@ -74,11 +74,15 @@ def _transform(r: dict, ereader: set, have_ereader: bool, genres_map: dict,
         r["subjects"] = list(dict.fromkeys((r.get("subjects") or []) + genres_map[ppn]))
     if ppn in recent_map:
         r["added_rank"] = recent_map[ppn]
-    s, no = detect_series(r.get("title"))
-    if not s:
-        s, no = detect_series(r.get("note"))
-    if s:
-        r["series"], r["series_no"] = s, no
+    if isinstance(r.get("keywords"), list):  # detail page -> store as one string
+        r["keywords"] = ", ".join(r["keywords"]) or None
+    # The detail page's explicit "Serie" field wins; otherwise sniff the title/note.
+    if not r.get("series"):
+        s, no = detect_series(r.get("title"))
+        if not s:
+            s, no = detect_series(r.get("note"))
+        if s:
+            r["series"], r["series_no"] = s, no
     p = r.get("publisher")
     if p:
         r["publisher"] = canonical_publisher(p, canon.get(publisher_key(p), p))

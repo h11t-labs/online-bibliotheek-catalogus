@@ -54,6 +54,9 @@ CREATE TABLE IF NOT EXISTS books (
     added_rank        INTEGER,         -- recency rank by license date (0 = newest)
     series            TEXT,
     series_no         INTEGER,
+    age               TEXT,            -- reading age, e.g. "9-12 jaar" (detail page)
+    keywords          TEXT,            -- free keyword tags (detail page)
+    category          TEXT,            -- 'fictie' | 'nonfictie'
     raw_json          TEXT,
     scraped_at        TEXT
 );
@@ -155,7 +158,8 @@ _BOOK_COLS = [
     "ppn", "slug", "url", "title", "author", "format", "language", "publisher",
     "year", "isbn", "pages", "duration", "size", "features", "narrator",
     "audience", "summary", "cover_url", "also_available_as", "note", "ereader",
-    "added_rank", "series", "series_no", "raw_json", "scraped_at",
+    "added_rank", "series", "series_no", "age", "keywords", "category",
+    "raw_json", "scraped_at",
 ]
 
 # All tables, in FK-safe drop order, for a clean full rebuild in bulk_load.
@@ -164,9 +168,13 @@ _ALL_TABLES = ("book_genres", "genres", "book_authors", "authors", "publishers",
 
 
 def _fts_values(rec: dict[str, Any]) -> tuple:
-    """The 5-tuple inserted into ``books_fts`` for one record."""
+    """The 5-tuple inserted into ``books_fts`` for one record (subjects + keywords
+    share the ``subjects`` column so both are searchable)."""
+    kw = rec.get("keywords")
+    kw = " ".join(kw) if isinstance(kw, list) else (kw or "")
+    subjects = (" ".join(rec.get("subjects") or []) + " " + kw).strip()
     return (rec["ppn"], rec.get("title") or "", rec.get("author") or "",
-            " ".join(rec.get("subjects") or []), rec.get("summary") or "")
+            subjects, rec.get("summary") or "")
 
 
 def connect(path: str | Path = DEFAULT_DB) -> sqlite3.Connection:

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Detail-page enrichment**: books now carry **Leeftijd** (reading age), an explicit
+  **Serie** (name + number, more reliable than guessing it from the title),
+  **keywords**, and fiction/non-fiction — parsed from the detail pages. New
+  `age` / `keywords` / `category` columns; keywords are searchable. The refresh runs
+  `scrape --enrich` when `OBC_ENRICH=1` (a one-time pass over every detail page —
+  hours, resumable, zero-downtime, no HTML cache kept; then only new titles).
+
 ## [0.3.10] - 2026-06-27
 
 ### Fixed
