@@ -156,15 +156,14 @@ def match_lists(by_isbn: dict, by_key: dict) -> list[dict]:
 
 
 def _reclaim_disk(db_path: Path, raw_dir: Path) -> None:
-    """Free space before a rebuild (matters on a tight volume). The catalog DB is
-    fully rebuilt from ``data/raw``, so we drop the DB itself + its WAL/journal
-    sidecars up front — freeing their space for the rebuild instead of holding the
-    old and new copy at once — plus the on-disk HTML cache (not needed to rebuild).
-    Deleting frees space without needing any, so it works even when the volume is
-    already full."""
+    """Tidy up before a rebuild: drop stale SQLite sidecars + any leftover temp DB
+    from a crashed run, plus the on-disk HTML cache (not needed to rebuild). The
+    *live* catalog DB is left untouched — the rebuild builds a temp copy and swaps
+    it in atomically, so readers keep seeing the old DB until the swap (no downtime)."""
     db_path = Path(db_path)
-    for p in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm"),
-              Path(f"{db_path}-journal")):
+    tmp = db_path.with_name(db_path.name + ".tmp")
+    for p in (Path(f"{db_path}-wal"), Path(f"{db_path}-shm"), Path(f"{db_path}-journal"),
+              tmp, Path(f"{tmp}-wal"), Path(f"{tmp}-shm"), Path(f"{tmp}-journal")):
         try:
             p.unlink(missing_ok=True)
         except OSError:
@@ -184,16 +183,23 @@ def _reclaim_disk(db_path: Path, raw_dir: Path) -> None:
 
 
 def normalize(raw_dir: Path = RAW_DIR, db_path: Path = db.DEFAULT_DB) -> dict:
-    _reclaim_disk(Path(db_path), raw_dir)
+    db_path = Path(db_path)
+    _reclaim_disk(db_path, raw_dir)
     paths = sorted((raw_dir / "records").rglob("*.json"))
     aux = _load_aux()
     canon, by_isbn, by_key = _prepass(paths)   # light pass: canon + match maps
     lists = match_lists(by_isbn, by_key)
-    conn = db.connect(db_path)
+    # Build into a temp DB, then swap it in atomically — the web app keeps serving
+    # the old, complete catalog throughout the rebuild (no "wordt opgebouwd" window).
+    tmp = db_path.with_name(db_path.name + ".tmp")
+    conn = db.connect(tmp)
     # stream records in batches — constant memory, no full in-RAM load
     n = db.stream_rebuild(conn, iter_records(paths, aux, canon), lists)
     s = db.stats(conn)
     conn.close()
+    os.replace(tmp, db_path)  # atomic on the same filesystem
+    for sc in (f"{db_path}-wal", f"{db_path}-shm", f"{db_path}-journal"):
+        Path(sc).unlink(missing_ok=True)
     logger.info(f"Normalized {n} record(s). DB now: {s}")
     return s
 

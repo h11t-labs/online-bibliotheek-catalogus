@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- No more "de catalogus wordt opgebouwd" page during a routine refresh/deploy:
+  `normalize` now builds a **temp DB and swaps it in atomically** (`os.replace`), so
+  the web app keeps serving the old, complete catalog throughout the ~2–3 min rebuild
+  instead of 503-ing while the tables are dropped/recreated. (The very first build on
+  an empty volume still shows the page until there's data to serve.)
+
 ## [0.3.9] - 2026-06-27
+
+### Changed
+- GoatCounter now points to its own site (`obc.goatcounter.com`); dropped the
+  host-prefix `path` config (a dedicated GoatCounter site per project is cleaner).
 
 ## [0.3.8] - 2026-06-27
 
