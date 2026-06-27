@@ -297,9 +297,11 @@ def book_detail(conn: sqlite3.Connection, ppn: str) -> dict | None:
     row = conn.execute("SELECT * FROM books WHERE ppn = ?", (ppn,)).fetchone()
     if row is None:
         return None
-    genres = [r["name"] for r in conn.execute(
-        "SELECT g.name FROM genres g JOIN book_genres bg ON bg.genre_id = g.id "
-        "WHERE bg.book_ppn = ? ORDER BY g.name", (ppn,))]
+    genres = [{"name": r["name"], "parent": r["parent_name"]} for r in conn.execute(
+        "SELECT g.name, p.name AS parent_name "
+        "FROM genres g JOIN book_genres bg ON bg.genre_id = g.id "
+        "LEFT JOIN genres p ON p.code = g.parent "
+        "WHERE bg.book_ppn = ? ORDER BY COALESCE(p.name, g.name), g.name", (ppn,))]
     # other editions of the same work (e.g. the audiobook of this e-book)
     editions = {row["format"]: ppn}
     for r in conn.execute(

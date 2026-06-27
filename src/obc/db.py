@@ -62,8 +62,10 @@ CREATE TABLE IF NOT EXISTS books (
 );
 
 CREATE TABLE IF NOT EXISTS genres (
-    id   INTEGER PRIMARY KEY,
-    name TEXT UNIQUE
+    id     INTEGER PRIMARY KEY,
+    name   TEXT UNIQUE,
+    code   TEXT,             -- facet code, e.g. "2.6" (major.minor)
+    parent TEXT              -- parent code "2.0" for a sub-genre; NULL = top-level
 );
 
 CREATE TABLE IF NOT EXISTS book_genres (
@@ -466,3 +468,16 @@ def stats(conn: sqlite3.Connection) -> dict[str, Any]:
         "genres": g("SELECT COUNT(*) FROM genres"),
         "languages": g("SELECT COUNT(DISTINCT language) FROM books"),
     }
+
+
+def set_genre_codes(conn: sqlite3.Connection, code_of: dict[str, str]) -> None:
+    """Stamp each genre with its facet ``code`` + ``parent`` code (the hierarchy).
+    ``code_of`` maps a genre name to its 'major.minor' code (from detail pages); a
+    sub-genre ('X.Y', Y≠0) gets parent 'X.0', a top-level one ('X.0') gets NULL."""
+    rows = []
+    for name, code in code_of.items():
+        major, _, minor = (code or "").partition(".")
+        parent = f"{major}.0" if (minor and minor != "0") else None
+        rows.append((code or None, parent, name))
+    conn.executemany("UPDATE genres SET code = ?, parent = ? WHERE name = ?", rows)
+    conn.commit()

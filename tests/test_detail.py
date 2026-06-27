@@ -50,3 +50,7 @@ def test_jeugd_detail_enrichment():
     # curated jeugd genres -> subjects; the plain "Onderwerpen" -> keywords
     assert "Natuur & Dieren" in r["subjects"]
     assert "Dolfijnen" in r["keywords"] and "Dolfijnen" not in r["subjects"]
+    # genre facet codes reveal the hierarchy: 2.0 (parent) -> 2.6 (sub-genre)
+    codes = {g["name"]: g["code"] for g in r["genres"]}
+    assert codes["Natuur & Dieren"] == "2.0"
+    assert codes["Wilde dieren"] == "2.6"

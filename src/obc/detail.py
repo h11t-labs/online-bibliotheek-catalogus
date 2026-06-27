@@ -122,6 +122,7 @@ def parse_detail(html: str, ppn: str | None = None) -> dict[str, Any]:
     # --- dt/dd metadata ----------------------------------------------------
     subjects: list[str] = []
     keywords: list[str] = []
+    genres: list[dict] = []  # curated genres with their facet code, e.g. 2.6 (sub of 2.0)
     audience = None
     for dt in soup.find_all("dt"):
         dd = dt.find_next_sibling("dd")
@@ -135,7 +136,13 @@ def parse_detail(html: str, ppn: str | None = None) -> dict[str, Any]:
             parts = [s.strip() for s in re.split(r"[|·•]", value) if s.strip()]
             if ":" in label:  # "Onderwerpen: Jeugd" -> the curated genre facets
                 audience = label.split(":", 1)[1].strip() or None
-                subjects.extend(parts)
+                # the genre links carry the hierarchical facet code (major.minor)
+                coded = [(m.group(1), node_text(a))
+                         for a in dd.find_all("a", href=True)
+                         if (m := re.search(r"onderwerp\w*=([0-9]+\.[0-9]+)", a["href"]))
+                         and node_text(a)]
+                genres.extend({"code": c, "name": n} for c, n in coded)
+                subjects.extend([n for _, n in coded] or parts)
             else:             # plain "Onderwerpen" -> free keyword tags
                 keywords.extend(parts)
             continue
@@ -169,6 +176,7 @@ def parse_detail(html: str, ppn: str | None = None) -> dict[str, Any]:
     rec["audience"] = audience
     rec["subjects"] = list(dict.fromkeys(subjects))   # dedupe, keep order
     rec["keywords"] = list(dict.fromkeys(keywords))
+    rec["genres"] = genres                            # [{code, name}] with hierarchy
     return rec
 
 

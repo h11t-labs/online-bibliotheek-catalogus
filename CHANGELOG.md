@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Genre hierarchy**: the curated genres form a tree (e.g. *Natuur & Dieren* →
+  *Dolfijnen & Walvissen* / *Wilde dieren*), derived from the detail-page facet codes
+  (`major.minor` — `X.0` is a top-level genre, `X.Y` a sub-genre of `X.0`). Genres now
+  carry a `code` + `parent`; book pages show the parent (*Natuur & Dieren › Wilde
+  dieren*). The previously empty genre facet also fills itself via the enrich pass
+  (the detail pages carry the genre names).
+
 ## [0.3.11] - 2026-06-27
 
 ### Added

@@ -53,6 +53,18 @@ def test_upsert_is_idempotent(tmp_path):
     conn.close()
 
 
+def test_genre_hierarchy_codes(tmp_path):
+    recs = [{"ppn": "1", "title": "x", "subjects": ["Natuur & Dieren", "Wilde dieren"]}]
+    conn = db.connect(tmp_path / "g.db")
+    db.bulk_load(conn, recs)
+    db.set_genre_codes(conn, {"Natuur & Dieren": "2.0", "Wilde dieren": "2.6"})
+    rows = {r["name"]: (r["code"], r["parent"])
+            for r in conn.execute("SELECT name, code, parent FROM genres")}
+    assert rows["Natuur & Dieren"] == ("2.0", None)   # top-level (X.0)
+    assert rows["Wilde dieren"] == ("2.6", "2.0")     # sub-genre -> parent 2.0
+    conn.close()
+
+
 def test_stream_rebuild_equivalent_to_bulk_load(tmp_path):
     """The low-memory streaming path must produce the same catalog as bulk_load."""
     _build(tmp_path / "bulk.db", stream=False, lists=sampledata.lists())
