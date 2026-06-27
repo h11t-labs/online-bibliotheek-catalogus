@@ -9,6 +9,7 @@ Besides loading book records it also:
 
 from __future__ import annotations
 
+import os
 import re
 from collections import Counter
 from pathlib import Path
@@ -155,16 +156,31 @@ def match_lists(by_isbn: dict, by_key: dict) -> list[dict]:
 
 
 def _reclaim_disk(db_path: Path, raw_dir: Path) -> None:
-    """Free space before a rebuild (matters on a tight volume): drop stale SQLite
-    WAL/journal sidecars left by an interrupted run, plus the on-disk HTML cache
-    (not needed to rebuild). Deleting frees space without needing any, so this
-    works even when the volume is already full. The rebuild reads only data/raw."""
-    for sidecar in (f"{db_path}-wal", f"{db_path}-shm", f"{db_path}-journal"):
-        Path(sidecar).unlink(missing_ok=True)
+    """Free space before a rebuild (matters on a tight volume). The catalog DB is
+    fully rebuilt from ``data/raw``, so we drop the DB itself + its WAL/journal
+    sidecars up front — freeing their space for the rebuild instead of holding the
+    old and new copy at once — plus the on-disk HTML cache (not needed to rebuild).
+    Deleting frees space without needing any, so it works even when the volume is
+    already full."""
+    db_path = Path(db_path)
+    for p in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm"),
+              Path(f"{db_path}-journal")):
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass
     html_cache = raw_dir / "html"
     if html_cache.is_dir():
         for f in html_cache.glob("*"):
             f.unlink(missing_ok=True)
+    try:  # log what's left so a stubborn full volume is diagnosable
+        st = os.statvfs(raw_dir if raw_dir.exists() else db_path.parent)
+        rec = raw_dir / "records"
+        n = sum(1 for _ in rec.glob("*.json")) if rec.exists() else 0
+        logger.info(f"[reclaim] free {st.f_bavail * st.f_frsize // 1_000_000}"
+                    f"/{st.f_blocks * st.f_frsize // 1_000_000}MB · {n} record files")
+    except OSError:
+        pass
 
 
 def normalize(raw_dir: Path = RAW_DIR, db_path: Path = db.DEFAULT_DB) -> dict:
