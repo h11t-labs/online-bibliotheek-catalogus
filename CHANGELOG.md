@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Custom domain wired into the deploy pipeline: with the `OBC_DOMAIN` repo variable set,
+  the deploy stages `OBC_SITE_URL=https://<domain>` (canonical/sitemap/OG) and
+  idempotently requests Fly TLS certificates for the apex + `www`. DNS (A/AAAA on the
+  apex, CNAME on `www`) is set once at the registrar.
+
 ## [0.3.13] - 2026-06-27
 
 ### Fixed
