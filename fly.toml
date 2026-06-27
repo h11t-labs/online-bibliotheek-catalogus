@@ -36,6 +36,10 @@ primary_region = "ams"                  # Amsterdam (EU)
 [mounts]
   source = "catalog_data"
   destination = "/app/data"
+  # 68k per-book record files are inode-heavy; 2GB gives enough inodes (a 1GB ext4
+  # volume runs out before it runs out of blocks). Existing volumes are extended by
+  # the deploy pipeline; this sizes any freshly-created one.
+  initial_size = "2gb"
 
 [[vm]]
   size = "shared-cpu-1x"
