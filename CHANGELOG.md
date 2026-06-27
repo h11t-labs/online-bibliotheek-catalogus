@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Privacy-friendly analytics**: an optional GoatCounter snippet, emitted only when
+  `OBC_GOATCOUNTER` (the counter URL) is set — so nothing loads in dev or tests, and
+  there are no cookies / consent banner.
+- **SEO**: per-page `<meta name="description">`, `<link rel="canonical">`, Open Graph
+  + Twitter cards (book covers as `og:image`), `schema.org/Book` JSON-LD on book
+  pages, a `robots.txt`, and a paginated `sitemap.xml` (index → static + book
+  sitemaps). Filtered search URLs are `noindex,follow` to keep the infinite facet
+  space out of the index. `OBC_SITE_URL` sets the absolute origin for these URLs.
+
 ## [0.3.6] - 2026-06-27
 
 ### Added

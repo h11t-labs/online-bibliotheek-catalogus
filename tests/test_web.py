@@ -69,6 +69,34 @@ def test_theme_switcher_present(client):
     assert "localStorage.getItem('theme')" in body
 
 
+def test_robots_and_sitemaps(client):
+    robots = client.get("/robots.txt")
+    assert robots.status_code == 200
+    assert "Disallow: /*?" in robots.text and "Sitemap:" in robots.text
+    idx = client.get("/sitemap.xml")
+    assert idx.status_code == 200 and "<sitemapindex" in idx.text
+    stat = client.get("/sitemap-static.xml")
+    assert stat.status_code == 200 and "/over" in stat.text
+    books = client.get("/sitemap-books-1.xml")
+    assert books.status_code == 200 and "/book/001" in books.text
+
+
+def test_seo_meta_and_jsonld(client):
+    home = client.get("/").text
+    assert '<meta name="description"' in home
+    assert '<link rel="canonical"' in home
+    assert 'content="index,follow"' in home          # bare browse is indexable
+    assert 'content="noindex,follow"' in client.get("/?q=de").text  # filtered -> noindex
+    book = client.get("/book/001").text
+    assert "application/ld+json" in book and "Book" in book
+    assert 'property="og:image"' in book             # cover as OG image
+
+
+def test_goatcounter_only_when_configured(client):
+    # OBC_GOATCOUNTER is unset in tests -> no analytics script is emitted
+    assert "gc.zgo.at" not in client.get("/").text
+
+
 def test_admin_refresh_requires_token(client):
     # No OBC_REFRESH_TOKEN configured in tests -> always unauthorized.
     assert client.post("/admin/refresh").status_code == 401
