@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Book detail pages showed "de catalogus wordt opgebouwd" (503) on a catalog DB built
+  before the v0.3.12 `genres.code/parent` columns: the genre query referenced columns
+  the not-yet-rebuilt DB lacked, raising `OperationalError`. `book_detail` now falls
+  back to a flat genre list on the old schema, so detail pages keep working during the
+  window between a schema-changing deploy and the next rebuild.
+
 ## [0.3.12] - 2026-06-27
 
 ### Added
