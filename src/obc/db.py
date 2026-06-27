@@ -341,6 +341,10 @@ def bulk_load(conn: sqlite3.Connection, records: Iterable[dict[str, Any]],
     cur = conn.cursor()
     cur.execute("PRAGMA synchronous = OFF")
     cur.execute("PRAGMA temp_store = MEMORY")
+    # No WAL/rollback journal during a full rebuild: peak disk stays ~the DB size
+    # (no ~equal-size WAL beside it), so the rebuild fits a small volume. Safe here
+    # because the rebuild is re-runnable from data/raw if the process is killed.
+    cur.execute("PRAGMA journal_mode = OFF")
     _reset_schema(cur)
     n = _insert_books(cur, records)
     _insert_genres(cur, records)
@@ -360,6 +364,10 @@ def stream_rebuild(conn: sqlite3.Connection, records: Iterable[dict[str, Any]],
     cur = conn.cursor()
     cur.execute("PRAGMA synchronous = OFF")
     cur.execute("PRAGMA temp_store = MEMORY")
+    # No WAL/rollback journal during a full rebuild: peak disk stays ~the DB size
+    # (no ~equal-size WAL beside it), so the rebuild fits a small volume. Safe here
+    # because the rebuild is re-runnable from data/raw if the process is killed.
+    cur.execute("PRAGMA journal_mode = OFF")
     for t in _ALL_TABLES:
         cur.execute(f"DROP TABLE IF EXISTS {t}")
     cur.executescript(_SCHEMA)
