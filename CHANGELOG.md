@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-27
+
+### Fixed
+- The on-box catalog rebuild ran out of disk on the 1GB Fly volume (`ENOSPC`): a
+  full rebuild now runs with `PRAGMA journal_mode = OFF`, so peak disk is ~the DB
+  size instead of the DB **plus** an equal-size WAL. It fits without growing (or
+  paying for) a bigger volume. Safe because the rebuild is re-runnable from `data/raw`.
+- The weekly cron machine restart-looped: its `curl -f` exited non-zero on a 409
+  ("refresh already running") or a brief connection error, so Fly kept restarting it.
+  It now uses `curl -sS … || true`, and the deploy pipeline destroy+recreates the
+  `catalog-cron` machine so command changes land.
+
 ## [0.3.0] - 2026-06-27
 
 ### Added
