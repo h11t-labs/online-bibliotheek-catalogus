@@ -10,6 +10,10 @@ primary_region = "ams"                  # Amsterdam (EU)
 [env]
   PORT = "8000"
   OBC_DB = "/app/data/catalog.db"
+  # Refresh the catalog on every machine start (i.e. after each deploy): a full
+  # harvest on a fresh volume, otherwise an incremental sync. Runs in-process in a
+  # background thread. Local dev leaves this unset, so it never scrapes.
+  OBC_REFRESH_ON_STARTUP = "1"
   # Weekly refresh is driven by a Fly scheduled (cron) machine that POSTs to
   # /admin/refresh; the work runs in-process here (normalize streams at ~190MB, so
   # the 512MB VM below is fine). Set the shared secret with:

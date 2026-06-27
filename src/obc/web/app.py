@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -84,7 +85,22 @@ _templates.env.globals["app_version"] = APP_VERSION
 # --------------------------------------------------------------------------- #
 # app + connection
 # --------------------------------------------------------------------------- #
-app = FastAPI(title="online bibliotheek — eigen catalogus")
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # After every deploy/restart, kick off a catalog refresh so the DB is built
+    # (fresh volume → full harvest) or kept fresh (→ incremental sync). It runs in
+    # a background thread and is gated by an env flag so local `obc serve` and the
+    # tests never scrape. The scheduled refresh is handled separately by the Fly
+    # cron machine, which POSTs the token-protected /admin/refresh endpoint.
+    if os.environ.get("OBC_REFRESH_ON_STARTUP") == "1":
+        from ..log import logger
+        from . import scheduler
+        if scheduler.trigger_refresh():
+            logger.info("[startup] catalog refresh triggered")
+    yield
+
+
+app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan)
 
 
 def _conn() -> sqlite3.Connection:
