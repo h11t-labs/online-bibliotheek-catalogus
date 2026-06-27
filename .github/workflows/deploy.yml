@@ -106,21 +106,28 @@ jobs:
             echo "volume already >= ${target}GB; nothing to do."
           fi
 
-      - name: Stage app secrets (NYT API key)
+      - name: Stage app config (NYT key, site URL)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           NYT_API_KEY: ${{ secrets.NYT_API_KEY }}
+          OBC_DOMAIN: ${{ vars.OBC_DOMAIN }}
         run: |
-          # Push the NYT Books API key from CI to Fly so the NYT bestseller lists
-          # work in the on-box refresh. Staged (--stage) so the deploy below applies
-          # it without a separate restart. Non-fatal.
-          if [ -z "$FLY_API_TOKEN" ] || [ -z "$NYT_API_KEY" ]; then
-            echo "FLY_API_TOKEN or NYT_API_KEY not set — skipping secret sync."; exit 0
+          # Push config from CI to Fly so the on-box app/refresh sees it. Staged
+          # (--stage) so the deploy below applies it without a separate restart.
+          if [ -z "$FLY_API_TOKEN" ]; then echo "No FLY_API_TOKEN — skipping."; exit 0; fi
+          app=online-bibliotheek-catalogus
+          # NYT Books API key -> enables the NYT bestseller lists.
+          if [ -n "$NYT_API_KEY" ]; then
+            flyctl secrets set --stage --app "$app" "NYT_API_KEY=$NYT_API_KEY" \
+              && echo "staged NYT_API_KEY" \
+              || echo "WARNING: could not stage NYT_API_KEY (token scope?)."
           fi
-          flyctl secrets set --stage --app online-bibliotheek-catalogus \
-            "NYT_API_KEY=$NYT_API_KEY" \
-            && echo "staged NYT_API_KEY" \
-            || echo "WARNING: could not stage NYT_API_KEY (token may lack secrets scope)."
+          # Custom domain -> absolute origin for canonical/sitemap/OG URLs (SEO).
+          if [ -n "$OBC_DOMAIN" ]; then
+            flyctl secrets set --stage --app "$app" "OBC_SITE_URL=https://$OBC_DOMAIN" \
+              && echo "staged OBC_SITE_URL=https://$OBC_DOMAIN" \
+              || echo "WARNING: could not stage OBC_SITE_URL."
+          fi
 
       - name: Deploy to Fly.io (skips if not configured)
         env:
@@ -165,3 +172,45 @@ jobs:
             # Non-fatal: the app deploy already succeeded; surface but don't go red.
             echo "WARNING: cron provisioning failed (check FLY_API_TOKEN scope)."
           fi
+
+      - name: Ensure custom-domain TLS certificates
+        if: vars.OBC_DOMAIN != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          OBC_DOMAIN: ${{ vars.OBC_DOMAIN }}
+        run: |
+          # Request Let's Encrypt certs for the apex + www. Fly issues them once the
+          # DNS (below) resolves to the app; idempotent — re-runs are no-ops once the
+          # cert exists. Non-fatal so a hiccup never fails the deploy.
+          if [ -z "$FLY_API_TOKEN" ]; then echo "No FLY_API_TOKEN — skipping certs."; exit 0; fi
+          app=online-bibliotheek-catalogus
+          for host in "$OBC_DOMAIN" "www.$OBC_DOMAIN"; do
+            if flyctl certs show "$host" -a "$app" >/dev/null 2>&1; then
+              echo "cert for $host already present"
+            else
+              flyctl certs add "$host" -a "$app" && echo "requested cert for $host" \
+                || echo "WARNING: 'certs add $host' failed."
+            fi
+          done
+
+      - name: Sync DNS records at Openprovider
+        if: vars.OBC_DOMAIN != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          OBC_DOMAIN: ${{ vars.OBC_DOMAIN }}
+          OPENPROVIDER_USERNAME: ${{ secrets.OPENPROVIDER_USERNAME }}
+          OPENPROVIDER_PASSWORD: ${{ secrets.OPENPROVIDER_PASSWORD }}
+        run: |
+          # Point the domain at the Fly app (A/AAAA on apex, CNAME on www) via the
+          # Openprovider REST API. Idempotent upsert; non-fatal.
+          if [ -z "$OPENPROVIDER_USERNAME" ] || [ -z "$OPENPROVIDER_PASSWORD" ]; then
+            echo "No Openprovider credentials — skipping DNS sync."; exit 0
+          fi
+          app=online-bibliotheek-catalogus
+          ips=$(flyctl ips list --app "$app" --json 2>/dev/null)
+          # tolerate either Address/Type or address/type JSON casing
+          export FLY_IP4=$(echo "$ips" | jq -r 'first(.[]|select((.Type//.type)=="shared_v4" or (.Type//.type)=="v4")|(.Address//.address)) // empty')
+          export FLY_IP6=$(echo "$ips" | jq -r 'first(.[]|select(((.Type//.type)|tostring)|test("v6"))|(.Address//.address)) // empty')
+          export FLY_HOST="${app}.fly.dev"
+          echo "Fly targets: A=$FLY_IP4  AAAA=$FLY_IP6  CNAME(www)->$FLY_HOST"
+          python3 scripts/openprovider_dns.py || echo "WARNING: Openprovider DNS sync failed."
