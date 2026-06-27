@@ -192,5 +192,5 @@ jobs:
                 || echo "WARNING: 'certs add $host' failed."
             fi
           done
-          # DNS records are set once, locally (scripts/openprovider_dns.py or by hand),
-          # not on every deploy — see DEPLOY.md.
+          # DNS records (A/AAAA on the apex, CNAME on www) are set once by hand at
+          # the registrar — not on every deploy.
