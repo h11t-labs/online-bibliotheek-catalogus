@@ -154,7 +154,21 @@ def match_lists(by_isbn: dict, by_key: dict) -> list[dict]:
     return out
 
 
+def _reclaim_disk(db_path: Path, raw_dir: Path) -> None:
+    """Free space before a rebuild (matters on a tight volume): drop stale SQLite
+    WAL/journal sidecars left by an interrupted run, plus the on-disk HTML cache
+    (not needed to rebuild). Deleting frees space without needing any, so this
+    works even when the volume is already full. The rebuild reads only data/raw."""
+    for sidecar in (f"{db_path}-wal", f"{db_path}-shm", f"{db_path}-journal"):
+        Path(sidecar).unlink(missing_ok=True)
+    html_cache = raw_dir / "html"
+    if html_cache.is_dir():
+        for f in html_cache.glob("*"):
+            f.unlink(missing_ok=True)
+
+
 def normalize(raw_dir: Path = RAW_DIR, db_path: Path = db.DEFAULT_DB) -> dict:
+    _reclaim_disk(Path(db_path), raw_dir)
     paths = sorted((raw_dir / "records").rglob("*.json"))
     aux = _load_aux()
     canon, by_isbn, by_key = _prepass(paths)   # light pass: canon + match maps

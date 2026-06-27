@@ -48,6 +48,14 @@ def _run(cmds: list[list[str]]) -> None:
 
 def _run_locked(cmds: list[list[str]]) -> None:
     try:
+        # Free disk before scraping so even the incremental sync + lists writes fit
+        # on a tight volume (drops stale WAL/journal sidecars + the HTML cache).
+        try:
+            from .. import db
+            from ..normalize import RAW_DIR, _reclaim_disk
+            _reclaim_disk(db.DEFAULT_DB, RAW_DIR)
+        except Exception as e:  # never let cleanup abort the refresh
+            logger.warning(f"[refresh] disk reclaim skipped: {e}")
         _run(cmds)
     finally:
         _lock.release()
