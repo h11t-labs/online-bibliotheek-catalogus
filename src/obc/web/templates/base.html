@@ -282,6 +282,8 @@
   {% block body %}{% endblock %}
   <footer>
     Een zelfgemaakte zoekgids voor de collectie van de online Bibliotheek — om makkelijk je volgende boek te vinden.
+    {% set _updated = data_updated() %}
+    {% if _updated %}<span style="opacity:.6"> · catalogus bijgewerkt op {{ _updated | nldate }}</span>{% endif %}
     {% if app_version %}<span style="opacity:.6"> · v{{ app_version }}</span>{% endif %}
   </footer>
   <script>

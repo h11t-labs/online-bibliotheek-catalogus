@@ -13,6 +13,7 @@ plain browse ordered by the chosen sort.
 
 from __future__ import annotations
 
+import datetime
 import os
 import re
 import sqlite3
@@ -70,9 +71,38 @@ def _url_without(state: dict, key: str, value: str) -> str:
     return _url_with({**state, key: remaining}, page=1)
 
 
+_NL_MONTHS = ("", "januari", "februari", "maart", "april", "mei", "juni", "juli",
+              "augustus", "september", "oktober", "november", "december")
+
+
+def _nldate(value) -> str:
+    """Format an ISO datetime string or epoch seconds as a Dutch date
+    ('27 juni 2026'). Returns '' for empty/unparseable input."""
+    if not value:
+        return ""
+    try:
+        if isinstance(value, (int, float)):
+            dt = datetime.datetime.fromtimestamp(value)
+        else:
+            dt = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, OSError, OverflowError):
+        return ""
+    return f"{dt.day} {_NL_MONTHS[dt.month]} {dt.year}"
+
+
+def _data_updated() -> float | None:
+    """Epoch seconds the catalog was last (re)built — the DB file's mtime."""
+    try:
+        return DB_PATH.stat().st_mtime
+    except OSError:
+        return None
+
+
 _templates.env.filters["coverw"] = _coverw
+_templates.env.filters["nldate"] = _nldate
 _templates.env.globals["url_with"] = _url_with
 _templates.env.globals["url_without"] = _url_without
+_templates.env.globals["data_updated"] = _data_updated
 
 try:
     from importlib.metadata import version as _pkg_version
