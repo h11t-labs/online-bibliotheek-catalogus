@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.10] - 2026-06-27
+
 ### Fixed
 - No more "de catalogus wordt opgebouwd" page during a routine refresh/deploy:
   `normalize` now builds a **temp DB and swaps it in atomically** (`os.replace`), so
