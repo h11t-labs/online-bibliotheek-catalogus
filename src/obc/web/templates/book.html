@@ -34,6 +34,7 @@
     .poster{position:static;max-width:230px} .meta .r{grid-template-columns:130px 1fr} }
 {% endblock %}
 {% block body %}
+{% if jsonld %}<script type="application/ld+json">{{ jsonld | tojson }}</script>{% endif %}
 <main>
   <a class="back" href="javascript:history.back()">‹ Terug</a>
   <article class="detail">

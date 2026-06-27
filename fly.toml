@@ -10,6 +10,9 @@ primary_region = "ams"                  # Amsterdam (EU)
 [env]
   PORT = "8000"
   OBC_DB = "/app/data/catalog.db"
+  # Absolute origin for canonical / Open Graph / sitemap URLs. Set to your custom
+  # domain if you add one.
+  OBC_SITE_URL = "https://online-bibliotheek-catalogus.fly.dev"
   # Refresh the catalog on every machine start (i.e. after each deploy): a full
   # harvest on a fresh volume, otherwise an incremental sync. Runs in-process in a
   # background thread. Local dev leaves this unset, so it never scrapes.

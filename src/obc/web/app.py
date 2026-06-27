@@ -31,6 +31,13 @@ from .bio import author_bio
 
 DB_PATH = Path(os.environ.get("OBC_DB", db.DEFAULT_DB))
 PAGE_SIZE = 24
+# Absolute site origin for canonical/OG/sitemap URLs (e.g. https://…fly.dev). Empty
+# locally → those fall back to the request's own base URL.
+SITE_URL = os.environ.get("OBC_SITE_URL", "").rstrip("/")
+# GoatCounter counter URL (privacy-friendly analytics), e.g.
+# https://yourcode.goatcounter.com/count. Unset → no analytics script is emitted.
+GOATCOUNTER = os.environ.get("OBC_GOATCOUNTER", "").strip()
+SITEMAP_PAGE = 45000  # book URLs per sitemap file (under the 50k/file limit)
 
 _templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _STATIC = Path(__file__).parent / "static"
@@ -103,6 +110,8 @@ _templates.env.filters["nldate"] = _nldate
 _templates.env.globals["url_with"] = _url_with
 _templates.env.globals["url_without"] = _url_without
 _templates.env.globals["data_updated"] = _data_updated
+_templates.env.globals["site_url"] = SITE_URL
+_templates.env.globals["goatcounter"] = GOATCOUNTER
 
 try:
     from importlib.metadata import version as _pkg_version
@@ -293,6 +302,7 @@ def search(
         "year_from": state["year_from"], "year_to": state["year_to"], "sort": sort,
         "page": page, "pages": pages, "facets": facets, "page_size": PAGE_SIZE,
         "chips": chips, "has_filters": bool(q or chips), "state": state,
+        "robots": "noindex,follow" if (q or chips) else "index,follow",
         "formats_map": formats_map, "lists_map": lists_map,
         "list_options": [lst["slug"] for lst in facets["lists"]],
         "list_labels": {lst["slug"]: lst["name"] for lst in facets["lists"]},
@@ -329,6 +339,68 @@ def about(request: Request):
     return _templates.TemplateResponse(request, "over.html", {})
 
 
+# --------------------------------------------------------------------------- #
+# SEO: robots.txt + (paginated) sitemap
+# --------------------------------------------------------------------------- #
+def _xml_escape(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _origin(request: Request) -> str:
+    return SITE_URL or str(request.base_url).rstrip("/")
+
+
+def _sitemap(base: str, paths: list[str]) -> Response:
+    locs = "".join(f"<url><loc>{_xml_escape(base + p)}</loc></url>" for p in paths)
+    body = ('<?xml version="1.0" encoding="UTF-8"?>'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            f"{locs}</urlset>")
+    return Response(body, media_type="application/xml")
+
+
+@app.get("/robots.txt", include_in_schema=False)
+def robots_txt(request: Request):
+    lines = ["User-agent: *",
+             "Disallow: /suggest", "Disallow: /facet", "Disallow: /admin/",
+             "Disallow: /*?",  # the infinite filtered-search URL space
+             f"Sitemap: {_origin(request)}/sitemap.xml"]
+    return Response("\n".join(lines) + "\n", media_type="text/plain")
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+def sitemap_index(request: Request):
+    conn = _conn()
+    total = queries.total_books(conn)
+    conn.close()
+    base = _origin(request)
+    pages = max(1, (total + SITEMAP_PAGE - 1) // SITEMAP_PAGE)
+    maps = [f"{base}/sitemap-static.xml",
+            *[f"{base}/sitemap-books-{i}.xml" for i in range(1, pages + 1)]]
+    locs = "".join(f"<sitemap><loc>{_xml_escape(m)}</loc></sitemap>" for m in maps)
+    body = ('<?xml version="1.0" encoding="UTF-8"?>'
+            '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            f"{locs}</sitemapindex>")
+    return Response(body, media_type="application/xml")
+
+
+@app.get("/sitemap-static.xml", include_in_schema=False)
+def sitemap_static(request: Request):
+    conn = _conn()
+    slugs = [r["slug"] for r in conn.execute("SELECT slug FROM lists ORDER BY slug")]
+    conn.close()
+    paths = ["/", "/over", "/lists", "/stats", *[f"/list/{s}" for s in slugs]]
+    return _sitemap(_origin(request), paths)
+
+
+@app.get("/sitemap-books-{n}.xml", include_in_schema=False)
+def sitemap_books(request: Request, n: int):
+    conn = _conn()
+    rows = conn.execute("SELECT ppn FROM books ORDER BY ppn LIMIT ? OFFSET ?",
+                        (SITEMAP_PAGE, (max(n, 1) - 1) * SITEMAP_PAGE)).fetchall()
+    conn.close()
+    return _sitemap(_origin(request), [f"/book/{r['ppn']}" for r in rows])
+
+
 @app.get("/author/{name}", response_class=HTMLResponse)
 def author_page(request: Request, name: str):
     conn = _conn()
@@ -350,7 +422,9 @@ def author_page(request: Request, name: str):
     return _templates.TemplateResponse(request, "author.html", {
         "name": name, "books": rows, "total": len(rows),
         "formats_map": formats_map, "lists_map": lists_map,
-        "author_lists": author_lists, "bio": author_bio(name)})
+        "author_lists": author_lists, "bio": author_bio(name),
+        "meta_description": f"Alle {len(rows)} titels van {name} in de online "
+                            f"Bibliotheek — e-books en luisterboeken."})
 
 
 @app.get("/lists", response_class=HTMLResponse)
@@ -381,8 +455,9 @@ def list_detail(request: Request, slug: str, show: str = ""):
     else:
         show, items = "", rows
     return _templates.TemplateResponse(request, "list_detail.html", {
-        "lst": lst, "items": items, "available": available,
-        "total": total, "show": show})
+        "lst": lst, "items": items, "available": available, "total": total, "show": show,
+        "meta_description": (lst["description"] or f"De lijst {lst['name']}")
+                            + f" — {available} van {total} titels in de bibliotheek."})
 
 
 @app.get("/book/{ppn}", response_class=HTMLResponse)
@@ -392,9 +467,24 @@ def book(request: Request, ppn: str):
     conn.close()
     if detail is None:
         return HTMLResponse("<h1>Niet gevonden</h1>", status_code=404)
+    b = detail["row"]
+    summary = (b["summary"] or "").strip()
+    cover = _coverw(b["cover_url"], 400)
+    # schema.org/Book structured data for rich results
+    jsonld = {"@context": "https://schema.org", "@type": "Book", "name": b["title"],
+              "author": [{"@type": "Person", "name": a} for a in detail["authors"]] or None,
+              "inLanguage": b["language"], "isbn": b["isbn"], "publisher": b["publisher"],
+              "datePublished": str(b["year"]) if b["year"] else None,
+              "image": cover or None, "description": summary or None,
+              "bookFormat": ("https://schema.org/AudiobookFormat"
+                             if b["format"] == "audiobook" else "https://schema.org/EBook"),
+              "url": f"{_origin(request)}/book/{ppn}"}
+    jsonld = {k: v for k, v in jsonld.items() if v}
     return _templates.TemplateResponse(request, "book.html", {
-        "b": detail["row"], "genres": detail["genres"], "editions": detail["editions"],
-        "authors": detail["authors"], "book_lists": detail["book_lists"]})
+        "b": b, "genres": detail["genres"], "editions": detail["editions"],
+        "authors": detail["authors"], "book_lists": detail["book_lists"],
+        "meta_description": summary[:300] or f"{b['title']} in de online Bibliotheek.",
+        "og_image": cover, "jsonld": jsonld})
 
 
 # --------------------------------------------------------------------------- #
