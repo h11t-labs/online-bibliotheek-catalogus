@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS book_lists (
     list_id  INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
     position INTEGER,
     year     INTEGER,           -- award year (prizes); NULL for ranked lists
+    won      INTEGER,           -- 1 = won, 0 = nominated (prizes); NULL otherwise
     PRIMARY KEY (book_ppn, list_id)
 );
 
@@ -122,7 +123,8 @@ CREATE TABLE IF NOT EXISTS list_items (
     author    TEXT,
     isbn      TEXT,
     cover_url TEXT,
-    ppn       TEXT
+    ppn       TEXT,
+    won       INTEGER          -- 1 = won, 0 = nominated (prizes); NULL otherwise
 );
 
 CREATE INDEX IF NOT EXISTS idx_books_format   ON books(format);
@@ -309,15 +311,16 @@ def _insert_lists(cur: sqlite3.Cursor, lists: list[dict]) -> None:
         list_id = cur.lastrowid
         items = lst.get("items", [])
         cur.executemany(
-            "INSERT INTO list_items(list_id, position, year, title, author, isbn, cover_url, ppn) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO list_items(list_id, position, year, title, author, isbn, cover_url, ppn, won) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [(list_id, it.get("position"), it.get("year"), it.get("title"),
-              it.get("author"), it.get("isbn"), it.get("cover_url"), it.get("ppn"))
+              it.get("author"), it.get("isbn"), it.get("cover_url"), it.get("ppn"),
+              it.get("won"))
              for it in items])
         cur.executemany(
-            "INSERT OR IGNORE INTO book_lists(book_ppn, list_id, position, year) "
-            "VALUES (?, ?, ?, ?)",
-            [(it["ppn"], list_id, it.get("position"), it.get("year"))
+            "INSERT OR IGNORE INTO book_lists(book_ppn, list_id, position, year, won) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [(it["ppn"], list_id, it.get("position"), it.get("year"), it.get("won"))
              for it in items if it.get("ppn")])
 
 

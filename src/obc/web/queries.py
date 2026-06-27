@@ -197,12 +197,12 @@ def lists_map(conn: sqlite3.Connection, rows) -> dict[str, list[dict]]:
     if ppns:
         qmarks = ",".join("?" * len(ppns))
         for r in conn.execute(
-                f"SELECT bl.book_ppn, l.name, l.slug, bl.position, bl.year FROM book_lists bl "
-                f"JOIN lists l ON l.id = bl.list_id WHERE bl.book_ppn IN ({qmarks}) "
-                f"ORDER BY bl.position", ppns):
+                f"SELECT bl.book_ppn, l.name, l.slug, bl.position, bl.year, bl.won "
+                f"FROM book_lists bl JOIN lists l ON l.id = bl.list_id "
+                f"WHERE bl.book_ppn IN ({qmarks}) ORDER BY bl.position", ppns):
             out.setdefault(r["book_ppn"], []).append(
                 {"name": r["name"], "slug": r["slug"], "position": r["position"],
-                 "year": r["year"]})
+                 "year": r["year"], "won": r["won"]})
     return out
 
 
@@ -311,8 +311,8 @@ def book_detail(conn: sqlite3.Connection, ppn: str) -> dict | None:
         "SELECT a.name FROM authors a JOIN book_authors ba ON ba.author_id = a.id "
         "WHERE ba.book_ppn = ? ORDER BY ba.position", (ppn,))]
     book_lists = [{"name": r["name"], "slug": r["slug"], "position": r["position"],
-                   "year": r["year"]} for r in conn.execute(
-        "SELECT l.name, l.slug, bl.position, bl.year FROM book_lists bl "
+                   "year": r["year"], "won": r["won"]} for r in conn.execute(
+        "SELECT l.name, l.slug, bl.position, bl.year, bl.won FROM book_lists bl "
         "JOIN lists l ON l.id = bl.list_id WHERE bl.book_ppn = ? ORDER BY bl.position",
         (ppn,))]
     return {"row": row, "genres": genres, "editions": editions,
@@ -351,7 +351,7 @@ def list_row(conn: sqlite3.Connection, slug: str) -> sqlite3.Row | None:
 
 def list_items(conn: sqlite3.Connection, list_id: int) -> list[sqlite3.Row]:
     return conn.execute(
-        "SELECT li.position, li.year, li.title, li.author, li.cover_url, li.ppn, "
+        "SELECT li.position, li.year, li.title, li.author, li.cover_url, li.ppn, li.won, "
         "b.cover_url AS bcover, b.format AS bformat "
         "FROM list_items li LEFT JOIN books b ON b.ppn = li.ppn "
         "WHERE li.list_id = ? ORDER BY li.position", (list_id,)).fetchall()

@@ -55,7 +55,7 @@
     <a class="row" href="/book/{{ it['ppn'] }}">
       <span class="badge-n">{{ label or '·' }}</span>
       <span class="thumb"><img loading="lazy" src="{{ (it['bcover'] or it['cover_url'])|coverw(120) }}" alt=""></span>
-      <span class="meta"><div class="t">{{ it['title'] or '—' }}</div><div class="a">{{ it['author'] or '' }}</div></span>
+      <span class="meta"><div class="t">{{ it['title'] or '—' }}</div><div class="a">{{ it['author'] or '' }}</div>{% if it['won'] == 1 %}<div class="a" style="color:var(--accent);font-weight:700">✓ Gewonnen</div>{% elif it['won'] == 0 %}<div class="a">Genomineerd</div>{% endif %}</span>
       <span class="right">
         <svg width="15" height="15"><use href="#ic-{{ 'audio' if it['bformat']=='audiobook' else 'book' }}"/></svg>
         <span class="pill in">beschikbaar</span>
@@ -65,7 +65,7 @@
     <div class="row gone" title="Niet beschikbaar in de bibliotheek">
       <span class="badge-n empty">{{ label or '·' }}</span>
       <span class="thumb">{% if it['cover_url'] %}<img loading="lazy" src="{{ it['cover_url'] }}" alt="">{% endif %}</span>
-      <span class="meta"><div class="t">{{ it['title'] or '—' }}</div><div class="a">{{ it['author'] or '' }}</div></span>
+      <span class="meta"><div class="t">{{ it['title'] or '—' }}</div><div class="a">{{ it['author'] or '' }}</div>{% if it['won'] == 1 %}<div class="a" style="color:var(--accent);font-weight:700">✓ Gewonnen</div>{% elif it['won'] == 0 %}<div class="a">Genomineerd</div>{% endif %}</span>
       <span class="right"><span class="pill out">niet in bibliotheek</span></span>
     </div>
     {% endif %}

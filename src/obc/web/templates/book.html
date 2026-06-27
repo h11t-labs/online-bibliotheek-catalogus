@@ -70,7 +70,7 @@
 
       {% if book_lists %}
       <div class="editions">
-        {% for l in book_lists %}<a class="badge listbadge" href="/?list={{ l.slug }}"><svg width="12" height="12" style="vertical-align:-2px"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% elif l.position %} #{{ l.position }}{% endif %}</a>{% endfor %}
+        {% for l in book_lists %}<a class="badge listbadge" href="/?list={{ l.slug }}"><svg width="12" height="12" style="vertical-align:-2px"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% elif l.position %} #{{ l.position }}{% endif %}{% if l.won == 1 %} · gewonnen{% elif l.won == 0 %} · genomineerd{% endif %}</a>{% endfor %}
       </div>
       {% endif %}
 

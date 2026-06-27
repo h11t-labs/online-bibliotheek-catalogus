@@ -55,8 +55,9 @@ def lists() -> list[dict]:
         "description": "Een testlijst.", "updated_at": "2024-01-01",
         "items": [
             {"position": 1, "ppn": "001", "title": "De Ontdekking",
-             "isbn": "9789021400001"},
-            {"position": 2, "ppn": None, "title": "Onbekend Boek", "author": "Niemand"},
-            {"position": 3, "ppn": "003", "title": "Thriller in de Nacht"},
+             "isbn": "9789021400001", "won": 1},
+            {"position": 2, "ppn": None, "title": "Onbekend Boek", "author": "Niemand",
+             "won": 0},
+            {"position": 3, "ppn": "003", "title": "Thriller in de Nacht", "won": 0},
         ],
     }]

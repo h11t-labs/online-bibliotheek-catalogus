@@ -147,7 +147,7 @@ def match_lists(by_isbn: dict, by_key: dict) -> list[dict]:
             items.append({"position": it.get("position"), "year": it.get("year"),
                           "title": it.get("title"), "author": it.get("author"),
                           "isbn": it.get("isbn"), "cover_url": it.get("cover_url"),
-                          "ppn": ppn})
+                          "ppn": ppn, "won": it.get("won")})
         out.append({**{k: data.get(k) for k in
                        ("slug", "name", "url", "description", "updated_at")},
                     "items": items})
