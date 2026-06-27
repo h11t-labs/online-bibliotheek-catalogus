@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <title>{% block title %}Bibliotheek · eigen catalogus{% endblock %}</title>
+  <script>
+    // Apply the saved theme before first paint (avoids a flash). 'system' or
+    // unset leaves the prefers-color-scheme media query in charge.
+    (function(){try{var t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}})();
+  </script>
   <style>
     :root{
       --bg:#f6f3ec; --bg-soft:#fffdf8; --card:#fffdf8; --ink:#211d18; --ink-soft:#6b6358;
@@ -15,13 +20,21 @@
       --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
       --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
     }
+    /* Dark palette — applied when the OS prefers dark (unless the user forced
+       light), or when the user explicitly picks dark via the header switcher. */
     @media (prefers-color-scheme: dark){
-      :root{
+      :root:not([data-theme="light"]){
         --bg:#16130f; --bg-soft:#1e1a15; --card:#221d17; --ink:#efe7d8; --ink-soft:#a99f8f;
         --line:#332b21; --line-strong:#473c2d; --accent:#e0795f; --accent-ink:#1a120e;
         --accent-soft:#3a241d; --gold:#d6a456;
         --shadow:18px 28px 60px -34px rgba(0,0,0,.7);
       }
+    }
+    :root[data-theme="dark"]{
+      --bg:#16130f; --bg-soft:#1e1a15; --card:#221d17; --ink:#efe7d8; --ink-soft:#a99f8f;
+      --line:#332b21; --line-strong:#473c2d; --accent:#e0795f; --accent-ink:#1a120e;
+      --accent-soft:#3a241d; --gold:#d6a456;
+      --shadow:18px 28px 60px -34px rgba(0,0,0,.7);
     }
     *{box-sizing:border-box}
     html{scroll-behavior:smooth}
@@ -57,6 +70,11 @@
       font-size:14px;color:var(--ink);padding:8px 12px;border-radius:999px}
     .navlink svg{color:var(--accent)}
     .navlink:hover{background:var(--accent-soft);color:var(--accent);text-decoration:none}
+    .theme-btn{background:none;border:0;font:inherit;cursor:pointer}
+    .theme-btn .ti{display:none}
+    .theme-btn[data-pref="system"] .ti-system,
+    .theme-btn[data-pref="light"] .ti-light,
+    .theme-btn[data-pref="dark"] .ti-dark{display:block}
     @media (max-width:680px){ .navlink span{display:none} }
     .btn{display:inline-flex;align-items:center;gap:7px;padding:10px 18px;border-radius:999px;
       background:var(--accent);color:var(--accent-ink);border:0;font-size:14px;font-weight:600;
@@ -251,6 +269,12 @@
       <nav class="topnav">
         <a class="navlink" href="/lists"><svg width="16" height="16"><use href="#ic-award"/></svg><span>Lijsten</span></a>
         <a class="navlink" href="/stats"><svg width="16" height="16"><use href="#ic-chart"/></svg><span>Statistiek</span></a>
+        <a class="navlink" href="/over"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg><span>Over</span></a>
+        <button id="theme-toggle" class="navlink theme-btn" type="button" data-pref="system" title="Thema wisselen" aria-label="Thema wisselen">
+          <svg class="ti ti-system" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 20h8M12 17v3"/></svg>
+          <svg class="ti ti-light" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6 19 19M19 5l-1.4 1.4M6.4 17.6 5 19"/></svg>
+          <svg class="ti ti-dark" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+        </button>
       </nav>
     </div>
   </header>
@@ -260,6 +284,29 @@
     Een zelfgemaakte zoekgids voor de collectie van de online Bibliotheek — om makkelijk je volgende boek te vinden.
     {% if app_version %}<span style="opacity:.6"> · v{{ app_version }}</span>{% endif %}
   </footer>
+  <script>
+  // Theme switcher: cycles System -> Light -> Dark, persisted in localStorage.
+  (function(){
+    const order=['system','light','dark'];
+    const labels={system:'systeem',light:'licht',dark:'donker'};
+    const btn=document.getElementById('theme-toggle');
+    if(!btn) return;
+    function get(){try{return localStorage.getItem('theme')||'system';}catch(e){return 'system';}}
+    function apply(pref){
+      const root=document.documentElement;
+      if(pref==='light'||pref==='dark') root.dataset.theme=pref; else delete root.dataset.theme;
+      btn.dataset.pref=pref;
+      const t='Thema: '+labels[pref]+' (klik om te wisselen)';
+      btn.title=t; btn.setAttribute('aria-label',t);
+    }
+    apply(get());
+    btn.addEventListener('click',function(){
+      const next=order[(order.indexOf(get())+1)%order.length];
+      try{localStorage.setItem('theme',next);}catch(e){}
+      apply(next);
+    });
+  })();
+  </script>
   <script>
   (function(){
     const input=document.getElementById('q'), panel=document.getElementById('ac');

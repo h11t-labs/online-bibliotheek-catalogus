@@ -16,11 +16,25 @@ from ..log import logger
 
 _OBC = ["uv", "run", "obc"]
 
-# The weekly refresh: pick up new/changed titles, refresh curated lists, rebuild.
-# A single normalize at the end reflects both the sync and the lists update.
-REFRESH_CMDS = [["scrape", "--sync"], ["lists", "update"], ["normalize"]]
-
 _lock = threading.Lock()  # ensures only one refresh runs at a time
+
+
+def _seeded() -> bool:
+    """True once the volume holds harvested records to refresh from. On a fresh
+    volume (first deploy) there are none, so we do a full harvest instead of an
+    incremental sync that would only pick up the newest titles."""
+    from ..scrape import RECORDS_DIR
+    try:
+        return next(RECORDS_DIR.glob("*.json"), None) is not None
+    except OSError:
+        return False
+
+
+def _default_cmds() -> list[list[str]]:
+    """The refresh pipeline: harvest (full on an empty volume, else incremental),
+    refresh curated lists, then a single normalize that reflects both."""
+    harvest = ["scrape", "--sync"] if _seeded() else ["scrape", "--full"]
+    return [harvest, ["lists", "update"], ["normalize"]]
 
 
 def _run(cmds: list[list[str]]) -> None:
@@ -44,6 +58,6 @@ def trigger_refresh(cmds: list[list[str]] | None = None) -> bool:
     running (so callers can answer 409)."""
     if not _lock.acquire(blocking=False):
         return False
-    threading.Thread(target=_run_locked, args=(cmds or REFRESH_CMDS,),
+    threading.Thread(target=_run_locked, args=(cmds or _default_cmds(),),
                      daemon=True).start()
     return True

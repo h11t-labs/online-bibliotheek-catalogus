@@ -56,6 +56,19 @@ def test_stats_health_static(client):
     assert client.get("/healthz").json() == {"status": "ok"}
 
 
+def test_about_page(client):
+    r = client.get("/over")
+    assert r.status_code == 200
+    assert "Over deze catalogus" in r.text
+
+
+def test_theme_switcher_present(client):
+    # the switcher lives in the shared header, so it ships on every page
+    body = client.get("/").text
+    assert 'id="theme-toggle"' in body
+    assert "localStorage.getItem('theme')" in body
+
+
 def test_admin_refresh_requires_token(client):
     # No OBC_REFRESH_TOKEN configured in tests -> always unauthorized.
     assert client.post("/admin/refresh").status_code == 401

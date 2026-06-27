@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Over · Bibliotheek{% endblock %}
+{% block style %}
+  main{width:100%;max-width:760px}
+  .prose{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:26px 30px;box-shadow:var(--shadow);line-height:1.7}
+  .prose h2{font-family:var(--serif);font-size:21px;margin:24px 0 8px;color:var(--ink)}
+  .prose h2:first-child{margin-top:0}
+  .prose p{margin:0 0 12px;color:var(--ink)}
+  .prose a{color:var(--accent);text-decoration:underline dotted}
+  .prose ul{margin:0 0 14px;padding-left:20px;color:var(--ink)}
+  .prose li{margin:5px 0}
+  .note{margin-top:20px;font-size:13.5px;color:var(--ink-soft);
+    border-top:1px solid var(--line);padding-top:14px}
+{% endblock %}
+{% block body %}
+<main>
+  <div class="pagehead">
+    <div class="crumb"><a href="/">‹ Terug naar zoeken</a></div>
+    <h1>Over deze catalogus</h1>
+    <div class="sub">Een zelfgemaakte zoekgids voor de online Bibliotheek</div>
+  </div>
+  <div class="prose">
+    <h2>Wat is dit?</h2>
+    <p>Een eigen, snelle en volledig doorzoekbare catalogus van de
+      <a href="https://www.onlinebibliotheek.nl/" target="_blank" rel="noopener">online
+      Bibliotheek</a> (onlinebibliotheek.nl). Gemaakt omdat de officiële zoekfunctie
+      beperkt is: hier kun je in één klap filteren op formaat, taal, genre, jaar,
+      uitgever, auteur en lijsten — met een zoekbalk die meteen aanvult.</p>
+
+    <h2>Hoe werkt het?</h2>
+    <p>De volledige titellijst wordt periodiek opgehaald van onlinebibliotheek.nl,
+      genormaliseerd en opgeslagen in een SQLite-database met full-text-zoeken (FTS5,
+      met diacriet-folding zodat <em>espana</em> ook <em>España</em> vindt). De pagina's
+      worden server-side gerenderd, dus alles laadt snel en werkt zonder zware JavaScript.</p>
+    <ul>
+      <li>Gefacetteerd zoeken op formaat (e-book/luisterboek), taal, genre, jaar, uitgever en auteur.</li>
+      <li>Markering of een e-book op een e-reader beschikbaar is.</li>
+      <li>Samengestelde lijsten: Bestseller 60, NYT-bestsellers en Nederlandse literaire prijzen.</li>
+      <li>Auteurpagina's met een korte biografie uit Wikipedia en de lijsten/prijzen waarop een auteur staat.</li>
+    </ul>
+
+    <h2>Databron &amp; verantwoording</h2>
+    <p>Dit is een persoonlijk, niet-commercieel hobbyproject en staat los van de online
+      Bibliotheek. Het is alleen een <em>zoekhulp</em>: de boeken zelf leen je gewoon via
+      de officiële site, waar elke titel naartoe linkt. Er wordt netjes en met een lage
+      snelheid geoogst, met een herkenbare user-agent.</p>
+
+    <div class="note">
+      Niet aangesloten bij of goedgekeurd door de online Bibliotheek of de KB.
+      Alle titelgegevens en covers zijn eigendom van hun respectieve rechthebbenden.
+    </div>
+  </div>
+</main>
+{% endblock %}
