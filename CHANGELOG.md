@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The NYT bestseller lists now work on Fly: the deploy pipeline syncs `NYT_API_KEY`
+  (from CI secrets) to the app before deploy, so the on-box refresh fetches them.
+
+### Changed
+- The deployed image is tagged with the release version (e.g. `v0.3.6`) so it shows in
+  `fly image show` / the Fly dashboard. (Fly's own `v1, v2, …` release counter in
+  `fly status` is internal and can't be set to our semver.)
+
 ## [0.3.5] - 2026-06-27
 
 ### Added
