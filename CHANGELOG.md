@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-06-27
+
+### Fixed
+- The Fly volume stayed full across refreshes (so even the incremental sync + lists
+  writes hit `ENOSPC`): earlier interrupted WAL-mode rebuilds had left a ~DB-sized
+  `catalog.db-wal` behind. Every refresh now **reclaims disk first** — dropping stale
+  WAL/journal sidecars and the on-disk HTML cache — so the sync and the journal-less
+  rebuild fit the 1GB volume without growing it.
+
 ## [0.3.1] - 2026-06-27
 
 ### Fixed
