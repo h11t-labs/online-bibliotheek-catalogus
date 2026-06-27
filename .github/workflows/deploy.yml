@@ -82,6 +82,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: superfly/flyctl-actions/setup-flyctl@master
+        with:
+          version: 0.4.61   # pin flyctl so setup doesn't query GitHub for "latest" (rate-limit flake)
 
       - name: Ensure catalog volume is at least 2 GB
         env:
