@@ -106,12 +106,32 @@ jobs:
             echo "volume already >= ${target}GB; nothing to do."
           fi
 
+      - name: Stage app secrets (NYT API key)
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          NYT_API_KEY: ${{ secrets.NYT_API_KEY }}
+        run: |
+          # Push the NYT Books API key from CI to Fly so the NYT bestseller lists
+          # work in the on-box refresh. Staged (--stage) so the deploy below applies
+          # it without a separate restart. Non-fatal.
+          if [ -z "$FLY_API_TOKEN" ] || [ -z "$NYT_API_KEY" ]; then
+            echo "FLY_API_TOKEN or NYT_API_KEY not set — skipping secret sync."; exit 0
+          fi
+          flyctl secrets set --stage --app online-bibliotheek-catalogus \
+            "NYT_API_KEY=$NYT_API_KEY" \
+            && echo "staged NYT_API_KEY" \
+            || echo "WARNING: could not stage NYT_API_KEY (token may lack secrets scope)."
+
       - name: Deploy to Fly.io (skips if not configured)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           if [ -z "$FLY_API_TOKEN" ]; then echo "No FLY_API_TOKEN set — skipping deploy."; exit 0; fi
-          flyctl deploy --remote-only
+          # Tag the image with our release version (e.g. v0.3.6) so it shows in
+          # `fly image show` / the dashboard instead of Fly's auto deployment-… tag.
+          # (Fly's own monotonic release counter — v1, v2, … in `fly status` — is
+          # internal and can't be set to our semver.)
+          flyctl deploy --remote-only --image-label "${GITHUB_REF_NAME}"
           # Post-deploy refresh is handled in-process: the new machine triggers it
           # on startup (OBC_REFRESH_ON_STARTUP=1 in fly.toml).
 
