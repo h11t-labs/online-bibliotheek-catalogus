@@ -192,25 +192,5 @@ jobs:
                 || echo "WARNING: 'certs add $host' failed."
             fi
           done
-
-      - name: Sync DNS records at Openprovider
-        if: vars.OBC_DOMAIN != ''
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          OBC_DOMAIN: ${{ vars.OBC_DOMAIN }}
-          OPENPROVIDER_USERNAME: ${{ secrets.OPENPROVIDER_USERNAME }}
-          OPENPROVIDER_PASSWORD: ${{ secrets.OPENPROVIDER_PASSWORD }}
-        run: |
-          # Point the domain at the Fly app (A/AAAA on apex, CNAME on www) via the
-          # Openprovider REST API. Idempotent upsert; non-fatal.
-          if [ -z "$OPENPROVIDER_USERNAME" ] || [ -z "$OPENPROVIDER_PASSWORD" ]; then
-            echo "No Openprovider credentials — skipping DNS sync."; exit 0
-          fi
-          app=online-bibliotheek-catalogus
-          ips=$(flyctl ips list --app "$app" --json 2>/dev/null)
-          # tolerate either Address/Type or address/type JSON casing
-          export FLY_IP4=$(echo "$ips" | jq -r 'first(.[]|select((.Type//.type)=="shared_v4" or (.Type//.type)=="v4")|(.Address//.address)) // empty')
-          export FLY_IP6=$(echo "$ips" | jq -r 'first(.[]|select(((.Type//.type)|tostring)|test("v6"))|(.Address//.address)) // empty')
-          export FLY_HOST="${app}.fly.dev"
-          echo "Fly targets: A=$FLY_IP4  AAAA=$FLY_IP6  CNAME(www)->$FLY_HOST"
-          python3 scripts/openprovider_dns.py || echo "WARNING: Openprovider DNS sync failed."
+          # DNS records are set once, locally (scripts/openprovider_dns.py or by hand),
+          # not on every deploy — see DEPLOY.md.

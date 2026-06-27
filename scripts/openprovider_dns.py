@@ -9,9 +9,15 @@ Reads from the environment:
 
 Ensures: ``A @ -> FLY_IP4``, ``AAAA @ -> FLY_IP6``, ``CNAME www -> FLY_HOST``.
 Creates the DNS zone if it doesn't exist yet; otherwise upserts only the records
-that are missing or changed. Safe to run on every deploy (idempotent).
+that are missing or changed. Idempotent — but DNS rarely changes, so this is meant
+to be run **once, locally**, not on every deploy. Example::
 
-No third-party deps (urllib only) so it runs on a bare CI runner.
+    OPENPROVIDER_USERNAME=you OPENPROVIDER_PASSWORD=secret OBC_DOMAIN=example.nl \
+      FLY_IP4=66.241.125.77 FLY_IP6=2a09:8280:1::136:5f0d:0 \
+      FLY_HOST=online-bibliotheek-catalogus.fly.dev \
+      python3 scripts/openprovider_dns.py
+
+No third-party deps (urllib only) so it runs anywhere with just Python.
 """
 from __future__ import annotations
 
