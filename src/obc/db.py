@@ -139,6 +139,10 @@ CREATE INDEX IF NOT EXISTS idx_books_ereader  ON books(ereader);
 CREATE INDEX IF NOT EXISTS idx_books_title     ON books(title);
 CREATE INDEX IF NOT EXISTS idx_books_added     ON books(added_rank);
 CREATE INDEX IF NOT EXISTS idx_books_series     ON books(series);
+-- case-insensitive (title, author) for the "other editions of this work" lookup on
+-- every book page — without it that query full-scans all books (≈4s on Fly's shared CPU)
+CREATE INDEX IF NOT EXISTS idx_books_title_author_lower
+    ON books(lower(title), lower(COALESCE(author, '')));
 CREATE INDEX IF NOT EXISTS idx_bg_genre       ON book_genres(genre_id);
 CREATE INDEX IF NOT EXISTS idx_ba_author      ON book_authors(author_id);
 CREATE INDEX IF NOT EXISTS idx_authors_fold   ON authors(name_fold);
