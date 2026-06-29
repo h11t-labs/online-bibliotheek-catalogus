@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.15] - 2026-06-29
+
 ### Fixed
 - Book pages were slow (~3–4s) on Fly while snappy locally: the "other editions of this
   work" lookup ran `lower(title)=… AND lower(author)=…`, which **full-scans the whole
