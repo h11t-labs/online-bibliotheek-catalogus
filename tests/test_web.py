@@ -98,6 +98,16 @@ def test_goatcounter_snippet_present(client):
     assert "//gc.zgo.at/count.js" in body
 
 
+def test_cache_control_and_crawl_delay(client):
+    # bots are throttled so one small VM can serve 68k pages
+    assert "Crawl-delay" in client.get("/robots.txt").text
+    # stable detail pages are publicly cacheable, offloading repeat/crawler hits
+    assert "public" in client.get("/book/001").headers.get("cache-control", "")
+    # volatile / non-content endpoints stay uncached
+    assert "cache-control" not in client.get("/healthz").headers
+    assert "cache-control" not in client.get("/suggest?q=a").headers
+
+
 def test_admin_refresh_requires_token(client):
     # No OBC_REFRESH_TOKEN configured in tests -> always unauthorized.
     assert client.post("/admin/refresh").status_code == 401

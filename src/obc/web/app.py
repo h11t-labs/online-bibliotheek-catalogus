@@ -137,6 +137,24 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan)
 
+# Pages with no per-user state and a catalog that only changes on the weekly rebuild,
+# so they're safe to cache publicly — this offloads repeat hits and crawler traffic
+# from the single small VM. Detail pages cache an hour; the browse home a few minutes.
+_CACHE_PREFIXES = ("/book/", "/author/", "/series/", "/list", "/stats", "/over")
+
+
+@app.middleware("http")
+async def _cache_control(request: Request, call_next):
+    response = await call_next(request)
+    if (request.method == "GET" and response.status_code == 200
+            and "cache-control" not in response.headers):
+        path = request.url.path
+        if path == "/" and not request.url.query:
+            response.headers["Cache-Control"] = "public, max-age=600"
+        elif any(path == p or path.startswith(p) for p in _CACHE_PREFIXES):
+            response.headers["Cache-Control"] = "public, max-age=3600"
+    return response
+
 
 def _conn() -> sqlite3.Connection:
     return queries.connect_ro(DB_PATH)
@@ -357,6 +375,7 @@ def _sitemap(base: str, paths: list[str]) -> Response:
 @app.get("/robots.txt", include_in_schema=False)
 def robots_txt(request: Request):
     lines = ["User-agent: *",
+             "Crawl-delay: 10",  # throttle bots — one small VM serving 68k pages
              "Disallow: /suggest", "Disallow: /facet", "Disallow: /admin/",
              "Disallow: /*?",  # the infinite filtered-search URL space
              f"Sitemap: {_origin(request)}/sitemap.xml"]

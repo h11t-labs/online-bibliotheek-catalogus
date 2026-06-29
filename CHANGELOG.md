@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Lighter load on the single small Fly VM (it was CPU-saturated by a bot crawling the
+  68k-page sitemap): `Crawl-delay: 10` in `robots.txt` throttles well-behaved crawlers,
+  and `Cache-Control: public` is set on the stable content pages (book/author/series/
+  list/stats/over for an hour, the browse home for 10 min) so repeat + crawler hits are
+  served from cache instead of recomputed each time.
+
 ## [0.3.15] - 2026-06-29
 
 ### Fixed
