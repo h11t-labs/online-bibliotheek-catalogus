@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.16] - 2026-06-29
+
 ### Added
 - Lighter load on the single small Fly VM (it was CPU-saturated by a bot crawling the
   68k-page sitemap): `Crawl-delay: 10` in `robots.txt` throttles well-behaved crawlers,
