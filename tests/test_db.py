@@ -65,6 +65,20 @@ def test_genre_hierarchy_codes(tmp_path):
     conn.close()
 
 
+def test_editions_lookup_uses_index_not_scan(tmp_path):
+    """The book page's "other editions of this work" lookup must hit the
+    case-insensitive (title, author) index — a full scan is ~4s on Fly's shared CPU."""
+    import sampledata
+    conn = db.connect(tmp_path / "x.db")
+    db.bulk_load(conn, sampledata.records(), sampledata.lists())
+    plan = " ".join(r["detail"] for r in conn.execute(
+        "EXPLAIN QUERY PLAN SELECT ppn, format FROM books "
+        "WHERE lower(title)=lower('x') AND lower(COALESCE(author,''))=lower(COALESCE('y','')) "
+        "AND format IS NOT NULL"))
+    conn.close()
+    assert "USING INDEX" in plan and "SCAN books" not in plan, plan
+
+
 def test_stream_rebuild_equivalent_to_bulk_load(tmp_path):
     """The low-memory streaming path must produce the same catalog as bulk_load."""
     _build(tmp_path / "bulk.db", stream=False, lists=sampledata.lists())

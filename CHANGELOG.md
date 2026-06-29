@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Book pages were slow (~3–4s) on Fly while snappy locally: the "other editions of this
+  work" lookup ran `lower(title)=… AND lower(author)=…`, which **full-scans the whole
+  books table** on every page load — negligible on a fast local CPU, ~4s on Fly's
+  shared-cpu-1x. Added a case-insensitive `(title, author)` expression index, turning it
+  into an index lookup (~3 ms, ~150× faster). Applied on the next catalog rebuild.
+
 ## [0.3.14] - 2026-06-27
 
 ### Added
