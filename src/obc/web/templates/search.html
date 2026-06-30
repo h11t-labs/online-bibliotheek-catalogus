@@ -102,6 +102,10 @@
   .pager a:hover{border-color:var(--accent);color:var(--accent)}
   .pager .cur{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
   .pager .dots{border:0;background:transparent;color:var(--ink-soft);min-width:auto;padding:9px 2px}
+  .scroll-sentinel{display:flex;justify-content:center;padding:34px 0 10px}
+  .spin{width:26px;height:26px;border:3px solid var(--line);border-top-color:var(--accent);
+    border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
 
   .empty{text-align:center;padding:70px 20px;color:var(--ink-soft)}
   .empty .big{font-size:46px;margin-bottom:10px}
@@ -220,13 +224,13 @@
 
       {% if pages > 1 %}
       <nav class="pager">
-        {% if page > 1 %}<a href="{{ url_with(state, page=page-1) }}">‹</a>{% endif %}
+        {% if page > 1 %}<a rel="prev" href="{{ url_with(state, page=page-1) }}">‹</a>{% endif %}
         {% if page > 3 %}<a href="{{ url_with(state, page=1) }}">1</a><span class="dots">…</span>{% endif %}
         {% for p in range([1,page-2]|max, [pages,page+2]|min + 1) %}
           {% if p == page %}<span class="cur">{{ p }}</span>{% else %}<a href="{{ url_with(state, page=p) }}">{{ p }}</a>{% endif %}
         {% endfor %}
         {% if page < pages-2 %}<span class="dots">…</span><a href="{{ url_with(state, page=pages) }}">{{ pages }}</a>{% endif %}
-        {% if page < pages %}<a href="{{ url_with(state, page=page+1) }}">›</a>{% endif %}
+        {% if page < pages %}<a rel="next" href="{{ url_with(state, page=page+1) }}">›</a>{% endif %}
       </nav>
       {% endif %}
 
@@ -240,4 +244,47 @@
     </section>
   </div>
 </main>
+
+<script>
+/* Infinite scroll as progressive enhancement: the numbered pager stays in the HTML
+   (crawlable / no-JS fallback); here we fetch the next page and append its covers as
+   you approach the bottom. */
+(function () {
+  const grid = document.querySelector(".grid");
+  const pager = document.querySelector(".pager");
+  if (!grid || !pager) return;
+  const firstNext = pager.querySelector("a[rel=next]");
+  let nextUrl = firstNext ? firstNext.href : null;
+  if (!nextUrl) return;                                  // already the last page
+
+  pager.hidden = true;                                   // JS takes over the paging
+  const sentinel = document.createElement("div");
+  sentinel.className = "scroll-sentinel";
+  sentinel.innerHTML = '<span class="spin"></span>';
+  grid.after(sentinel);
+
+  let loading = false;
+  async function loadMore() {
+    if (loading || !nextUrl) return;
+    loading = true;
+    try {
+      const res = await fetch(nextUrl);
+      if (!res.ok) throw new Error(res.status);
+      const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+      doc.querySelectorAll(".grid > a.book")
+         .forEach((c) => grid.appendChild(document.importNode(c, true)));
+      const nl = doc.querySelector(".pager a[rel=next]");
+      nextUrl = nl ? nl.href : null;
+    } catch (e) {
+      nextUrl = null;
+      pager.hidden = false;                              // restore the pager on failure
+    }
+    loading = false;
+    if (!nextUrl) { io.disconnect(); sentinel.remove(); }
+  }
+  const io = new IntersectionObserver(
+    (es) => { if (es[0].isIntersecting) loadMore(); }, { rootMargin: "700px" });
+  io.observe(sentinel);
+})();
+</script>
 {% endblock %}
