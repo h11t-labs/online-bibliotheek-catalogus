@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.20] - 2026-06-30
+
 ### Fixed
 - Genre hierarchy: the top genre for an *(audience, code)* is now the **most common**
   name there, so a genre name that leaks across audiences in the source data (e.g. a
