@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.17] - 2026-06-30
+
 ### Fixed
 - Award lists marked **every** book as "gewonnen" (e.g. the Boekenbon Literatuurprijs):
   the Wikipedia parser only recognised a separate "Genomineerden" *section* as nominees,
