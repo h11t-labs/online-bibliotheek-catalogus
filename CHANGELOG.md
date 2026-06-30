@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.21] - 2026-06-30
+
 ### Added
 - An **items-per-page** selector on the search/browse page (12 / 24 / 48 / 96, default
   24), preserved across filters and pagination.
