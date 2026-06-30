@@ -62,3 +62,31 @@ def test_detect_series_explicit_marker_only():
     # no false positives on numbers that aren't series markers
     assert detect_series("1984") == (None, None)
     assert detect_series("Catch-22") == (None, None)
+
+
+def test_wikiprize_one_winner_per_year():
+    """Per year exactly one winner; the rest of that year are nominees. Covers both
+    Boekenbon table shapes (year+winner on one row; year/winner on separate cells)
+    and skips trailing prose (Trivia)."""
+    from obc.lists import wikiprize
+    wt = "\n".join([
+        "== Winnaars ==",
+        '{| class="wikitable"',
+        "|-",
+        "| 2015 || {{NL-VLAG}} || [[Jeroen Brouwers]] - ''Het hout'' ||",
+        "* [[Stephan Enter]] - ''Compassie''",
+        "* [[Mark Schaevers]] - ''Orgelman''",
+        "|-",
+        "|2025",
+        "|{{BE-VLAG}}",
+        "|[[Charlotte Van den Broeck]] – ''Een vlam''",
+        "|",
+        "* [[Bert Natter]] – ''Aan het einde''",
+        "|}",
+        "== Trivia ==",
+        "* In 2015 vond [[Criticus]] dat ''Iets Anders'' moest winnen",
+    ])
+    won = {it["title"]: it["won"] for it in wikiprize.parse_wikitext(wt)}
+    assert won["Het hout"] == 1 and won["Een vlam"] == 1            # the year's winner
+    assert won["Compassie"] == 0 and won["Aan het einde"] == 0      # nominees
+    assert "Iets Anders" not in won                                 # Trivia is skipped

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Award lists marked **every** book as "gewonnen" (e.g. the Boekenbon Literatuurprijs):
+  the Wikipedia parser only recognised a separate "Genomineerden" *section* as nominees,
+  but that prize lists winner + nominees together per year in a table — recent years even
+  spread the cells over separate lines. Now the first title each year is the winner and
+  the rest are nominees, and trailing prose (Trivia) is skipped, so each year has exactly
+  one winner. Takes effect on the next `lists update` + `normalize`.
+
 ## [0.3.16] - 2026-06-29
 
 ### Added

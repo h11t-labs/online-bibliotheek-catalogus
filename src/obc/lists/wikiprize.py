@@ -39,20 +39,31 @@ def _clean(text: str) -> str:
 _YEAR4 = re.compile(r"\b(19\d{2}|20\d{2})\b")
 # A section heading that introduces nominees rather than winners.
 _NOMINEE_SECTION = re.compile(r"genomineerd|nominat|shortlist|longlist|voordracht", re.I)
+# Trailing prose sections (Trivia, Externe links, …) — skip; their sentences mention
+# years + book titles and would otherwise be mistaken for prize entries.
+_SKIP_SECTION = re.compile(r"trivia|externe|zie ook|referenti|bronnen|voetnot", re.I)
 
 
 def parse_wikitext(wt: str) -> list[dict]:
     items, seen = [], set()
     cur_year = None
     nominee_ctx = False
+    skip = False
+    year_winner_taken = False  # already saw this year's winner -> later entries are nominees
     for line in wt.splitlines():
         line = line.strip()
-        if line.startswith("="):  # section heading: winners vs nominees context
+        if line.startswith("="):  # section heading: winners vs nominees vs prose
             nominee_ctx = bool(_NOMINEE_SECTION.search(line))
-        # a section/line that names a year (e.g. "=== 2014 ===" or "* 2014:")
+            skip = bool(_SKIP_SECTION.search(line))
+        if skip:  # inside Trivia / Externe links / … — not prize entries
+            continue
+        # a year on a heading/row/bullet ("=== 2014 ===", "| 2015", "* 2014:") — a new
+        # year resets winner tracking (the next title we meet is that year's winner)
         ym = _YEAR4.search(line)
         if ym and (line.startswith("=") or line.startswith("*") or line.startswith("|")):
-            cur_year = int(ym.group(1))
+            y = int(ym.group(1))
+            if y != cur_year:
+                cur_year, year_winner_taken = y, False
         if not (line.startswith("*") or line.startswith("|")):
             continue
         tm = _ITALIC.search(line)
@@ -69,13 +80,16 @@ def parse_wikitext(wt: str) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-        line_year = int(ym.group(1)) if ym else cur_year
-        # Winner unless we're under a nominee section (a bold entry there is the
-        # winner). Winner-centric tables (e.g. Libris) have no nominee section,
-        # so everything defaults to won=1.
-        won = 0 if (nominee_ctx and "'''" not in line) else 1
+        # Per year the first title is the winner (the Winnaar column / the first
+        # bullet); any later title that year is a nominee (the Nominatie column /
+        # shortlist). A dedicated "Genomineerden/shortlist" section is all nominees.
+        if year_winner_taken or nominee_ctx:
+            won = 0
+        else:
+            won = 1
+            year_winner_taken = True
         items.append({"title": title, "author": author, "isbn": None,
-                      "cover_url": None, "year": line_year, "won": won})
+                      "cover_url": None, "year": cur_year, "won": won})
     # newest prizes first; position is just a stable ordinal
     items.sort(key=lambda it: (-(it["year"] or 0)))
     for i, it in enumerate(items, 1):
