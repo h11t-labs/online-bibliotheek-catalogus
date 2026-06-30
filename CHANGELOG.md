@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.25] - 2026-06-30
+
 ### Fixed
 - Mobile header: the search bar was squeezed to a sliver by the 3-column header. On
   phones/tablets (≤720px) the search bar now spans the full width, the brand shrinks to
