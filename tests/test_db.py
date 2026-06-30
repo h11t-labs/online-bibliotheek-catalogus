@@ -1,5 +1,7 @@
 """Storage-layer tests: bulk_load / stream_rebuild round-trips, FTS, upsert."""
 
+from collections import Counter
+
 import sampledata
 
 from obc import db
@@ -65,12 +67,20 @@ def test_book_genre_parent_resolved_per_audience(tmp_path):
     ]
     conn = db.connect(tmp_path / "g.db")
     db.bulk_load(conn, recs)
-    db.set_book_genre_parents(conn, {
+    genre_code = {
         ("jeugd", "Spanning & Avontuur"): "4.0",
         ("jeugd", "Misdaad & Mysterie"): "4.1",
         ("volwassenen", "Spanning & Thrillers"): "4.0",
+        ("volwassenen", "Spanning & Avontuur"): "4.0",  # a name leaked into volwassenen
         ("volwassenen", "Misdaad & Mysterie"): "4.1",
+    }
+    genre_count = Counter({
+        ("jeugd", "Spanning & Avontuur"): 5, ("jeugd", "Misdaad & Mysterie"): 5,
+        ("volwassenen", "Spanning & Thrillers"): 50,    # the real volwassenen 4.0
+        ("volwassenen", "Spanning & Avontuur"): 1,      # the rare leak
+        ("volwassenen", "Misdaad & Mysterie"): 50,
     })
+    db.set_book_genre_parents(conn, (genre_code, genre_count))
 
     def parent(ppn):
         return conn.execute(
@@ -79,7 +89,7 @@ def test_book_genre_parent_resolved_per_audience(tmp_path):
             "WHERE bg.book_ppn = ? AND g.name = 'Misdaad & Mysterie'", (ppn,)).fetchone()[0]
 
     assert parent("j") == "Spanning & Avontuur"    # jeugd book -> jeugd parent
-    assert parent("v") == "Spanning & Thrillers"   # volwassenen book -> volwassenen parent
+    assert parent("v") == "Spanning & Thrillers"   # most-common wins over the leak
     conn.close()
 
 
