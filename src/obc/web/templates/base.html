@@ -178,6 +178,7 @@
 
     /* shared book grid (search, author, list pages may override) */
     .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:26px 22px}
+    @media (max-width:480px){ .grid{grid-template-columns:repeat(2,1fr);gap:18px 12px} }
     .book{display:flex;flex-direction:column;gap:10px;transition:transform .18s ease}
     .book:hover{transform:translateY(-4px)}
     .book .cover{position:relative;aspect-ratio:2/3;border-radius:12px;overflow:hidden;

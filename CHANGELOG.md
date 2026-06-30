@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- An **items-per-page** selector on the search/browse page (12 / 24 / 48 / 96, default
+  24), preserved across filters and pagination.
+
+### Changed
+- Mobile: the results grid shows **two covers per row** on phones (≤480px) instead of
+  one oversized cover.
+
 ## [0.3.20] - 2026-06-30
 
 ### Fixed

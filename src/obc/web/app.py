@@ -31,6 +31,7 @@ from .bio import author_bio
 
 DB_PATH = Path(os.environ.get("OBC_DB", db.DEFAULT_DB))
 PAGE_SIZE = 24
+PER_PAGE_OPTIONS = (12, 24, 48, 96)  # selectable items-per-page (PAGE_SIZE is the default)
 # Absolute site origin for canonical/OG/sitemap URLs (e.g. https://…fly.dev). Empty
 # locally → those fall back to the request's own base URL.
 SITE_URL = os.environ.get("OBC_SITE_URL", "").rstrip("/")
@@ -248,8 +249,10 @@ def search(
     year_to: str = "",
     sort: str = "",
     page: int = Query(1, ge=1),
+    per_page: int = Query(PAGE_SIZE, alias="per_page"),
 ):
     q = q.strip()
+    page_size = per_page if per_page in PER_PAGE_OPTIONS else PAGE_SIZE
     yf, yt = queries.parse_year(year_from), queries.parse_year(year_to)
     # unset sort -> relevance for a search, newest-first when browsing
     if sort not in queries.SORTS:
@@ -267,7 +270,7 @@ def search(
         ereader=(ereader == "1"), year_from=yf, year_to=yt, sort=sort)
 
     conn = _conn()
-    result = queries.search(conn, filters, page, PAGE_SIZE)
+    result = queries.search(conn, filters, page, page_size)
     rows = result.rows
     facets = _facets(conn)
     formats_map = queries.formats_map(conn, rows)
@@ -276,14 +279,15 @@ def search(
     conn.close()
 
     total = result.total
-    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    pages = max(1, (total + page_size - 1) // page_size)
     list_names = {lst["slug"]: lst["name"] for lst in facets["lists"]}
 
     state = {"q": q, "format": format_, "language": language, "genre": genre,
              "publisher": publisher, "author": author, "list": lists_,
              "ereader": ereader if ereader == "1" else "", "sort": sort,
              "year_from": year_from if yf is not None else "",
-             "year_to": year_to if yt is not None else ""}
+             "year_to": year_to if yt is not None else "",
+             "per_page": str(page_size) if page_size != PAGE_SIZE else ""}
 
     # active-filter chips (each with a remove URL + icon)
     chips = []
@@ -314,7 +318,8 @@ def search(
         "format": format_, "language": language, "genre": genre,
         "publisher": publisher, "author": author, "list": lists_, "ereader": ereader,
         "year_from": state["year_from"], "year_to": state["year_to"], "sort": sort,
-        "page": page, "pages": pages, "facets": facets, "page_size": PAGE_SIZE,
+        "page": page, "pages": pages, "facets": facets, "page_size": page_size,
+        "per_page_options": list(PER_PAGE_OPTIONS),
         "chips": chips, "has_filters": bool(q or chips), "state": state,
         "robots": "noindex,follow" if (q or chips) else "index,follow",
         "formats_map": formats_map, "lists_map": lists_map,

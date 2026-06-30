@@ -98,6 +98,8 @@
   .empty{text-align:center;padding:70px 20px;color:var(--ink-soft)}
   .empty .big{font-size:46px;margin-bottom:10px}
   @media (max-width:820px){ .layout{grid-template-columns:1fr} .rail{position:static} }
+  /* phones: two covers per row instead of one big one */
+  @media (max-width:480px){ .grid{grid-template-columns:repeat(2,1fr);gap:18px 12px} }
 {% endblock %}
 
 {% block body %}
@@ -137,6 +139,10 @@
           <option value="year_asc"  {{ 'selected' if sort=='year_asc' }}>Oudste eerst</option>
           <option value="title"     {{ 'selected' if sort=='title' }}>Titel A–Z</option>
           <option value="relevance" {{ 'selected' if sort=='relevance' }}>Relevantie (beste match)</option>
+        </select>
+        <h3>Per pagina</h3>
+        <select class="field" name="per_page" onchange="this.form.submit()">
+          {% for n in per_page_options %}<option value="{{ n }}" {{ 'selected' if n == page_size }}>{{ n }} per pagina</option>{% endfor %}
         </select>
         <h3><svg><use href="#ic-lang"/></svg> Taal</h3>
         {{ combo('language', 'Alle talen', facets.languages, language, 'lang') }}
