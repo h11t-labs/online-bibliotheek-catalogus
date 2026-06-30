@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Mobile header: the search bar was squeezed to a sliver by the 3-column header. On
+  phones/tablets (≤720px) the search bar now spans the full width, the brand shrinks to
+  just the 📖 mark, and the nav (Lijsten, Statistiek, Over, theme) collapses into a
+  **hamburger menu** that drops down on tap.
+
 ## [0.3.24] - 2026-06-30
 
 ### Added
