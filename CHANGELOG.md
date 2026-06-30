@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.19] - 2026-06-30
+
 ### Fixed
 - Genre hierarchy parent is now resolved **per book's audience**. A genre name can exist
   in both jeugd and volwassenen with a *different* parent (e.g. *Misdaad & Mysterie* is a
