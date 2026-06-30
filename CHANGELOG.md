@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.23] - 2026-06-30
+
 ### Changed
 - Mobile filters: the filter block is now its own **collapsible card** — tap the
   "Filters" header (with a chevron) to expand/collapse the whole block. The separate
