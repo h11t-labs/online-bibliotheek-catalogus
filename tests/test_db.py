@@ -53,34 +53,34 @@ def test_upsert_is_idempotent(tmp_path):
     conn.close()
 
 
-def test_genre_hierarchy_codes(tmp_path):
-    recs = [{"ppn": "1", "title": "x", "subjects": ["Natuur & Dieren", "Wilde dieren"]}]
+def test_book_genre_parent_resolved_per_audience(tmp_path):
+    """Jeugd and volwassenen reuse the same facet numbers, so a genre name shared by
+    both (e.g. "Misdaad & Mysterie": jeugd sub of "Spanning & Avontuur", volwassenen
+    sub of "Spanning & Thrillers") must get its parent per the book's own audience."""
+    recs = [
+        {"ppn": "j", "title": "jeugd", "audience": "Jeugd",
+         "subjects": ["Spanning & Avontuur", "Misdaad & Mysterie"]},
+        {"ppn": "v", "title": "volw", "audience": "Volwassenen",
+         "subjects": ["Spanning & Thrillers", "Misdaad & Mysterie"]},
+    ]
     conn = db.connect(tmp_path / "g.db")
     db.bulk_load(conn, recs)
-    db.set_genre_codes(conn, {"Natuur & Dieren": "2.0", "Wilde dieren": "2.6"})
-    rows = {r["name"]: (r["code"], r["parent"])
-            for r in conn.execute("SELECT name, code, parent FROM genres")}
-    assert rows["Natuur & Dieren"] == ("2.0", None)   # top-level (X.0)
-    assert rows["Wilde dieren"] == ("2.6", "2.0")     # sub-genre -> parent 2.0
-    conn.close()
+    db.set_book_genre_parents(conn, {
+        ("jeugd", "Spanning & Avontuur"): "4.0",
+        ("jeugd", "Misdaad & Mysterie"): "4.1",
+        ("volwassenen", "Spanning & Thrillers"): "4.0",
+        ("volwassenen", "Misdaad & Mysterie"): "4.1",
+    })
 
+    def parent(ppn):
+        return conn.execute(
+            "SELECT p.name FROM book_genres bg JOIN genres g ON g.id = bg.genre_id "
+            "LEFT JOIN genres p ON p.id = bg.parent_id "
+            "WHERE bg.book_ppn = ? AND g.name = 'Misdaad & Mysterie'", (ppn,)).fetchone()[0]
 
-def test_genre_parent_namespaced_by_audience(tmp_path):
-    """Jeugd and volwassenen reuse the same facet numbers (2.0 = "Natuur & Dieren"
-    for jeugd, "Literatuur & Romans" for volwassenen), so a sub-genre's parent must
-    resolve within its own audience, not to the other audience's top genre."""
-    recs = [{"ppn": "1", "title": "x",
-             "subjects": ["Natuur & Dieren", "Literatuur & Romans", "Wilde dieren"]}]
-    conn = db.connect(tmp_path / "g.db")
-    db.bulk_load(conn, recs)
-    db.set_genre_codes(conn, {"Natuur & Dieren": "jeugd|2.0",
-                              "Literatuur & Romans": "volwassenen|2.0",
-                              "Wilde dieren": "jeugd|2.6"})
-    parent = conn.execute(  # resolve the parent the way book_detail does
-        "SELECT p.name FROM genres g LEFT JOIN genres p ON p.code = g.parent "
-        "WHERE g.name = 'Wilde dieren'").fetchone()[0]
+    assert parent("j") == "Spanning & Avontuur"    # jeugd book -> jeugd parent
+    assert parent("v") == "Spanning & Thrillers"   # volwassenen book -> volwassenen parent
     conn.close()
-    assert parent == "Natuur & Dieren"  # not the volwassenen "Literatuur & Romans"
 
 
 def test_editions_lookup_uses_index_not_scan(tmp_path):

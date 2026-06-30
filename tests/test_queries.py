@@ -8,7 +8,7 @@ def _ppns(result):
 
 
 def test_book_detail_tolerates_pre_hierarchy_schema(tmp_path):
-    """A catalog built before the genres.code/parent columns (the window right
+    """A catalog built before the book_genres.parent_id column (the window right
     after a schema-changing deploy) must not 503 the book page — book_detail falls
     back to a flat genre list instead of raising OperationalError."""
     import sampledata
@@ -17,14 +17,13 @@ def test_book_detail_tolerates_pre_hierarchy_schema(tmp_path):
     path = tmp_path / "old.db"
     conn = db.connect(path)
     db.bulk_load(conn, sampledata.records(), sampledata.lists())
-    # rebuild genres without code/parent (the old schema), keeping ids so the
-    # book_genres join still resolves
+    # rebuild book_genres without parent_id (the old schema)
     conn.executescript(
         "PRAGMA foreign_keys=OFF;"
-        "CREATE TABLE genres_old (id INTEGER PRIMARY KEY, name TEXT UNIQUE);"
-        "INSERT INTO genres_old(id, name) SELECT id, name FROM genres;"
-        "DROP TABLE genres;"
-        "ALTER TABLE genres_old RENAME TO genres;")
+        "CREATE TABLE bg_old (book_ppn TEXT, genre_id INTEGER, PRIMARY KEY(book_ppn, genre_id));"
+        "INSERT INTO bg_old(book_ppn, genre_id) SELECT book_ppn, genre_id FROM book_genres;"
+        "DROP TABLE book_genres;"
+        "ALTER TABLE bg_old RENAME TO book_genres;")
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     conn.close()
     ro = Q.connect_ro(path)
