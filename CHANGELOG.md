@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Infinite scroll**: the search/browse page auto-loads the next page of covers as you
+  approach the bottom. Progressive enhancement — the numbered pager stays in the HTML as
+  a no-JS / crawler fallback, and `rel="prev"`/`rel="next"` are added for search engines.
+
 ## [0.3.23] - 2026-06-30
 
 ### Changed
