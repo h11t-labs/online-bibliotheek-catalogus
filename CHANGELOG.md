@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Genre hierarchy showed the **wrong parent** (and duplicate chips): the jeugd and
+  volwassenen subject facets reuse the same numbers (2.0 = jeugd *Natuur & Dieren* vs
+  volwassenen *Literatuur & Romans*), so a sub-genre's parent code matched both
+  audiences' top genres — e.g. jeugd *Wilde dieren* showed under *Literatuur & Romans*,
+  and *Misdaad & Mysterie* appeared twice. Genre facet codes are now namespaced by
+  audience, so a parent resolves within its own audience. Takes effect on the next
+  `normalize` (no re-scrape needed — records already carry the audience).
+
 ## [0.3.17] - 2026-06-30
 
 ### Fixed

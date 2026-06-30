@@ -111,9 +111,14 @@ def _prepass(paths: list[Path]) -> tuple[dict, dict, dict, dict]:
                 or [r.get("author")]
             for a in authors:
                 by_key.setdefault(match_key(r.get("title"), a), ppn)
+            # Namespace the facet code by audience: onderwerpJeugd and
+            # onderwerpVolwassenen reuse the same numbers (2.0 = jeugd "Natuur &
+            # Dieren" vs volwassenen "Literatuur & Romans"), so without the prefix a
+            # sub-genre's parent code would match the wrong audience's top genre.
+            aud = (r.get("audience") or "").strip().lower()
             for g in (r.get("genres") or []):
                 if g.get("name") and g.get("code"):
-                    code_of.setdefault(g["name"], g["code"])
+                    code_of.setdefault(g["name"], f"{aud}|{g['code']}")
     canon = {k: ctr.most_common(1)[0][0] for k, ctr in groups.items()}
     return canon, by_isbn, by_key, code_of
 
