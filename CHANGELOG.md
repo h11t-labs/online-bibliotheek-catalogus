@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Mobile filters: the filter block is now its own **collapsible card** — tap the
+  "Filters" header (with a chevron) to expand/collapse the whole block. The separate
+  Filters button next to the sort dropdown is gone; sort + per-page stay in the toolbar.
+
 ## [0.3.22] - 2026-06-30
 
 ### Changed

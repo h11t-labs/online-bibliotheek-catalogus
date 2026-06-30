@@ -101,7 +101,7 @@ def test_goatcounter_snippet_present(client):
 def test_per_page_and_toolbar(client):
     body = client.get("/").text
     assert 'class="toolbar"' in body                        # sort + per-page above results
-    assert 'filters-btn' in body                            # mobile filters toggle
+    assert 'rail-toggle' in body                            # collapsible filter block header
     assert 'name="per_page"' in body                        # carried on the filter form
     assert client.get("/?per_page=48").status_code == 200    # a valid option
     assert client.get("/?per_page=999").status_code == 200   # invalid -> clamped, no error
