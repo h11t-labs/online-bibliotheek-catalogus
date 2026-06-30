@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Search/browse layout: **sort** and **items-per-page** now sit in a toolbar **above the
+  results** (instead of in the filter sidebar). On phones the filter sidebar is
+  **collapsed** behind a "Filters" button that toggles it open.
+
 ## [0.3.21] - 2026-06-30
 
 ### Added

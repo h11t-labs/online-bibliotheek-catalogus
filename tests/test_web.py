@@ -98,10 +98,13 @@ def test_goatcounter_snippet_present(client):
     assert "//gc.zgo.at/count.js" in body
 
 
-def test_per_page_option(client):
-    assert 'name="per_page"' in client.get("/").text       # the selector is rendered
-    assert client.get("/?per_page=48").status_code == 200   # a valid option
-    assert client.get("/?per_page=999").status_code == 200  # invalid -> clamped, no error
+def test_per_page_and_toolbar(client):
+    body = client.get("/").text
+    assert 'class="toolbar"' in body                        # sort + per-page above results
+    assert 'filters-btn' in body                            # mobile filters toggle
+    assert 'name="per_page"' in body                        # carried on the filter form
+    assert client.get("/?per_page=48").status_code == 200    # a valid option
+    assert client.get("/?per_page=999").status_code == 200   # invalid -> clamped, no error
 
 
 def test_cache_control_and_crawl_delay(client):
