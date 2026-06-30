@@ -1,6 +1,6 @@
 [project]
 name = "online-bibliotheek-catalogus"
-version = "0.3.16"
+version = "0.3.17"
 description = "Own searchable catalog of the Dutch online bibliotheek (onlinebibliotheek.nl)"
 requires-python = ">=3.11"
 dependencies = [
