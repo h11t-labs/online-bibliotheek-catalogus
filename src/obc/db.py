@@ -473,22 +473,30 @@ def stats(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
-def set_book_genre_parents(conn: sqlite3.Connection,
-                           code_by_aud_name: dict[tuple[str, str], str]) -> None:
+def set_book_genre_parents(conn: sqlite3.Connection, genre_info: tuple) -> None:
     """Stamp ``book_genres.parent_id`` with the parent genre *resolved within each
     book's own audience*.
 
-    ``code_by_aud_name`` maps ``(audience, genre name) -> 'major.minor' facet code``.
-    Jeugd and volwassenen reuse the same numbers but mean different genres, so the
-    same genre name can have a different parent per audience — hence the parent lives
-    on the per-book link, not on the (name-keyed) genre row. A small
-    ``(audience, genre_id) -> parent_id`` table drives one set-based UPDATE, so this
-    stays cheap in memory even with hundreds of thousands of book_genres rows."""
+    ``genre_info`` is ``(genre_code, genre_count)`` where ``genre_code`` maps
+    ``(audience, name) -> 'major.minor' facet code`` and ``genre_count`` how many
+    books carry each ``(audience, name)``. Jeugd and volwassenen reuse the same
+    numbers but mean different genres, so the same name can have a different parent
+    per audience — hence the parent lives on the per-book link, not the (name-keyed)
+    genre row. The top genre for an ``(audience, code)`` is the **most common** name
+    there, so a name that leaked into the wrong audience's data can't hijack the
+    parent. A small ``(audience, genre_id) -> parent_id`` table then drives one
+    set-based UPDATE, cheap in memory even with hundreds of thousands of links."""
+    genre_code, genre_count = genre_info
     gid_of = {r["name"]: r["id"] for r in conn.execute("SELECT id, name FROM genres")}
-    gid_by_aud_code = {(aud, code): gid_of[name]
-                       for (aud, name), code in code_by_aud_name.items() if name in gid_of}
-    triples = []  # (audience, genre_id, parent_id) for sub-genres only
-    for (aud, name), code in code_by_aud_name.items():
+    # most common genre name per (audience, code) -> its id
+    best: dict[tuple[str, str], tuple[int, str]] = {}
+    for (aud, name), code in genre_code.items():
+        c = genre_count.get((aud, name), 0)
+        if (aud, code) not in best or c > best[(aud, code)][0]:
+            best[(aud, code)] = (c, name)
+    gid_by_aud_code = {ac: gid_of[nm] for ac, (_, nm) in best.items() if nm in gid_of}
+    parents: dict[tuple[str, int], int] = {}  # (audience, genre_id) -> parent_id
+    for (aud, name), code in genre_code.items():
         if name not in gid_of:
             continue
         major, _, minor = code.partition(".")
@@ -496,10 +504,11 @@ def set_book_genre_parents(conn: sqlite3.Connection,
             continue  # top-level genre — no parent
         pid = gid_by_aud_code.get((aud, f"{major}.0"))
         if pid and pid != gid_of[name]:
-            triples.append((aud, gid_of[name], pid))
+            parents[(aud, gid_of[name])] = pid
     cur = conn.cursor()
     cur.execute("CREATE TEMP TABLE _gpa (audience TEXT, genre_id INTEGER, parent_id INTEGER)")
-    cur.executemany("INSERT INTO _gpa VALUES (?, ?, ?)", triples)
+    cur.executemany("INSERT INTO _gpa VALUES (?, ?, ?)",
+                    [(aud, gid, pid) for (aud, gid), pid in parents.items()])
     cur.execute("CREATE INDEX _gpa_idx ON _gpa (genre_id, audience)")
     cur.execute(
         "UPDATE book_genres SET parent_id = ("

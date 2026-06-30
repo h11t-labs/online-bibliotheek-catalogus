@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Genre hierarchy: the top genre for an *(audience, code)* is now the **most common**
+  name there, so a genre name that leaks across audiences in the source data (e.g. a
+  jeugd *Spanning & Avontuur* tag on a volwassenen book) can't hijack a sub-genre's
+  parent — volwassenen *True crime* kept showing the jeugd parent *Spanning & Avontuur*
+  instead of *Spanning & Thrillers*. Refines v0.3.19. Takes effect on the next normalize.
+
 ## [0.3.19] - 2026-06-30
 
 ### Fixed
