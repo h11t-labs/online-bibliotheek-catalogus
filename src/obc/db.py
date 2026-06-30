@@ -62,15 +62,14 @@ CREATE TABLE IF NOT EXISTS books (
 );
 
 CREATE TABLE IF NOT EXISTS genres (
-    id     INTEGER PRIMARY KEY,
-    name   TEXT UNIQUE,
-    code   TEXT,             -- facet code, e.g. "2.6" (major.minor)
-    parent TEXT              -- parent code "2.0" for a sub-genre; NULL = top-level
+    id   INTEGER PRIMARY KEY,
+    name TEXT UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS book_genres (
-    book_ppn TEXT NOT NULL REFERENCES books(ppn) ON DELETE CASCADE,
-    genre_id INTEGER NOT NULL REFERENCES genres(id) ON DELETE CASCADE,
+    book_ppn  TEXT NOT NULL REFERENCES books(ppn) ON DELETE CASCADE,
+    genre_id  INTEGER NOT NULL REFERENCES genres(id) ON DELETE CASCADE,
+    parent_id INTEGER,   -- the parent genre *for this book's audience* (NULL = top)
     PRIMARY KEY (book_ppn, genre_id)
 );
 
@@ -474,14 +473,38 @@ def stats(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
-def set_genre_codes(conn: sqlite3.Connection, code_of: dict[str, str]) -> None:
-    """Stamp each genre with its facet ``code`` + ``parent`` code (the hierarchy).
-    ``code_of`` maps a genre name to its 'major.minor' code (from detail pages); a
-    sub-genre ('X.Y', Y≠0) gets parent 'X.0', a top-level one ('X.0') gets NULL."""
-    rows = []
-    for name, code in code_of.items():
-        major, _, minor = (code or "").partition(".")
-        parent = f"{major}.0" if (minor and minor != "0") else None
-        rows.append((code or None, parent, name))
-    conn.executemany("UPDATE genres SET code = ?, parent = ? WHERE name = ?", rows)
+def set_book_genre_parents(conn: sqlite3.Connection,
+                           code_by_aud_name: dict[tuple[str, str], str]) -> None:
+    """Stamp ``book_genres.parent_id`` with the parent genre *resolved within each
+    book's own audience*.
+
+    ``code_by_aud_name`` maps ``(audience, genre name) -> 'major.minor' facet code``.
+    Jeugd and volwassenen reuse the same numbers but mean different genres, so the
+    same genre name can have a different parent per audience — hence the parent lives
+    on the per-book link, not on the (name-keyed) genre row. A small
+    ``(audience, genre_id) -> parent_id`` table drives one set-based UPDATE, so this
+    stays cheap in memory even with hundreds of thousands of book_genres rows."""
+    gid_of = {r["name"]: r["id"] for r in conn.execute("SELECT id, name FROM genres")}
+    gid_by_aud_code = {(aud, code): gid_of[name]
+                       for (aud, name), code in code_by_aud_name.items() if name in gid_of}
+    triples = []  # (audience, genre_id, parent_id) for sub-genres only
+    for (aud, name), code in code_by_aud_name.items():
+        if name not in gid_of:
+            continue
+        major, _, minor = code.partition(".")
+        if minor in ("", "0"):
+            continue  # top-level genre — no parent
+        pid = gid_by_aud_code.get((aud, f"{major}.0"))
+        if pid and pid != gid_of[name]:
+            triples.append((aud, gid_of[name], pid))
+    cur = conn.cursor()
+    cur.execute("CREATE TEMP TABLE _gpa (audience TEXT, genre_id INTEGER, parent_id INTEGER)")
+    cur.executemany("INSERT INTO _gpa VALUES (?, ?, ?)", triples)
+    cur.execute("CREATE INDEX _gpa_idx ON _gpa (genre_id, audience)")
+    cur.execute(
+        "UPDATE book_genres SET parent_id = ("
+        "  SELECT gp.parent_id FROM _gpa gp JOIN books b ON b.ppn = book_genres.book_ppn "
+        "  WHERE gp.genre_id = book_genres.genre_id "
+        "    AND gp.audience = lower(COALESCE(b.audience, '')))")
+    cur.execute("DROP TABLE _gpa")
     conn.commit()

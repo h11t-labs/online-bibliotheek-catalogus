@@ -96,7 +96,7 @@ def _prepass(paths: list[Path]) -> tuple[dict, dict, dict, dict]:
     groups: dict[str, Counter] = {}
     by_isbn: dict[str, str] = {}
     by_key: dict[str, str] = {}
-    code_of: dict[str, str] = {}
+    code_by_aud_name: dict[tuple[str, str], str] = {}
     for path in paths:
         for r in _read(path):
             ppn = r.get("ppn")
@@ -111,16 +111,16 @@ def _prepass(paths: list[Path]) -> tuple[dict, dict, dict, dict]:
                 or [r.get("author")]
             for a in authors:
                 by_key.setdefault(match_key(r.get("title"), a), ppn)
-            # Namespace the facet code by audience: onderwerpJeugd and
+            # (audience, genre name) -> facet code. onderwerpJeugd and
             # onderwerpVolwassenen reuse the same numbers (2.0 = jeugd "Natuur &
-            # Dieren" vs volwassenen "Literatuur & Romans"), so without the prefix a
-            # sub-genre's parent code would match the wrong audience's top genre.
+            # Dieren" vs volwassenen "Literatuur & Romans"), so the code — and thus a
+            # genre's parent — is only meaningful within one audience.
             aud = (r.get("audience") or "").strip().lower()
             for g in (r.get("genres") or []):
                 if g.get("name") and g.get("code"):
-                    code_of.setdefault(g["name"], f"{aud}|{g['code']}")
+                    code_by_aud_name.setdefault((aud, g["name"]), g["code"])
     canon = {k: ctr.most_common(1)[0][0] for k, ctr in groups.items()}
-    return canon, by_isbn, by_key, code_of
+    return canon, by_isbn, by_key, code_by_aud_name
 
 
 def iter_records(paths: list[Path], aux: tuple, canon: dict):
@@ -201,7 +201,7 @@ def normalize(raw_dir: Path = RAW_DIR, db_path: Path = db.DEFAULT_DB) -> dict:
     _reclaim_disk(db_path, raw_dir)
     paths = sorted((raw_dir / "records").rglob("*.json"))
     aux = _load_aux()
-    canon, by_isbn, by_key, code_of = _prepass(paths)  # canon + match maps + genre codes
+    canon, by_isbn, by_key, genre_codes = _prepass(paths)  # canon + match maps + genre codes
     lists = match_lists(by_isbn, by_key)
     # Build into a temp DB, then swap it in atomically — the web app keeps serving
     # the old, complete catalog throughout the rebuild (no "wordt opgebouwd" window).
@@ -209,7 +209,7 @@ def normalize(raw_dir: Path = RAW_DIR, db_path: Path = db.DEFAULT_DB) -> dict:
     conn = db.connect(tmp)
     # stream records in batches — constant memory, no full in-RAM load
     n = db.stream_rebuild(conn, iter_records(paths, aux, canon), lists)
-    db.set_genre_codes(conn, code_of)  # stamp the genre facet code + parent (hierarchy)
+    db.set_book_genre_parents(conn, genre_codes)  # per-book genre-hierarchy parent
     s = db.stats(conn)
     conn.close()
     os.replace(tmp, db_path)  # atomic on the same filesystem

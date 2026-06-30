@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Genre hierarchy parent is now resolved **per book's audience**. A genre name can exist
+  in both jeugd and volwassenen with a *different* parent (e.g. *Misdaad & Mysterie* is a
+  jeugd sub of *Spanning & Avontuur* but a volwassenen sub of *Spanning & Thrillers*), so
+  a single name-keyed parent was always wrong for one audience. The parent moved off the
+  genre row onto the per-book `book_genres.parent_id`, resolved within that book's
+  audience. Supersedes the v0.3.18 code-namespacing. Takes effect on the next normalize.
+
 ## [0.3.18] - 2026-06-30
 
 ### Fixed
