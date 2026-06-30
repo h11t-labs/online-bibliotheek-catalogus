@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.18] - 2026-06-30
+
 ### Fixed
 - Genre hierarchy showed the **wrong parent** (and duplicate chips): the jeugd and
   volwassenen subject facets reuse the same numbers (2.0 = jeugd *Natuur & Dieren* vs
