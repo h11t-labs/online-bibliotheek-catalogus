@@ -18,13 +18,22 @@ _NL_MONTHS = ("", "januari", "februari", "maart", "april", "mei", "juni", "juli"
               "augustus", "september", "oktober", "november", "december")
 
 
+_WEEK_YEAR = re.compile(r"week\s*(\d{1,2})\s*[-–]\s*(20\d\d)", re.I)
+_YEAR_WEEK = re.compile(r"(20\d\d)\s*week\s*(\d{1,2})\b", re.I)
+
+
 def period(page: str) -> str | None:
-    """Render the page's 'Week N - YYYY' as 'week N · D t/m D maand jaar' (the
-    Mon–Sun range the bestseller list covers)."""
-    m = re.search(r"Week\s*(\d{1,2})\s*[-–]\s*(20\d\d)", page)
-    if not m:
-        return None
-    week, year = int(m.group(1)), int(m.group(2))
+    """Render the page's week marker as 'week N · D t/m D maand jaar' (the Mon–Sun
+    range the bestseller list covers). The site has used both 'Week N - YYYY' and,
+    since a redesign, 'YYYY week N' (e.g. the meta description) — match either."""
+    m = _WEEK_YEAR.search(page)
+    if m:
+        week, year = int(m.group(1)), int(m.group(2))
+    else:
+        m = _YEAR_WEEK.search(page)
+        if not m:
+            return None
+        year, week = int(m.group(1)), int(m.group(2))
     try:
         mon = datetime.date.fromisocalendar(year, week, 1)
         sun = datetime.date.fromisocalendar(year, week, 7)

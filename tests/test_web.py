@@ -33,6 +33,19 @@ def test_suggest(client):
     assert client.get("/suggest?q=").json()["titles"] == []
 
 
+def test_suggest_searches_keywords_and_includes_format(client):
+    # "italiaans" only lives in book 005's Trefwoorden (keywords), not its title.
+    data = client.get("/suggest?q=italiaans").json()
+    matches = [t for t in data["titles"] if t["ppn"] == "005"]
+    assert matches and matches[0]["format"] == "ebook"
+
+
+def test_autocomplete_shows_edition_format_badge(client):
+    # the dropdown's own-format corner badge on each cover thumbnail
+    body = client.get("/").text
+    assert "ac-cover" in body and "ac-fmt" in body
+
+
 def test_facet_endpoint(client):
     assert "Anna Vrij" in client.get("/facet?type=author").json()["values"]
     assert client.get("/facet?type=bogus").json()["values"] == []
