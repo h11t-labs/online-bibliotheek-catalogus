@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.26] - 2026-07-01
+
 ### Added
 - Mobile menu: **Lijsten**, **Statistieken** and **Over** now show a one-line
   explanation under each title (e.g. "Bestsellers, prijzen & nominaties") — richer,
