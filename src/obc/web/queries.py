@@ -240,12 +240,15 @@ def suggest(conn: sqlite3.Connection, q: str, limit: int = 7) -> dict | None:
     terms = re.findall(r"\w+", q, flags=re.UNICODE)
     if not terms:
         return None
-    title_m = " ".join(f'title:"{t}"*' for t in terms)
+    # Unscoped (not title-only) so a match in subjects/keywords/summary/author also
+    # surfaces a book here — e.g. a search term that's only in "Trefwoorden" used to
+    # show nothing in the live dropdown even though the full search page found it.
+    # Same bm25 weights as the main search, so title hits still rank first.
     title_rows = conn.execute(
         "SELECT b.ppn, b.title, b.author, b.cover_url, b.format "
         "FROM books_fts ft JOIN books b ON b.ppn = ft.ppn "
-        "WHERE books_fts MATCH ? ORDER BY bm25(books_fts) LIMIT ?",
-        (title_m, limit)).fetchall()
+        "WHERE books_fts MATCH ? ORDER BY bm25(books_fts, 10.0, 6.0, 2.0, 1.0) LIMIT ?",
+        (fts_match(q), limit)).fetchall()
     like = f"%{fold(q)}%"
     authors = [r["name"] for r in conn.execute(
         "SELECT a.name, COUNT(*) n FROM authors a JOIN book_authors ba "
@@ -310,6 +313,11 @@ def book_detail(conn: sqlite3.Connection, ppn: str) -> dict | None:
         genres = [{"name": r["name"], "parent": None} for r in conn.execute(
             "SELECT g.name FROM genres g JOIN book_genres bg ON bg.genre_id = g.id "
             "WHERE bg.book_ppn = ? ORDER BY g.name", (ppn,))]
+    # Drop a top-level genre's own chip when a "parent › child" chip already shows it —
+    # e.g. skip standalone "Literatuur & Romans" when "Literatuur & Romans › Sociale
+    # romans" is also on this book; that chip already conveys the top-level genre.
+    shown_as_parent = {g["parent"] for g in genres if g["parent"]}
+    genres = [g for g in genres if not (g["parent"] is None and g["name"] in shown_as_parent)]
     # other editions of the same work (e.g. the audiobook of this e-book)
     editions = {row["format"]: ppn}
     for r in conn.execute(
@@ -386,9 +394,15 @@ def web_stats(conn: sqlite3.Connection) -> dict:
         "publishers": one("SELECT COUNT(*) FROM publishers"),
         "lists": one("SELECT COUNT(*) FROM lists"),
         "languages": many("SELECT name, n FROM languages ORDER BY n DESC LIMIT 8"),
-        "genres": many("SELECT g.name, COUNT(*) n FROM genres g "
-                       "JOIN book_genres bg ON bg.genre_id=g.id GROUP BY g.id "
-                       "ORDER BY n DESC LIMIT 12"),
+        # top-level genres (parent_id IS NULL for that link) and sub-genres carry
+        # their parent's name, so the stats page can show "Parent › Kind" like the
+        # book page does. A genre used both ways (rare cross-audience overlap) gets
+        # its own row per role, so counts stay honest.
+        "genres": many(
+            "SELECT g.name, p.name AS parent, COUNT(*) n "
+            "FROM book_genres bg JOIN genres g ON g.id = bg.genre_id "
+            "LEFT JOIN genres p ON p.id = bg.parent_id "
+            "GROUP BY g.id, p.id ORDER BY n DESC LIMIT 12"),
         "years": many("SELECT year, COUNT(*) n FROM books WHERE year >= 2000 "
                       "GROUP BY year ORDER BY year"),
         "top_authors": many("SELECT a.name, COUNT(*) n FROM authors a "

@@ -228,6 +228,16 @@
     .ac-item:hover,.ac-item.active{background:var(--accent-soft)}
     .ac-item img{width:32px;height:46px;object-fit:cover;border-radius:4px;flex:none;
       background:var(--line)}
+    /* which edition (e-book / audiobook) this suggestion is — a small corner badge
+       inset within the thumbnail (like .fmt-icons on the grid cards), so it's clear
+       before you even click through. Inset rather than overhanging the corner, so it
+       sits flush and doesn't shift under the cursor. */
+    .ac-cover{position:relative;flex:none;line-height:0}
+    .ac-fmt{position:absolute;right:2px;bottom:2px;width:15px;height:15px;border-radius:4px;
+      display:flex;align-items:center;justify-content:center;color:#fff}
+    .ac-fmt svg{width:8px;height:8px;display:block;flex:none}
+    .ac-fmt.book{background:rgba(154,59,46,.9)}
+    .ac-fmt.audio{background:rgba(184,137,59,.95)}
     .ac-item .meta{min-width:0}
     .ac-item .t{font-family:var(--serif);font-size:14.5px;white-space:nowrap;overflow:hidden;
       text-overflow:ellipsis}
@@ -457,8 +467,11 @@
       if(d.titles&&d.titles.length){
         html+=group('Titels');
         d.titles.forEach(t=>{ items.push({kind:'title',ppn:t.ppn});
+          const audio=t.format==='audiobook';
           html+=`<div class="ac-item" data-i="${items.length-1}">
-            <img loading="lazy" src="${esc(t.cover_url)}" alt="">
+            <span class="ac-cover"><img loading="lazy" src="${esc(t.cover_url)}" alt="">
+            <span class="ac-fmt ${audio?'audio':'book'}" title="${audio?'Luisterboek':'E-book'}">
+              <svg width="9" height="9"><use href="#ic-${audio?'audio':'book'}"/></svg></span></span>
             <div class="meta"><div class="t">${esc(t.title||'—')}</div>
             <div class="a">${esc(t.author||'')}</div></div></div>`; });
       }

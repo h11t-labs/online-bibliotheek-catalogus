@@ -97,10 +97,51 @@ def test_suggest(ro_conn):
     assert Q.suggest(ro_conn, "", 7) is None
 
 
+def test_suggest_matches_keywords_not_just_title(ro_conn):
+    # "italiaans" is only in book 005's keywords (Trefwoorden), not its title/subjects.
+    # The live search-bar dropdown used to only match the title column, so a keyword-only
+    # term showed nothing there even though the full search page found it.
+    titles = Q.suggest(ro_conn, "italiaans", 7)["title_rows"]
+    assert any(r["ppn"] == "005" for r in titles)
+    assert titles[0]["format"] in ("ebook", "audiobook")  # format is available to render
+
+
 def test_facet_values(ro_conn):
     assert "Anna Vrij" in Q.facet_values(ro_conn, "author")
     assert "Querido, Amsterdam" in Q.facet_values(ro_conn, "publisher")
     assert Q.facet_values(ro_conn, "bogus") == []
+
+
+def test_book_detail_hides_top_genre_shown_via_a_subgenre_chip(tmp_path):
+    # A book tagged with both "Literatuur & Romans" and its sub "Sociale romans" (and
+    # likewise for Spanning & Thrillers) should not show the top-level genre as its own
+    # separate chip — "Literatuur & Romans › Sociale romans" already conveys it. A
+    # top-level genre with no child present ("Gezin & Gezondheid") must still show.
+    from obc import db
+    recs = [{"ppn": "1", "title": "x", "audience": "Volwassenen",
+             "subjects": ["Literatuur & Romans", "Sociale romans",
+                          "Spanning & Thrillers", "Historische spanning",
+                          "Gezin & Gezondheid"]}]
+    from collections import Counter
+    conn = db.connect(tmp_path / "g.db")
+    db.bulk_load(conn, recs)
+    genre_code = {
+        ("volwassenen", "Literatuur & Romans"): "2.0",
+        ("volwassenen", "Sociale romans"): "2.1",
+        ("volwassenen", "Spanning & Thrillers"): "4.0",
+        ("volwassenen", "Historische spanning"): "4.1",
+        ("volwassenen", "Gezin & Gezondheid"): "10.0",
+    }
+    db.set_book_genre_parents(conn, (genre_code, Counter(dict.fromkeys(genre_code, 1))))
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+    ro = Q.connect_ro(tmp_path / "g.db")
+    names = {g["name"] for g in Q.book_detail(ro, "1")["genres"]}
+    ro.close()
+    assert "Literatuur & Romans" not in names   # superseded by its child chip
+    assert "Spanning & Thrillers" not in names  # superseded by its child chip
+    assert "Sociale romans" in names and "Historische spanning" in names
+    assert "Gezin & Gezondheid" in names        # no child -> stays visible
 
 
 def test_book_detail(ro_conn):
@@ -131,3 +172,25 @@ def test_web_stats(ro_conn):
     assert s["total"] == 6
     assert s["ebooks"] == 5
     assert s["audiobooks"] == 1
+
+
+def test_web_stats_genres_carry_parent(tmp_path):
+    # The stats page's genre bars show "Parent › Kind" like the book page — each row
+    # is (name, parent, count); a top-level genre's own row has parent=None.
+    from collections import Counter
+
+    from obc import db
+    recs = [{"ppn": "1", "title": "x", "audience": "Volwassenen",
+             "subjects": ["Literatuur & Romans", "Sociale romans"]}]
+    conn = db.connect(tmp_path / "g.db")
+    db.bulk_load(conn, recs)
+    genre_code = {("volwassenen", "Literatuur & Romans"): "2.0",
+                  ("volwassenen", "Sociale romans"): "2.1"}
+    db.set_book_genre_parents(conn, (genre_code, Counter(dict.fromkeys(genre_code, 1))))
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+    ro = Q.connect_ro(tmp_path / "g.db")
+    rows = {r["name"]: r["parent"] for r in Q.web_stats(ro)["genres"]}
+    ro.close()
+    assert rows["Literatuur & Romans"] is None
+    assert rows["Sociale romans"] == "Literatuur & Romans"

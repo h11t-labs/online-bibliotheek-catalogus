@@ -64,7 +64,20 @@
   </div></div>
   {% endmacro %}
 
-  {{ barlist('Genres', s.genres, '/?genre=') }}
+  {% macro genrelist(items, link) %}
+  {% set m = (items|map(attribute=2)|list|max) or 1 %}
+  <div class="panel"><h2>Genres</h2><div class="bars">
+    {% for it in items %}
+    <div class="bar">
+      <span class="lbl"><a class="flink" style="text-decoration:underline dotted" href="{{ link }}{{ it[0]|urlencode }}">{% if it[1] %}<span style="opacity:.6">{{ it[1] }} › </span>{% endif %}{{ it[0] }}</a></span>
+      <div class="track"><div class="fill" style="width:{{ (it[2]*100//m) }}%"></div></div>
+      <span class="num">{{ "{:,}".format(it[2]).replace(",", ".") }}</span>
+    </div>
+    {% endfor %}
+  </div></div>
+  {% endmacro %}
+
+  {{ genrelist(s.genres, '/?genre=') }}
   {{ barlist('Talen', s.languages, '/?language=') }}
   {{ barlist('Topauteurs', s.top_authors, '/author/') }}
   {{ barlist('Topuitgevers', s.top_publishers, '/?publisher=') }}

@@ -6,7 +6,8 @@ Six books chosen to exercise the interesting paths:
   author) so edition-linking / formats_map have something to join on.
 * 003 — English, two authors, ereader=0.
 * 004 — a series volume (``Het Mysterie: deel 2``), Dutch.
-* 005 — ereader-available cookbook.
+* 005 — ereader-available cookbook, with keywords not present in the title/subjects
+  (so full-text/suggest matching on keywords has something to exercise).
 * 006 — Spanish, diacritics in the title.
 
 ``records()`` / ``lists()`` return fresh copies so a test may mutate them.
@@ -40,7 +41,8 @@ def records() -> list[dict]:
         {"ppn": "005", "title": "Koken met Liefde", "author": "Dirk Kok",
          "authors": ["Dirk Kok"], "format": "ebook", "language": "Nederlands",
          "publisher": "Keuken Pers", "year": 2022, "isbn": "9789021400005",
-         "subjects": ["Gezin & Gezondheid"], "ereader": 1},
+         "subjects": ["Gezin & Gezondheid"], "keywords": "pasta, italiaans",
+         "ereader": 1},
         {"ppn": "006", "title": "Poesía Española", "author": "Elena Sol",
          "authors": ["Elena Sol"], "format": "ebook", "language": "Spaans",
          "publisher": "Sol Editorial", "year": 2019,

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Search-bar autocomplete now matches **all indexed fields** (subjects/keywords/summary/
+  author), not just the title — a term that only appears in "Trefwoorden" used to show
+  nothing in the live dropdown even though the full search page already found it.
+- Autocomplete title suggestions show a small **e-book/luisterboek badge** on the cover
+  thumbnail, so the edition is clear before you click through.
+
+### Changed
+- Statistics page's genre bars now show the hierarchy too — a sub-genre reads
+  "Parent › Kind" (e.g. "Literatuur & Romans › Vertaald"), matching the book page.
+
+### Fixed
+- Book pages no longer show a top-level genre as its own chip when a more specific
+  "parent › child" chip for it is already shown (e.g. a standalone "Literatuur & Romans"
+  chip disappears once "Literatuur & Romans › Sociale romans" is on the same book) — the
+  child chip already conveys the top-level genre, so the plain one was redundant.
+- Autocomplete's edition badge overhung the cover's corner (half off the edge) instead
+  of sitting inset like every other format badge in the app; now a clean 2px inset,
+  matching the existing convention.
+- Bestseller 60's shown week silently went stale after the source site's redesign
+  changed its date marker from "Week N - YYYY" to "YYYY week N" — our parser only
+  recognised the old order, so it kept displaying an old week (e.g. week 26 well into
+  week 27) even though "bijgewerkt op" kept advancing on every successful refresh. Now
+  matches either order.
+
 ## [0.3.26] - 2026-07-01
 
 ### Added

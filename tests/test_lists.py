@@ -63,3 +63,11 @@ def test_bestseller60_period_from_week():
     p = bestseller60.period("… Week 26 - 2026 …")
     assert p and p.startswith("week 26 · ") and "t/m" in p and "2026" in p
     assert bestseller60.period("no week here") is None
+
+
+def test_bestseller60_period_handles_redesigned_year_week_order():
+    # the site's redesign flipped "Week N - YYYY" to "YYYY week N" (e.g. the meta
+    # description); a fetch after that redesign returned None here, so the "bijgewerkt
+    # op" date kept advancing while the displayed week/range silently went stale.
+    p = bestseller60.period('content="2026 week 27 van de officiële bestsellerlijst"')
+    assert p and p.startswith("week 27 · ") and "2026" in p
