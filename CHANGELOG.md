@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Mobile menu: **Lijsten**, **Statistieken** and **Over** now show a one-line
+  explanation under each title (e.g. "Bestsellers, prijzen & nominaties") — richer,
+  since the full-page menu has the room and nothing else competes for attention.
+- Mobile theme switcher: an explicit **3-way segmented control** (Systeem / Licht /
+  Donker) in the full-page menu, replacing the guess-and-tap cycling icon. Desktop
+  keeps the compact cycling icon button.
+- Search/author/series result cards now show which **specific edition** (e-book or
+  audiobook) each card is: its own format gets a solid badge, and if the same work
+  also exists in the other format, a dim "also available as…" badge hints at it —
+  so two cards for the same title no longer look identical.
+
+### Changed
+- Renamed the **Statistiek** menu item and page to **Statistieken** (plural).
+- Book detail page on mobile: the cover + "Lenen op…" button are now a centered hero
+  group (a properly sized, centered cover and a full-width primary button), instead of
+  a small cover stuck to the left edge with a tiny button matching its width.
+- The page behind a full-page search or menu overlay no longer scrolls while the
+  overlay is open.
+- The app name ("Bibliotheek") is shown again next to the 📖 mark on phones — the
+  icon-only search freed up the room; it only hides below 380px.
+
+### Fixed
+- Mobile full-page search/menu overlays were trapped inside the header's own box
+  (background missing / capped at the header's height) instead of covering the full
+  screen: `backdrop-filter` on `.site-header` was establishing a CSS containing block
+  for its `position:fixed` descendants. Moved the blur to a `::before` pseudo-element
+  so the header no longer traps its fixed-position children.
+
 ## [0.3.25] - 2026-06-30
 
 ### Fixed

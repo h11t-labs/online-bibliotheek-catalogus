@@ -56,7 +56,7 @@
     {% for b in books %}
     <a class="book" href="/book/{{ b['ppn'] }}">
       <div class="cover">
-        {{ fmt_icons(formats_map.get(b['ppn'], [b['format']])) }}
+        {{ fmt_icons(b['format'], formats_map.get(b['ppn'], [b['format']])) }}
         {% set bl = lists_map.get(b['ppn']) %}
         {% if bl %}<span class="list-ribbon"><svg><use href="#ic-award"/></svg>{{ bl[0].name }}{% if bl[0].year %} {{ bl[0].year }}{% elif bl[0].position %} #{{ bl[0].position }}{% endif %}</span>{% endif %}
         <img loading="lazy" src="{{ b['cover_url']|coverw(400) }}" alt="">

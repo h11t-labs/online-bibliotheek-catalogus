@@ -17,7 +17,7 @@
     {% for b in books %}
     <a class="book" href="/book/{{ b['ppn'] }}">
       <div class="cover">
-        {{ fmt_icons(formats_map.get(b['ppn'], [b['format']])) }}
+        {{ fmt_icons(b['format'], formats_map.get(b['ppn'], [b['format']])) }}
         {% if b['series_no'] %}<span class="sno">{{ b['series_no'] }}</span>{% endif %}
         <img loading="lazy" src="{{ b['cover_url']|coverw(400) }}" alt="">
       </div>

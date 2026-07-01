@@ -1,6 +1,22 @@
-{% macro fmt_icons(formats) -%}
+{% macro fmt_icons(own_format, all_formats=[]) -%}
+{# own_format = this card's actual edition; all_formats = every format the work has
+   (a title can have separate e-book/audiobook PPNs). The card's own format gets the
+   solid badge; another format the work also has (but this card isn't) gets a dim
+   "also available" badge — so two cards for the same work look visibly different
+   instead of identical. #}
 <div class="fmt-icons">
-  {% if 'ebook' in formats %}<span class="fmt-ic book" title="E-book"><svg width="15" height="15"><use href="#ic-book"/></svg></span>{% endif %}
-  {% if 'audiobook' in formats %}<span class="fmt-ic audio" title="Luisterboek"><svg width="15" height="15"><use href="#ic-audio"/></svg></span>{% endif %}
+  {% for f in ['ebook', 'audiobook'] %}
+    {% if f == own_format %}
+    <span class="fmt-ic {{ 'audio' if f == 'audiobook' else 'book' }}"
+          title="{{ 'Luisterboek' if f == 'audiobook' else 'E-book' }}">
+      <svg width="15" height="15"><use href="#ic-{{ 'audio' if f == 'audiobook' else 'book' }}"/></svg>
+    </span>
+    {% elif f in all_formats %}
+    <span class="fmt-ic alt"
+          title="Ook beschikbaar als {{ 'luisterboek' if f == 'audiobook' else 'e-book' }}">
+      <svg width="15" height="15"><use href="#ic-{{ 'audio' if f == 'audiobook' else 'book' }}"/></svg>
+    </span>
+    {% endif %}
+  {% endfor %}
 </div>
 {%- endmacro %}

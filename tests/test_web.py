@@ -14,6 +14,17 @@ def test_format_filter_renders_only_matches(client):
     assert "/book/002" in body  # the audiobook edition is shown
 
 
+def test_dual_edition_cards_show_distinct_format_badges(client):
+    # 001 (e-book) and 002 (audiobook) are the same work under different PPNs; each
+    # card must show its OWN format as the solid badge, not an identical pair of icons
+    # for both cards (which made it unclear why the title appeared twice).
+    body = client.get("/?q=ontdekking").text
+    card_001 = body[body.index('href="/book/001"'):body.index('href="/book/001"') + 600]
+    card_002 = body[body.index('href="/book/002"'):body.index('href="/book/002"') + 600]
+    assert 'class="fmt-ic book"' in card_001 and 'class="fmt-ic alt"' in card_001
+    assert 'class="fmt-ic audio"' in card_002 and 'class="fmt-ic alt"' in card_002
+
+
 def test_suggest(client):
     data = client.get("/suggest?q=ontdek").json()
     assert any(t["ppn"] == "001" for t in data["titles"])
@@ -30,6 +41,14 @@ def test_facet_endpoint(client):
 def test_book_detail_and_404(client):
     assert client.get("/book/001").status_code == 200
     assert client.get("/book/zzznope").status_code == 404
+
+
+def test_book_detail_mobile_layout(client):
+    # the cover + borrow button form a centered hero on phones (not a small left-aligned
+    # column with a tiny button), and the meta table keeps a usable label width
+    body = client.get("/book/001").text
+    assert "align-items:center" in body
+    assert ".poster .btn{width:100%" in body
 
 
 def test_author_page(client):
@@ -117,6 +136,15 @@ def test_cache_control_and_crawl_delay(client):
     # volatile / non-content endpoints stay uncached
     assert "cache-control" not in client.get("/healthz").headers
     assert "cache-control" not in client.get("/suggest?q=a").headers
+
+
+def test_mobile_theme_switch_present(client):
+    # mobile full-page menu gets an explicit 3-way switch, not just a cycling icon
+    body = client.get("/").text
+    assert 'class="theme-row"' in body
+    for opt in ("system", "light", "dark"):
+        assert f'data-theme-opt="{opt}"' in body
+    assert 'id="theme-toggle"' in body  # the desktop cycling button still exists
 
 
 def test_admin_refresh_requires_token(client):
