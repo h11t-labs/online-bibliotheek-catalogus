@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.27] - 2026-07-01
+
 ### Added
 - Search-bar autocomplete now matches **all indexed fields** (subjects/keywords/summary/
   author), not just the title — a term that only appears in "Trefwoorden" used to show
