@@ -30,8 +30,14 @@
   .meta .r{display:grid;grid-template-columns:170px 1fr;gap:16px;padding:11px 0;border-bottom:1px solid var(--line)}
   .meta .k{color:var(--ink-soft);font-size:14px}
   .meta .v{font-size:15px}
-  @media (max-width:720px){ .detail{grid-template-columns:1fr;gap:26px}
-    .poster{position:static;max-width:230px} .meta .r{grid-template-columns:130px 1fr} }
+  @media (max-width:720px){
+    .detail{grid-template-columns:1fr;gap:24px}
+    /* hero pattern: cover + CTA centered as a group; reading content below stays left-aligned */
+    .poster{position:static;max-width:none;display:flex;flex-direction:column;align-items:center}
+    .poster .cover{width:200px;max-width:55vw;flex:none}
+    .poster .btn{width:100%;max-width:420px;margin:16px 0 0;justify-content:center}
+    .meta .r{grid-template-columns:120px 1fr}
+  }
 {% endblock %}
 {% block body %}
 {% if jsonld %}<script type="application/ld+json">{{ jsonld | tojson }}</script>{% endif %}

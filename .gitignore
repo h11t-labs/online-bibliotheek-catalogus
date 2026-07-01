@@ -10,6 +10,7 @@ venv/
 data/raw/
 data/covers/
 data/catalog.db
+data/catalog.db.bak
 data/*.db-wal
 data/*.db-shm
 data/checkpoint.json
