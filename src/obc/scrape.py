@@ -187,6 +187,13 @@ def collect_recent(client: Client, max_page: int = 250) -> dict[str, int]:
 
 def collect_ereader(client: Client) -> set[str]:
     """Enumerate e-reader-available e-books; persist the PPN set for normalize."""
+    # Clear our own (er:*) checkpoint namespace so an ereader refresh always
+    # re-enumerates. A completed prior run (or the ereader pass of a completed
+    # --full) would otherwise leave every er:* cell "done" -> we'd enumerate
+    # nothing and write an empty ereader.json, zeroing the flag on every e-book.
+    # (An interrupted ereader run can still resume within itself: the file is only
+    # rewritten at the very end.)
+    _save_done({k for k in _load_done() if not k.startswith("er:")})
     seen: set[str] = set()
     ppns: set[str] = set()
     browse_all(client, ["ebook"], seen, lambda r: ppns.add(r["ppn"]), ereader=True)
@@ -225,6 +232,12 @@ def enumerate_from_file(path: Path) -> Iterator[tuple[str, str]]:
 # --------------------------------------------------------------------------- #
 # checkpoint + record writing
 # --------------------------------------------------------------------------- #
+# The checkpoint records completed browse cells (keys like "all:ebook:dut" /
+# "er:audiobook:eng") so a single interrupted run can resume where it stopped.
+# Contract: it only ever describes the *current* run. Each consumer that starts a
+# fresh enumeration is responsible for clearing its own namespace first — otherwise
+# a completed run's checkpoint makes the next run skip everything and enumerate an
+# empty catalog (see reconcile() and collect_ereader()).
 def _load_done() -> set[str]:
     return set(read_json(CHECKPOINT, default=[]) or [])
 
@@ -340,6 +353,11 @@ def sync(rate: float, max_pages: int = 300, streak_stop: int = 120) -> None:
 def reconcile(rate: float, formats: Iterable[str]) -> set[str]:
     """Full enumeration to detect removals: PPNs on disk but no longer in the
     catalog are stamped ``removed_at`` (the UI hides them)."""
+    # A reconcile is by definition a full re-scan, so drop any resume state first.
+    # A leftover checkpoint from a completed run would make browse_all skip every
+    # cell -> seen stays empty -> every record on disk gets falsely marked removed
+    # (and the next normalize would then drop the entire catalog).
+    CHECKPOINT.unlink(missing_ok=True)
     seen: set[str] = set()
     with Client(per_second=rate) as client:
         browse_all(client, formats, seen, lambda r: None)
