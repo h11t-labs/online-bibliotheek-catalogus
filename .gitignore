@@ -8,7 +8,6 @@ venv/
 
 # Project data
 data/raw/
-data/covers/
 data/catalog.db
 data/catalog.db.bak
 data/*.db-wal

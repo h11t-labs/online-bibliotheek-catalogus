@@ -4,7 +4,7 @@
 #   scripts/release.sh 0.2.0
 #
 # Then push with:  git push origin main --follow-tags
-# which triggers the GitHub Actions workflow (build image -> GHCR -> Railway).
+# which triggers the GitHub Actions workflow (build image -> GHCR -> Fly).
 set -euo pipefail
 
 [ $# -eq 1 ] || { echo "usage: $0 X.Y.Z"; exit 1; }
