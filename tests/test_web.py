@@ -165,3 +165,65 @@ def test_admin_refresh_requires_token(client):
     assert client.post("/admin/refresh").status_code == 401
     assert client.post("/admin/refresh",
                        headers={"Authorization": "Bearer nope"}).status_code == 401
+
+
+def test_suggest_and_facet_reject_hostile_limits(client):
+    # LIMIT -1 is "unlimited" in SQLite; the routes constrain the parameter so a
+    # hostile request can't ask for every row. FastAPI validation -> 422.
+    assert client.get("/suggest?q=ontdek&limit=-1").status_code == 422
+    assert client.get("/suggest?q=ontdek&limit=99").status_code == 422
+    assert client.get("/facet?type=author&limit=-1").status_code == 422
+    assert client.get("/facet?type=author&limit=99").status_code == 422
+    # in-range values still work
+    assert client.get("/suggest?q=ontdek&limit=5").status_code == 200
+    assert client.get("/facet?type=author&limit=10").status_code == 200
+
+
+def test_unknown_sql_error_is_not_hidden_as_bootstrap(client, monkeypatch):
+    # A genuine SQL bug must surface as a 500, not the friendly "catalogus wordt
+    # opgebouwd" 503 page (which is only for a not-yet-built DB).
+    import sqlite3
+
+    import pytest
+
+    from obc.web import queries
+
+    def boom(_conn):
+        raise sqlite3.OperationalError("no such column: b.bogus")
+
+    monkeypatch.setattr(queries, "web_stats", boom)
+    with pytest.raises(sqlite3.OperationalError):
+        client.get("/stats")
+
+
+def test_missing_db_shows_friendly_bootstrap_page(catalog_db, monkeypatch):
+    # A missing DB file ("unable to open database file") IS a bootstrap state -> 503.
+    from fastapi.testclient import TestClient
+
+    from obc.web import app as appmod
+
+    monkeypatch.setattr(appmod, "DB_PATH", catalog_db.parent / "does-not-exist.db")
+    monkeypatch.setattr(appmod, "author_bio", lambda name: None)
+    appmod._facets_cache.update(key=None, data=None)
+    resp = TestClient(appmod.app).get("/stats")
+    appmod._facets_cache.update(key=None, data=None)
+    assert resp.status_code == 503
+    assert "wordt opgebouwd" in resp.text
+
+
+def test_version_matches_package_metadata():
+    from importlib.metadata import version
+
+    import obc
+    assert obc.__version__ == version("online-bibliotheek-catalogus")
+
+
+def test_security_headers_on_every_response(client):
+    for path in ("/", "/book/001"):
+        r = client.get(path)
+        assert r.status_code == 200
+        assert r.headers["X-Content-Type-Options"] == "nosniff"
+        assert r.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+        csp = r.headers["Content-Security-Policy"]
+        assert "default-src 'self'" in csp
+        assert "gc.zgo.at" in csp  # GoatCounter script host must be allowed
