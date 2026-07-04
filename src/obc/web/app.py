@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlencode
 
-from fastapi import FastAPI, Header, Query, Request
+from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
@@ -157,13 +157,36 @@ async def _cache_control(request: Request, call_next):
     return response
 
 
-def _conn() -> sqlite3.Connection:
-    return queries.connect_ro(DB_PATH)
+def get_conn():
+    """Per-request read-only DB connection, always closed (FastAPI dependency).
+
+    Reads the module-global DB_PATH at call time (tests monkeypatch app.DB_PATH),
+    not captured at import. If the DB isn't there yet, connect_ro raises
+    OperationalError here and the bootstrap-503 handler renders the friendly page.
+    """
+    conn = queries.connect_ro(DB_PATH)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 @app.exception_handler(sqlite3.OperationalError)
 async def _db_unavailable(request: Request, exc: sqlite3.OperationalError):
-    """Friendly page when the catalog DB isn't present yet (e.g. fresh volume)."""
+    """Friendly page when the catalog DB isn't present yet (e.g. fresh volume).
+
+    Only bootstrap-state errors (missing DB file / core tables not built yet) get
+    the friendly 503 page; genuine SQL bugs re-raise so they surface as 500s in
+    development and monitoring instead of hiding behind "catalogus wordt opgebouwd".
+    """
+    msg = str(exc).lower()
+    bootstrap_errors = (
+        "unable to open database file",
+        "no such table: books",
+        "no such table: books_fts",
+    )
+    if not any(e in msg for e in bootstrap_errors):
+        raise exc
     return HTMLResponse(
         "<!doctype html><html lang='nl'><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -250,6 +273,7 @@ def search(
     sort: str = "",
     page: int = Query(1, ge=1),
     per_page: int = Query(PAGE_SIZE, alias="per_page"),
+    conn: sqlite3.Connection = Depends(get_conn),
 ):
     q = q.strip()
     page_size = per_page if per_page in PER_PAGE_OPTIONS else PAGE_SIZE
@@ -269,14 +293,12 @@ def search(
         publishers=tuple(publisher), authors=tuple(author), lists=tuple(lists_),
         ereader=(ereader == "1"), year_from=yf, year_to=yt, sort=sort)
 
-    conn = _conn()
     result = queries.search(conn, filters, page, page_size)
     rows = result.rows
     facets = _facets(conn)
     formats_map = queries.formats_map(conn, rows)
     lists_map = queries.lists_map(conn, rows)
     total_indexed = queries.total_books(conn)
-    conn.close()
 
     total = result.total
     pages = max(1, (total + page_size - 1) // page_size)
@@ -332,23 +354,18 @@ def search(
 # detail / browse pages
 # --------------------------------------------------------------------------- #
 @app.get("/series/{name}", response_class=HTMLResponse)
-def series_page(request: Request, name: str):
-    conn = _conn()
+def series_page(request: Request, name: str, conn: sqlite3.Connection = Depends(get_conn)):
     rows = queries.series_books(conn, name)
     if not rows:
-        conn.close()
         return HTMLResponse("<h1>Reeks niet gevonden</h1>", status_code=404)
     formats_map = queries.formats_map(conn, rows)
-    conn.close()
     return _templates.TemplateResponse(request, "series.html", {
         "name": name, "books": rows, "total": len(rows), "formats_map": formats_map})
 
 
 @app.get("/stats", response_class=HTMLResponse)
-def stats_page(request: Request):
-    conn = _conn()
+def stats_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     data = queries.web_stats(conn)
-    conn.close()
     return _templates.TemplateResponse(request, "stats.html", {"s": data})
 
 
@@ -388,10 +405,8 @@ def robots_txt(request: Request):
 
 
 @app.get("/sitemap.xml", include_in_schema=False)
-def sitemap_index(request: Request):
-    conn = _conn()
+def sitemap_index(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     total = queries.total_books(conn)
-    conn.close()
     base = _origin(request)
     pages = max(1, (total + SITEMAP_PAGE - 1) // SITEMAP_PAGE)
     maps = [f"{base}/sitemap-static.xml",
@@ -404,33 +419,26 @@ def sitemap_index(request: Request):
 
 
 @app.get("/sitemap-static.xml", include_in_schema=False)
-def sitemap_static(request: Request):
-    conn = _conn()
+def sitemap_static(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     slugs = [r["slug"] for r in conn.execute("SELECT slug FROM lists ORDER BY slug")]
-    conn.close()
     paths = ["/", "/over", "/lists", "/stats", *[f"/list/{s}" for s in slugs]]
     return _sitemap(_origin(request), paths)
 
 
 @app.get("/sitemap-books-{n}.xml", include_in_schema=False)
-def sitemap_books(request: Request, n: int):
-    conn = _conn()
+def sitemap_books(request: Request, n: int, conn: sqlite3.Connection = Depends(get_conn)):
     rows = conn.execute("SELECT ppn FROM books ORDER BY ppn LIMIT ? OFFSET ?",
                         (SITEMAP_PAGE, (max(n, 1) - 1) * SITEMAP_PAGE)).fetchall()
-    conn.close()
     return _sitemap(_origin(request), [f"/book/{r['ppn']}" for r in rows])
 
 
 @app.get("/author/{name}", response_class=HTMLResponse)
-def author_page(request: Request, name: str):
-    conn = _conn()
+def author_page(request: Request, name: str, conn: sqlite3.Connection = Depends(get_conn)):
     rows = queries.author_books(conn, name)
     if not rows:
-        conn.close()
         return HTMLResponse("<h1>Auteur niet gevonden</h1>", status_code=404)
     formats_map = queries.formats_map(conn, rows)
     lists_map = queries.lists_map(conn, rows)
-    conn.close()
     # distinct lists/awards across this author's books (newest year first)
     seen, author_lists = set(), []
     for entries in lists_map.values():
@@ -448,24 +456,21 @@ def author_page(request: Request, name: str):
 
 
 @app.get("/lists", response_class=HTMLResponse)
-def lists_overview(request: Request, sort: str = "name"):
+def lists_overview(request: Request, sort: str = "name",
+                   conn: sqlite3.Connection = Depends(get_conn)):
     if sort not in queries.LIST_SORTS:
         sort = "name"
-    conn = _conn()
     rows = queries.lists_overview(conn, sort)
-    conn.close()
     return _templates.TemplateResponse(request, "lists.html", {"lists": rows, "sort": sort})
 
 
 @app.get("/list/{slug}", response_class=HTMLResponse)
-def list_detail(request: Request, slug: str, show: str = ""):
-    conn = _conn()
+def list_detail(request: Request, slug: str, show: str = "",
+                conn: sqlite3.Connection = Depends(get_conn)):
     lst = queries.list_row(conn, slug)
     if lst is None:
-        conn.close()
         return HTMLResponse("<h1>Lijst niet gevonden</h1>", status_code=404)
     rows = queries.list_items(conn, lst["id"])
-    conn.close()
     total = len(rows)
     available = sum(1 for i in rows if i["ppn"])
     if show == "available":
@@ -481,10 +486,8 @@ def list_detail(request: Request, slug: str, show: str = ""):
 
 
 @app.get("/book/{ppn}", response_class=HTMLResponse)
-def book(request: Request, ppn: str):
-    conn = _conn()
+def book(request: Request, ppn: str, conn: sqlite3.Connection = Depends(get_conn)):
     detail = queries.book_detail(conn, ppn)
-    conn.close()
     if detail is None:
         return HTMLResponse("<h1>Niet gevonden</h1>", status_code=404)
     b = detail["row"]
@@ -511,11 +514,10 @@ def book(request: Request, ppn: str):
 # JSON endpoints (autocomplete + searchable facets)
 # --------------------------------------------------------------------------- #
 @app.get("/suggest")
-def suggest(q: str = "", limit: int = 7):
+def suggest(q: str = "", limit: int = Query(7, ge=1, le=20),
+            conn: sqlite3.Connection = Depends(get_conn)):
     """Autocomplete: matching titles (-> book) and authors/publishers/… (-> search)."""
-    conn = _conn()
     data = queries.suggest(conn, q.strip(), limit)
-    conn.close()
     if data is None:
         return {"titles": [], "authors": []}
     titles = [
@@ -529,9 +531,9 @@ def suggest(q: str = "", limit: int = 7):
 
 
 @app.get("/facet")
-def facet(kind: str = Query("", alias="type"), q: str = "", limit: int = 30):
+def facet(kind: str = Query("", alias="type"), q: str = "",
+          limit: int = Query(30, ge=1, le=50),
+          conn: sqlite3.Connection = Depends(get_conn)):
     """Searchable facet values (for large facets like author/publisher)."""
-    conn = _conn()
     values = queries.facet_values(conn, kind, q, limit)
-    conn.close()
     return {"values": values}
