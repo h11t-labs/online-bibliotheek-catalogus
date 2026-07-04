@@ -11,11 +11,11 @@ import os
 
 import httpx
 
+from ..config import USER_AGENT as _UA
 from ..log import logger
 
 API = "https://api.nytimes.com/svc/books/v3/lists/full-overview.json"
 SOURCE_URL = "https://www.nytimes.com/books/best-sellers/"
-_UA = "online-bibliotheek-catalogus/0.1 (personal project)"
 
 
 def _title_case(t: str | None) -> str | None:

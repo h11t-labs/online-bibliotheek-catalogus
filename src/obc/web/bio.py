@@ -12,13 +12,15 @@ from urllib.parse import quote
 
 import httpx
 
+from ..config import USER_AGENT
+
 # The bio is a nice-to-have shown on author pages; it must never hold a page
 # hostage waiting on Wikipedia. This lookup is synchronous in the request path
 # and the cache is per-process (cold after every restart), so keep the timeout
 # short — a slow Wikipedia should degrade to "no bio", not a slow page.
 _TIMEOUT = 2.0
 _http = httpx.Client(timeout=_TIMEOUT, follow_redirects=True,
-                     headers={"User-Agent": "online-bibliotheek-catalogus/0.1"})
+                     headers={"User-Agent": USER_AGENT})
 
 _AUTHOR_WORDS = ("schrijf", "schrijver", "schrijfster", "auteur", "dichter",
                  "romancier", "writer", "novelist", "poet", "journalist", "columnist",

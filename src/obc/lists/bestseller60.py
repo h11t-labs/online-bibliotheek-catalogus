@@ -12,6 +12,7 @@ import re
 
 import httpx
 
+from ..config import USER_AGENT as _UA
 from ..log import logger
 
 _NL_MONTHS = ("", "januari", "februari", "maart", "april", "mei", "juni", "juli",
@@ -50,7 +51,6 @@ def period(page: str) -> str | None:
     return f"week {week} · {rng}"
 
 URL = "https://www.debestseller60.nl"
-_UA = "online-bibliotheek-catalogus/0.1 (personal project)"
 
 # (slug, display name, path, description)
 SUBLISTS = [

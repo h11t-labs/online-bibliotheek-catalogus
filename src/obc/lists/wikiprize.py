@@ -11,10 +11,10 @@ import re
 
 import httpx
 
+from ..config import USER_AGENT as _UA
 from ..log import logger
 
 API = "https://nl.wikipedia.org/w/api.php"
-_UA = "online-bibliotheek-catalogus/0.1 (personal project)"
 
 # (slug, display name, Wikipedia page title)
 PRIZES = [

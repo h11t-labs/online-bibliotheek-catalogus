@@ -25,16 +25,15 @@ from tenacity import (
     wait_exponential,
 )
 
-from .config import HTML_CACHE  # rebindable module-level path (see obc.config)
+from .config import (
+    HTML_CACHE,  # rebindable module-level path (see obc.config)
+    USER_AGENT,
+)
 from .detail import parse_detail
 
 # Catalog browse: zoekresultaten.catalogus[.N].html?<facets>
 BROWSE_BASE = "https://www.onlinebibliotheek.nl/zoekresultaten.catalogus"
 
-USER_AGENT = (
-    "online-bibliotheek-catalogus/0.1 (personal catalog project; "
-    "contact: see repository)"
-)
 BASE = "https://www.onlinebibliotheek.nl"
 
 
