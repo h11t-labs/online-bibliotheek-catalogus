@@ -136,8 +136,10 @@ unchanged titles (usually a few pages). It can't see removals, so `--reconcile`
   audience. `client.Client` fetches politely (descriptive UA, configurable rate,
   backoff, on-disk HTML cache in `data/raw/html/`).
 - **Storage** (`db.py`): `books` + `genres`/`book_genres` + an FTS5 table
-  (`unicode61 remove_diacritics 2`) over title/author/subjects/summary. All
-  writes are idempotent upserts on `ppn`, so re-scraping just updates rows.
+  (`unicode61 remove_diacritics 2`) over title/author/subjects/summary. The DB is
+  written by **full rebuild**, never per-row: `normalize` streams the records into
+  a temporary DB and atomically swaps it over the live file, so readers keep
+  seeing the old catalog until the swap.
 - **UI** (`web/app.py`): FTS5 `bm25` ranking weighted toward title/author, plus
   facet filters (format, language, genre, year) and sorting.
 
