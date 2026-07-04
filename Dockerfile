@@ -18,5 +18,5 @@ RUN uv sync --frozen --no-dev
 # both read OBC_DB.
 ENV OBC_DB=/app/data/catalog.db
 
-# Railway provides $PORT
+# Fly provides $PORT (fly.toml sets it explicitly)
 CMD ["sh", "-c", "uv run uvicorn obc.web.app:app --host 0.0.0.0 --port ${PORT:-8000}"]

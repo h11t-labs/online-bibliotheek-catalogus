@@ -1,7 +1,6 @@
 .git
 .venv
 data/raw
-data/covers
 data/catalog.db
 data/*.log
 __pycache__

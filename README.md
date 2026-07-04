@@ -66,9 +66,10 @@ uv run obc stats
 
 `obc scrape --full` runs browse + ereader + genres + recent in one go. The web app
 has pages: `/` (search), `/book/{ppn}`, `/author/{name}`, `/series/{name}`,
-`/lists`, `/list/{slug}`, `/stats`. Covers are cached lazily on first view under
-`data/covers/` via `/cover/{ppn}`. The search bar autocompletes titles, authors,
-publishers, genres, languages and lists. Logs use loguru.
+`/lists`, `/list/{slug}`, `/stats`. Cover images are hotlinked straight from the
+library's CDN (`leibniz.zbkb.nl`); nothing is cached locally. The search bar
+autocompletes titles, authors, publishers, genres, languages and lists. Logs use
+loguru.
 
 Add dependencies with `uv add <pkg>`; run tests with `uv run pytest`. Run
 `obc normalize` after any scrape to refresh what the UI serves. Set `OBC_DB` to

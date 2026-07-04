@@ -48,36 +48,19 @@ Notes:
 - One machine only (`min_machines_running = 1`) — SQLite is single-writer.
 - `normalize` streams (~190MB peak), so the weekly refresh runs on the 512MB VM.
 
----
-
-## Render (alternative, EU/Frankfurt) — `render.yaml`
-
-Render builds the Dockerfile straight from the **private** GitHub repo (via the
-Render GitHub App), so there's no image registry or token to manage. ~€6.70/month
-(Starter + 1GB disk).
-
-## Setup — `render.yaml`
-
-1. **Render → New → Blueprint** → connect this repo. Render reads `render.yaml`
-   (web service, Frankfurt, persistent disk at `/app/data`, health check `/healthz`).
-2. Pick a paid instance (**Starter**+) — persistent disks aren't on the free tier.
-3. Set the `NYT_API_KEY` env var in the dashboard (optional, enables the NYT lists).
-4. Deploy. The site shows a friendly "wordt opgebouwd" page until the DB is on the
-   disk (the `/healthz` endpoint stays 200, so health checks pass).
-
-`autoDeploy: true` ships on every push to `main`.
-
 ## Seed / refresh the database
 
-The disk starts empty. Open the service → **Shell** and run the harvest there
-(runs in the container, writes to `/app/data` on the disk):
+The volume starts empty. Open a shell on the running machine with `fly ssh
+console` and run the harvest there (writes to `/app/data` on the volume):
 
 ```bash
-uv run obc scrape --full && uv run obc lists update && uv run obc normalize
+fly ssh console
+$ uv run obc scrape --full && uv run obc lists update && uv run obc normalize
 ```
 
 `obc scrape --full` takes a while and is resumable. Alternatively upload a locally
-built `data/catalog.db` to `/app/data` via the Render shell.
+built `data/catalog.db` to `/app/data` via `fly ssh sftp shell` (as in the seed
+step above) — lighter than scraping on a small VM.
 
 ## Weekly refresh (Fly cron → protected endpoint)
 
@@ -98,7 +81,7 @@ scripts/fly-cron.sh                                         # create the weekly 
 
 | Variable           | Example                | Purpose                                               |
 |--------------------|------------------------|-------------------------------------------------------|
-| `OBC_DB`           | `/app/data/catalog.db` | DB path (set in `fly.toml`/`render.yaml` + Dockerfile)|
+| `OBC_DB`           | `/app/data/catalog.db` | DB path (set in `fly.toml` + Dockerfile)              |
 | `OBC_REFRESH_TOKEN`| `…` (secret)           | Bearer token guarding `POST /admin/refresh`           |
 | `NYT_API_KEY`      | `…` (secret)           | Optional — enables the NYT bestseller lists           |
 
@@ -114,5 +97,6 @@ scripts/release.sh 0.2.0          # bumps pyproject + CHANGELOG, commits, tags v
 git push origin main --follow-tags
 ```
 
-The push to `main` is what Render deploys; the tag adds the changelog-backed
-GitHub Release.
+The **version tag** is what triggers the deploy to Fly (the `deploy` job in
+`.github/workflows/deploy.yml`); the same run builds the GHCR image and the
+changelog-backed GitHub Release.
