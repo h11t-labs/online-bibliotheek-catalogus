@@ -49,6 +49,15 @@ def fts_match(q: str) -> str:
     return " ".join(f'"{t}"*' for t in terms)
 
 
+def _limit(value: int, default: int, maximum: int) -> int:
+    """Clamp caller-supplied LIMIT values; SQLite treats negative LIMIT as unlimited."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        n = default
+    return max(1, min(n, maximum))
+
+
 def _in(col: str, values: list[str] | tuple[str, ...]) -> tuple[str, list]:
     marks = ",".join("?" * len(values))
     return f"{col} IN ({marks})", list(values)
@@ -151,7 +160,9 @@ def search(conn: sqlite3.Connection, f: SearchFilters, page: int,
         where.append("books_fts MATCH ?")
         params.append(match)
         if f.sort == "relevance":
-            order = "bm25(books_fts, 10.0, 6.0, 2.0, 1.0)"
+            # first weight = the UNINDEXED ppn column (bm25 weights are positional
+            # over ALL declared columns): ppn, title, author, subjects, summary.
+            order = "bm25(books_fts, 0.0, 10.0, 6.0, 2.0, 1.0)"
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     total = conn.execute(
@@ -240,14 +251,16 @@ def suggest(conn: sqlite3.Connection, q: str, limit: int = 7) -> dict | None:
     terms = re.findall(r"\w+", q, flags=re.UNICODE)
     if not terms:
         return None
+    limit = _limit(limit, 7, 20)
     # Unscoped (not title-only) so a match in subjects/keywords/summary/author also
     # surfaces a book here — e.g. a search term that's only in "Trefwoorden" used to
     # show nothing in the live dropdown even though the full search page found it.
     # Same bm25 weights as the main search, so title hits still rank first.
+    # first weight = the UNINDEXED ppn column (ppn, title, author, subjects, summary).
     title_rows = conn.execute(
         "SELECT b.ppn, b.title, b.author, b.cover_url, b.format "
         "FROM books_fts ft JOIN books b ON b.ppn = ft.ppn "
-        "WHERE books_fts MATCH ? ORDER BY bm25(books_fts, 10.0, 6.0, 2.0, 1.0) LIMIT ?",
+        "WHERE books_fts MATCH ? ORDER BY bm25(books_fts, 0.0, 10.0, 6.0, 2.0, 1.0) LIMIT ?",
         (fts_match(q), limit)).fetchall()
     like = f"%{fold(q)}%"
     authors = [r["name"] for r in conn.execute(
@@ -275,6 +288,7 @@ def facet_values(conn: sqlite3.Connection, kind: str, q: str = "",
                  limit: int = 30) -> list[str]:
     """Searchable facet values (for large facets like author/publisher)."""
     qq = q.strip()
+    limit = _limit(limit, 30, 50)
     like = f"%{fold(qq)}%"
     if kind == "author":
         base = ("SELECT a.name v, COUNT(*) n FROM authors a "
@@ -309,7 +323,9 @@ def book_detail(conn: sqlite3.Connection, ppn: str) -> dict | None:
             "FROM book_genres bg JOIN genres g ON g.id = bg.genre_id "
             "LEFT JOIN genres p ON p.id = bg.parent_id "
             "WHERE bg.book_ppn = ? ORDER BY COALESCE(p.name, g.name), g.name", (ppn,))]
-    except sqlite3.OperationalError:  # DB built before the book_genres.parent_id column
+    except sqlite3.OperationalError as exc:  # DB built before book_genres.parent_id
+        if "parent_id" not in str(exc):
+            raise
         genres = [{"name": r["name"], "parent": None} for r in conn.execute(
             "SELECT g.name FROM genres g JOIN book_genres bg ON bg.genre_id = g.id "
             "WHERE bg.book_ppn = ? ORDER BY g.name", (ppn,))]
@@ -385,6 +401,26 @@ def web_stats(conn: sqlite3.Connection) -> dict:
     def many(q: str, *a):
         return conn.execute(q, a).fetchall()
 
+    # top-level genres (parent_id IS NULL for that link) and sub-genres carry
+    # their parent's name, so the stats page can show "Parent › Kind" like the
+    # book page does. A genre used both ways (rare cross-audience overlap) gets
+    # its own row per role, so counts stay honest. Tolerate a catalog DB built
+    # before the book_genres.parent_id column (the window after a schema-changing
+    # deploy but before the next rebuild) by falling back to flat, parent-less rows.
+    try:
+        genres = many(
+            "SELECT g.name, p.name AS parent, COUNT(*) n "
+            "FROM book_genres bg JOIN genres g ON g.id = bg.genre_id "
+            "LEFT JOIN genres p ON p.id = bg.parent_id "
+            "GROUP BY g.id, p.id ORDER BY n DESC LIMIT 12")
+    except sqlite3.OperationalError as exc:  # DB built before book_genres.parent_id
+        if "parent_id" not in str(exc):
+            raise
+        genres = many(
+            "SELECT g.name, NULL AS parent, COUNT(*) n "
+            "FROM genres g JOIN book_genres bg ON bg.genre_id = g.id "
+            "GROUP BY g.id ORDER BY n DESC LIMIT 12")
+
     return {
         "total": one("SELECT COUNT(*) FROM books"),
         "ebooks": one("SELECT COUNT(*) FROM books WHERE format='ebook'"),
@@ -394,15 +430,7 @@ def web_stats(conn: sqlite3.Connection) -> dict:
         "publishers": one("SELECT COUNT(*) FROM publishers"),
         "lists": one("SELECT COUNT(*) FROM lists"),
         "languages": many("SELECT name, n FROM languages ORDER BY n DESC LIMIT 8"),
-        # top-level genres (parent_id IS NULL for that link) and sub-genres carry
-        # their parent's name, so the stats page can show "Parent › Kind" like the
-        # book page does. A genre used both ways (rare cross-audience overlap) gets
-        # its own row per role, so counts stay honest.
-        "genres": many(
-            "SELECT g.name, p.name AS parent, COUNT(*) n "
-            "FROM book_genres bg JOIN genres g ON g.id = bg.genre_id "
-            "LEFT JOIN genres p ON p.id = bg.parent_id "
-            "GROUP BY g.id, p.id ORDER BY n DESC LIMIT 12"),
+        "genres": genres,
         "years": many("SELECT year, COUNT(*) n FROM books WHERE year >= 2000 "
                       "GROUP BY year ORDER BY year"),
         "top_authors": many("SELECT a.name, COUNT(*) n FROM authors a "

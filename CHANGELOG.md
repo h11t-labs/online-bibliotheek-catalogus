@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Search relevance ranking now weights the right columns. The bm25 weight list was
+  missing the leading (UNINDEXED `ppn`) column, so the big title weight landed on
+  `ppn` and subjects/summary matches were weighted equally. Title and author hits
+  now rank correctly above subjects, and subjects above summary.
 - Harvest checkpoint no longer leaks between runs: after a completed full harvest,
   `scrape --reconcile` used to enumerate nothing and mark **every** title removed
   (wiping the catalog on the next normalize), and `scrape --ereader` (or the
