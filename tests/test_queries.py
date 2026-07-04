@@ -112,6 +112,17 @@ def test_facet_values(ro_conn):
     assert Q.facet_values(ro_conn, "bogus") == []
 
 
+def test_limit_clamps_hostile_values(ro_conn):
+    # SQLite treats LIMIT -1 as unlimited, so callers must clamp. suggest/facet_values
+    # do this defensively even when reached outside the (validated) HTTP routes.
+    assert Q._limit(-1, 7, 20) == 1
+    assert Q._limit(999, 30, 50) == 50
+    assert Q._limit("x", 7, 20) == 7  # junk -> default
+    # a negative limit must not turn into "all rows"
+    assert len(Q.suggest(ro_conn, "e", -1)["title_rows"]) <= 20
+    assert len(Q.facet_values(ro_conn, "author", "", -1)) <= 50
+
+
 def test_book_detail_hides_top_genre_shown_via_a_subgenre_chip(tmp_path):
     # A book tagged with both "Literatuur & Romans" and its sub "Sociale romans" (and
     # likewise for Spanning & Thrillers) should not show the top-level genre as its own
@@ -194,3 +205,69 @@ def test_web_stats_genres_carry_parent(tmp_path):
     ro.close()
     assert rows["Literatuur & Romans"] is None
     assert rows["Sociale romans"] == "Literatuur & Romans"
+
+
+def test_web_stats_tolerates_pre_hierarchy_schema(tmp_path):
+    """web_stats must keep /stats online against a catalog built before the
+    book_genres.parent_id column (the window right after a schema-changing deploy),
+    falling back to flat parent-less genre rows instead of raising."""
+    import sampledata
+
+    from obc import db
+    path = tmp_path / "old.db"
+    conn = db.connect(path)
+    db.bulk_load(conn, sampledata.records(), sampledata.lists())
+    # rebuild book_genres without parent_id (the old schema)
+    conn.executescript(
+        "PRAGMA foreign_keys=OFF;"
+        "CREATE TABLE bg_old (book_ppn TEXT, genre_id INTEGER, PRIMARY KEY(book_ppn, genre_id));"
+        "INSERT INTO bg_old(book_ppn, genre_id) SELECT book_ppn, genre_id FROM book_genres;"
+        "DROP TABLE book_genres;"
+        "ALTER TABLE bg_old RENAME TO book_genres;")
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+    ro = Q.connect_ro(path)
+    s = Q.web_stats(ro)
+    ro.close()
+    assert s["total"] == 6
+    assert all(r["parent"] is None for r in s["genres"])  # flat fallback
+
+
+def test_relevance_weights_subjects_above_summary(tmp_path):
+    """bm25 weights are positional over ALL fts columns incl. the UNINDEXED ppn, so
+    the ranking needs 5 weights (0.0 for ppn). With the old 4-weight expression the
+    10.0 lands on ppn and subjects/summary both get 1.0 — a subjects-only hit and a
+    summary-only hit then score identically. The two books below are byte-identical
+    except which column holds the unique term (so bm25 length-normalisation is the
+    same for both); only the column weight can break the tie. New weights rank the
+    subjects hit strictly first; the old ones tie (rowid order -> summary first)."""
+    from obc import db
+    term = "zqxwordtest"
+    filler_subj, filler_summ = "vulonderwerp", "vulsamenvatting korte zin"
+    # SUM inserted first (lower rowid): on the tied old weights it sorts ahead,
+    # which is exactly the wrong order the fix corrects.
+    recs = [
+        {"ppn": "SUM", "title": "Zelfde titel", "author": "Zelfde Auteur",
+         "authors": ["Zelfde Auteur"], "format": "ebook", "language": "Nederlands",
+         "subjects": [filler_subj], "summary": f"{filler_summ} {term}"},
+        {"ppn": "SUB", "title": "Zelfde titel", "author": "Zelfde Auteur",
+         "authors": ["Zelfde Auteur"], "format": "ebook", "language": "Nederlands",
+         "subjects": [filler_subj, term], "summary": filler_summ},
+    ]
+    # ~20 fillers so the term isn't in every row (bm25 IDF is 0 otherwise).
+    recs += [
+        {"ppn": f"F{i:02d}", "title": "Zelfde titel", "author": "Zelfde Auteur",
+         "authors": ["Zelfde Auteur"], "format": "ebook", "language": "Nederlands",
+         "subjects": [filler_subj], "summary": filler_summ}
+        for i in range(20)
+    ]
+    path = tmp_path / "rel.db"
+    conn = db.connect(path)
+    db.bulk_load(conn, recs, [])
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+    ro = Q.connect_ro(path)
+    res = Q.search(ro, Q.SearchFilters(q=term, sort="relevance"), 1, 50)
+    ro.close()
+    order = [r["ppn"] for r in res.rows]
+    assert order == ["SUB", "SUM"]
