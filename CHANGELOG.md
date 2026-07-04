@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `OBC_DATA` environment variable: one root directory for **all** catalog data
+  (records, HTML cache, side files, checkpoint, and the DB). Defaults to `./data`,
+  so behaviour is unchanged unless set — point it at a mounted volume to relocate
+  everything with a single variable. `OBC_DB` still overrides the DB path alone.
+
 ## [0.3.27] - 2026-07-01
 
 ### Added

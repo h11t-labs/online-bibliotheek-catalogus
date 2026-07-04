@@ -15,6 +15,16 @@ from collections import Counter
 from pathlib import Path
 
 from . import db
+
+# Data paths live in obc.config; imported (and rebindable) at module level so
+# `normalize.EREADER_FILE` etc. stay monkeypatchable by tests and the scheduler.
+from .config import (
+    EREADER_FILE,
+    GENRES_FILE,
+    LISTS_DIR,
+    RAW_DIR,
+    RECENT_FILE,
+)
 from .log import logger
 from .textnorm import (
     canonical_author,
@@ -26,13 +36,6 @@ from .textnorm import (
     valid_language,
 )
 from .util import read_json
-
-RAW_DIR = Path("data/raw")
-RECORDS_DIR = RAW_DIR / "records"
-EREADER_FILE = RAW_DIR / "ereader.json"
-GENRES_FILE = RAW_DIR / "genres.json"
-RECENT_FILE = RAW_DIR / "recent.json"
-LISTS_DIR = RAW_DIR / "lists"
 
 
 def _read(path: Path):

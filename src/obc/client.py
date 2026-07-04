@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import threading
 import time
-from pathlib import Path
 from urllib.parse import urlencode
 
 import httpx
@@ -26,6 +25,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from .config import HTML_CACHE  # rebindable module-level path (see obc.config)
 from .detail import parse_detail
 
 # Catalog browse: zoekresultaten.catalogus[.N].html?<facets>
@@ -36,7 +36,6 @@ USER_AGENT = (
     "contact: see repository)"
 )
 BASE = "https://www.onlinebibliotheek.nl"
-HTML_CACHE = Path("data/raw/html")
 
 
 class RateLimiter:
