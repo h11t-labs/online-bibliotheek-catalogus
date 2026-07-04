@@ -57,14 +57,16 @@ class RateLimiter:
 
 class Client:
     def __init__(self, per_second: float = 1.0, timeout: float = 30.0,
-                 cache: bool = True):
+                 cache: bool = True, transport: httpx.BaseTransport | None = None):
         self.limiter = RateLimiter(per_second)
         self.cache = cache
+        # transport is an injection seam for tests (httpx.MockTransport); None uses
+        # httpx's real network transport.
         self._http = httpx.Client(
             headers={"User-Agent": USER_AGENT,
                      "Accept": "text/html,application/json,*/*",
                      "Accept-Language": "nl,en;q=0.8"},
-            timeout=timeout, follow_redirects=True,
+            timeout=timeout, follow_redirects=True, transport=transport,
         )
         if cache:
             HTML_CACHE.mkdir(parents=True, exist_ok=True)
