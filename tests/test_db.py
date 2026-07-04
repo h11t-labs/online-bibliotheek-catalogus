@@ -1,4 +1,4 @@
-"""Storage-layer tests: bulk_load / stream_rebuild round-trips, FTS, upsert."""
+"""Storage-layer tests: bulk_load / stream_rebuild round-trips, FTS."""
 
 from collections import Counter
 
@@ -37,21 +37,6 @@ def test_fts_match_folds_diacritics(tmp_path):
     rows = conn.execute(
         'SELECT ppn FROM books_fts WHERE books_fts MATCH ?', ('"espana"*',)).fetchall()
     assert any(r["ppn"] == "001" for r in rows)
-    conn.close()
-
-
-def test_upsert_is_idempotent(tmp_path):
-    conn = db.connect(tmp_path / "c.db")
-    db.init_db(conn)
-    rec = sampledata.records()[0]
-    db.upsert_book(conn, rec)
-    db.upsert_book(conn, rec)  # second call must not duplicate anything
-    conn.commit()
-    assert conn.execute("SELECT COUNT(*) FROM books").fetchone()[0] == 1
-    assert conn.execute(
-        "SELECT COUNT(*) FROM books_fts WHERE ppn = ?", (rec["ppn"],)).fetchone()[0] == 1
-    assert conn.execute(
-        "SELECT COUNT(*) FROM book_genres WHERE book_ppn = ?", (rec["ppn"],)).fetchone()[0] == 1
     conn.close()
 
 

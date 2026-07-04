@@ -5,12 +5,16 @@ Design notes
 * ``books`` holds one normalised row per PPN.
 * ``genres`` / ``book_genres`` model the many-to-many subjects for faceted
   filtering (one genre row per distinct subject string).
-* ``books_fts`` is a standalone FTS5 table (not external-content) so upserts are
-  trivial: delete-by-ppn then insert. ``unicode61 remove_diacritics 2`` folds
-  Dutch diacritics so "espana"-style queries match "España", etc.
+* ``books_fts`` is a standalone FTS5 table (not external-content) so it can be
+  populated in one pass. ``unicode61 remove_diacritics 2`` folds Dutch diacritics
+  so "espana"-style queries match "España", etc.
 
-All writes go through :func:`upsert_book`, which is idempotent on ``ppn`` — safe
-to re-run after a fresh scrape.
+Writes happen as **full rebuilds**, never row-at-a-time: :func:`bulk_load`
+(records held in RAM) or :func:`stream_rebuild` (constant-memory streaming) drop
+and recreate every table. In production :mod:`obc.normalize` runs ``stream_rebuild``
+into a temporary DB and atomically ``os.replace``\\ s it over the live file, so
+readers keep seeing the old catalog until the swap (no downtime, no half-built
+state).
 """
 
 from __future__ import annotations
@@ -196,58 +200,6 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _genre_id(conn: sqlite3.Connection, name: str) -> int:
-    conn.execute("INSERT OR IGNORE INTO genres(name) VALUES (?)", (name,))
-    row = conn.execute("SELECT id FROM genres WHERE name = ?", (name,)).fetchone()
-    return row["id"]
-
-
-def upsert_book(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
-    """Insert or update one book record (idempotent on ``ppn``)."""
-    ppn = rec.get("ppn")
-    if not ppn:
-        return
-    subjects: list[str] = rec.get("subjects") or []
-
-    values = {c: rec.get(c) for c in _BOOK_COLS}
-    if values.get("raw_json") is None and "raw_json" not in rec:
-        values["raw_json"] = json.dumps(rec, ensure_ascii=False)
-
-    placeholders = ", ".join("?" for _ in _BOOK_COLS)
-    updates = ", ".join(f"{c}=excluded.{c}" for c in _BOOK_COLS if c != "ppn")
-    conn.execute(
-        f"INSERT INTO books ({', '.join(_BOOK_COLS)}) VALUES ({placeholders}) "
-        f"ON CONFLICT(ppn) DO UPDATE SET {updates}",
-        [values[c] for c in _BOOK_COLS],
-    )
-
-    # refresh genres
-    conn.execute("DELETE FROM book_genres WHERE book_ppn = ?", (ppn,))
-    for name in dict.fromkeys(s for s in subjects if s):
-        gid = _genre_id(conn, name)
-        conn.execute(
-            "INSERT OR IGNORE INTO book_genres(book_ppn, genre_id) VALUES (?, ?)",
-            (ppn, gid),
-        )
-
-    # refresh FTS row
-    conn.execute("DELETE FROM books_fts WHERE ppn = ?", (ppn,))
-    conn.execute(
-        "INSERT INTO books_fts(ppn, title, author, subjects, summary) "
-        "VALUES (?, ?, ?, ?, ?)",
-        _fts_values(rec),
-    )
-
-
-def upsert_many(conn: sqlite3.Connection, recs: Iterable[dict[str, Any]]) -> int:
-    n = 0
-    for rec in recs:
-        upsert_book(conn, rec)
-        n += 1
-    conn.commit()
-    return n
-
-
 def _reset_schema(cur: sqlite3.Cursor) -> None:
     """Drop every table and recreate from ``_SCHEMA`` — a clean full rebuild
     (also picks up any schema changes since the last load)."""
@@ -346,7 +298,7 @@ def bulk_load(conn: sqlite3.Connection, records: Iterable[dict[str, Any]],
               lists: list[dict] | None = None) -> int:
     """Fast full rebuild: truncate then batch-insert everything.
 
-    Much faster than per-row upserts (no per-record SELECT/DELETE, all
+    Much faster than row-at-a-time writes (no per-record SELECT/DELETE, all
     ``executemany``). Use when loading the whole catalog from scratch.
 
     ``lists`` is an optional list of ``{slug,name,url,description,items}`` where
