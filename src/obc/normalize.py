@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
 from collections import Counter
 from pathlib import Path
 
@@ -174,15 +175,31 @@ def match_lists(by_isbn: dict, by_key: dict) -> list[dict]:
     return out
 
 
+def _checkpoint_live(db_path: Path) -> None:
+    """Fold a live WAL back into the DB so sidecars shrink to nothing — the safe
+    replacement for deleting -wal/-shm files out from under readers. No-op if the
+    DB doesn't exist or isn't WAL."""
+    if not Path(db_path).exists():
+        return
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.close()
+    except sqlite3.Error:
+        pass
+
+
 def _reclaim_disk(db_path: Path, raw_dir: Path) -> None:
-    """Tidy up before a rebuild: drop stale SQLite sidecars + any leftover temp DB
-    from a crashed run, plus the on-disk HTML cache (not needed to rebuild). The
-    *live* catalog DB is left untouched — the rebuild builds a temp copy and swaps
-    it in atomically, so readers keep seeing the old DB until the swap (no downtime)."""
+    """Tidy up before a rebuild: drop any leftover temp DB (+ its sidecars) from a
+    crashed run and the on-disk HTML cache (not needed to rebuild). The *live*
+    catalog DB is left in place — the rebuild builds a temp copy and swaps it in
+    atomically, so readers keep seeing the old DB until the swap (no downtime). Its
+    WAL is *checkpointed* (folded back in) rather than deleted: unlinking a live
+    DB's -wal/-shm under an open reader — or a hot -journal — can corrupt reads."""
     db_path = Path(db_path)
+    _checkpoint_live(db_path)
     tmp = db_path.with_name(db_path.name + ".tmp")
-    for p in (Path(f"{db_path}-wal"), Path(f"{db_path}-shm"), Path(f"{db_path}-journal"),
-              tmp, Path(f"{tmp}-wal"), Path(f"{tmp}-shm"), Path(f"{tmp}-journal")):
+    for p in (tmp, Path(f"{tmp}-wal"), Path(f"{tmp}-shm"), Path(f"{tmp}-journal")):
         try:
             p.unlink(missing_ok=True)
         except OSError:
@@ -217,9 +234,11 @@ def normalize(raw_dir: Path = RAW_DIR, db_path: Path = db.DEFAULT_DB) -> dict:
     db.set_book_genre_parents(conn, genre_info)  # per-book genre-hierarchy parent
     s = db.stats(conn)
     conn.close()
+    # Fold the *old* live WAL into its DB and truncate it before the swap, so a
+    # reader that opens the freshly-swapped file never pairs it with a stale -wal.
+    # (Safer than deleting the sidecars, which can corrupt an open reader.)
+    _checkpoint_live(db_path)
     os.replace(tmp, db_path)  # atomic on the same filesystem
-    for sc in (f"{db_path}-wal", f"{db_path}-shm", f"{db_path}-journal"):
-        Path(sc).unlink(missing_ok=True)
     logger.info(f"Normalized {n} record(s). DB now: {s}")
     return s
 

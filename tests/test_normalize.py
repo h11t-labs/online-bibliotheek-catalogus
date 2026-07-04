@@ -53,6 +53,35 @@ def _enrich(raw):
     return records, by_isbn, by_key
 
 
+def test_reclaim_disk_checkpoints_live_wal_instead_of_deleting(tmp_path):
+    """_reclaim_disk must not unlink a live DB's -wal/-shm — that can corrupt an
+    open reader. It folds the WAL back in via a TRUNCATE checkpoint instead, so the
+    DB stays intact and its -wal shrinks to nothing."""
+    import sqlite3
+
+    db_path = tmp_path / "catalog.db"
+    conn = db.connect(db_path)  # WAL mode
+    db.init_db(conn)
+    conn.execute("INSERT INTO books(ppn, title) VALUES ('1', 'Een')")
+    conn.execute("INSERT INTO books(ppn, title) VALUES ('2', 'Twee')")
+    conn.commit()
+    # Keep the writer connection open (idle) so the -wal isn't auto-checkpointed
+    # away on close — this is the "live DB with an active WAL" state we're testing.
+    wal = tmp_path / "catalog.db-wal"
+    assert wal.exists() and wal.stat().st_size > 0, "expected a non-empty WAL to reclaim"
+
+    normalize._reclaim_disk(db_path, tmp_path)
+
+    # WAL folded back in and truncated (never deleted out from under the reader).
+    assert (not wal.exists()) or wal.stat().st_size == 0
+    # DB still opens and the rows are all there.
+    assert conn.execute("SELECT COUNT(*) FROM books").fetchone()[0] == 2
+    conn.close()
+    ro = sqlite3.connect(db_path)
+    assert ro.execute("SELECT COUNT(*) FROM books").fetchone()[0] == 2
+    ro.close()
+
+
 def test_publishers_canonicalised_to_most_common(raw):
     records, _, _ = _enrich(raw)
     pubs = {ppn: records[ppn]["publisher"] for ppn in ("1", "2", "3")}

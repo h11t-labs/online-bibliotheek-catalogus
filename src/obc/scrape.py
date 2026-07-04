@@ -350,7 +350,7 @@ def sync(rate: float, max_pages: int = 300, streak_stop: int = 120) -> None:
     logger.info(f"sync: +{new} new, {updated} updated (scanned {page - 1} pages)")
 
 
-def reconcile(rate: float, formats: Iterable[str]) -> set[str]:
+def reconcile(client: Client, formats: Iterable[str]) -> set[str]:
     """Full enumeration to detect removals: PPNs on disk but no longer in the
     catalog are stamped ``removed_at`` (the UI hides them)."""
     # A reconcile is by definition a full re-scan, so drop any resume state first.
@@ -359,8 +359,7 @@ def reconcile(rate: float, formats: Iterable[str]) -> set[str]:
     # (and the next normalize would then drop the entire catalog).
     CHECKPOINT.unlink(missing_ok=True)
     seen: set[str] = set()
-    with Client(per_second=rate) as client:
-        browse_all(client, formats, seen, lambda r: None)
+    browse_all(client, formats, seen, lambda r: None)
     removed = _existing_ppns() - seen
     stamp = datetime.datetime.now().isoformat(timespec="seconds")
     for ppn in removed:
@@ -418,7 +417,7 @@ def main(argv: list[str] | None = None) -> int:
         sync(args.rate)
     elif args.reconcile:
         with Client(per_second=args.rate) as client:
-            reconcile(args.rate, formats)
+            reconcile(client, formats)
     else:  # --full (default)
         seen = _existing_ppns()
         write = _writer()
