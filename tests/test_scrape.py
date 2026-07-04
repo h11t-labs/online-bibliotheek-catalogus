@@ -65,18 +65,17 @@ def _all_keys(tag: str, formats) -> set[str]:
     return {f"{tag}:{fmt}:{taal}" for fmt in formats for taal in scrape.LANGS}
 
 
-def test_reconcile_after_completed_full_run_marks_nothing_removed(paths, monkeypatch):
+def test_reconcile_after_completed_full_run_marks_nothing_removed(paths):
     # C1: a completed --full leaves every all:* cell in the checkpoint. reconcile
     # must clear it and re-enumerate, so records still in the catalog are NOT
     # falsely marked removed. (On the old code seen stays empty -> everything
     # removed -> the next normalize drops the whole catalog.)
     rows = [("001", "a"), ("002", "b"), ("003", "c")]
     fake = FakeClient(rows)
-    monkeypatch.setattr(scrape, "Client", lambda *a, **k: fake)
     _seed_records(paths / "records", rows)
     scrape._save_done(_all_keys("all", scrape.FORMATS))
 
-    removed = scrape.reconcile(3.0, list(scrape.FORMATS))
+    removed = scrape.reconcile(fake, list(scrape.FORMATS))
 
     assert removed == set()
 
