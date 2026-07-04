@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.28] - 2026-07-04
+
 ### Security
 - Every response now sends `X-Content-Type-Options: nosniff`, a
   `Referrer-Policy`, and a `Content-Security-Policy` (allowing the inline
