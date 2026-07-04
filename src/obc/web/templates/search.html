@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ q or "Bladeren" }} · Bibliotheek{% endblock %}
+{% block title %}{% if q %}{{ q }} · Online Bibliotheek Catalogus{% else %}Online Bibliotheek Catalogus{% endif %}{% endblock %}
 
 {% macro combo(name, all_label, options, selected, icon, server=False, labels=None) -%}
 {%- set lab = labels or {} -%}
@@ -32,7 +32,7 @@
 {% block style %}
   .hero{text-align:center;padding:46px 16px 30px}
   .hero h1{font-family:var(--serif);font-size:clamp(30px,5vw,50px);margin:0 0 12px;
-    letter-spacing:-.5px;line-height:1.05}
+    letter-spacing:-.5px;line-height:1.05;text-wrap:balance}
   .hero p{color:var(--ink-soft);font-size:17px;margin:0 auto;max-width:560px}
   .hero .stat{display:inline-flex;gap:8px;align-items:baseline;margin-top:18px;
     font-family:var(--serif);font-size:15px;color:var(--ink-soft)}
@@ -102,6 +102,9 @@
   .pager a:hover{border-color:var(--accent);color:var(--accent)}
   .pager .cur{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
   .pager .dots{border:0;background:transparent;color:var(--ink-soft);min-width:auto;padding:9px 2px}
+  /* .pager{display:flex} outranks the UA [hidden] rule, so hiding it needs an explicit
+     rule — used when infinite scroll takes over the paging (JS sets pager.hidden) */
+  .pager[hidden]{display:none}
   .scroll-sentinel{display:flex;justify-content:center;padding:34px 0 10px}
   .spin{width:26px;height:26px;border:3px solid var(--line);border-top-color:var(--accent);
     border-radius:50%;animation:spin .8s linear infinite}
@@ -125,7 +128,7 @@
 <main>
   {% if not has_filters %}
   <section class="hero">
-    <h1>Ontdek alle e-books &amp; luisterboeken<br>van de online Bibliotheek</h1>
+    <h1>Ontdek alle e-books &amp; luisterboeken uit de catalogus van de online Bibliotheek</h1>
     <p>Blader en zoek in de hele collectie — met handige filters op genre, auteur, taal en meer, zodat je snel je volgende boek vindt.</p>
     <div class="stat"><b>{{ "{:,}".format(total_indexed).replace(",", ".") }}</b> titels geïndexeerd</div>
   </section>
@@ -248,7 +251,9 @@
 <script>
 /* Infinite scroll as progressive enhancement: the numbered pager stays in the HTML
    (crawlable / no-JS fallback); here we fetch the next page and append its covers as
-   you approach the bottom. */
+   you approach the bottom. To keep the footer reachable (endless auto-loading keeps
+   pushing it out of reach), we auto-load only a few pages, then pause with a "Meer
+   laden" button; clicking it resumes another auto-load batch. */
 (function () {
   const grid = document.querySelector(".grid");
   const pager = document.querySelector(".pager");
@@ -258,15 +263,29 @@
   if (!nextUrl) return;                                  // already the last page
 
   pager.hidden = true;                                   // JS takes over the paging
+  const AUTO_BATCH = 3;                                  // auto-loads before the pause
+  let autoLeft = AUTO_BATCH;
+
   const sentinel = document.createElement("div");
   sentinel.className = "scroll-sentinel";
-  sentinel.innerHTML = '<span class="spin"></span>';
   grid.after(sentinel);
+
+  function showSpinner() { sentinel.innerHTML = '<span class="spin"></span>'; }
+  function showButton() {
+    sentinel.innerHTML =
+      '<button type="button" class="btn ghost load-more">Meer laden</button>';
+    sentinel.querySelector(".load-more").addEventListener("click", () => {
+      autoLeft = AUTO_BATCH;                             // new batch on demand
+      loadMore();
+    });
+  }
+  showSpinner();
 
   let loading = false;
   async function loadMore() {
     if (loading || !nextUrl) return;
     loading = true;
+    showSpinner();
     try {
       const res = await fetch(nextUrl);
       if (!res.ok) throw new Error(res.status);
@@ -280,10 +299,13 @@
       pager.hidden = false;                              // restore the pager on failure
     }
     loading = false;
-    if (!nextUrl) { io.disconnect(); sentinel.remove(); }
+    if (!nextUrl) { io.disconnect(); sentinel.remove(); return; }
+    if (--autoLeft > 0) showSpinner();                   // keep auto-loading
+    else showButton();                                   // pause so the footer shows
   }
   const io = new IntersectionObserver(
-    (es) => { if (es[0].isIntersecting) loadMore(); }, { rootMargin: "700px" });
+    (es) => { if (es[0].isIntersecting && autoLeft > 0) loadMore(); },
+    { rootMargin: "700px" });
   io.observe(sentinel);
 })();
 </script>
