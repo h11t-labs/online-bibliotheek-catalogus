@@ -12,7 +12,12 @@ from urllib.parse import quote
 
 import httpx
 
-_http = httpx.Client(timeout=6, follow_redirects=True,
+# The bio is a nice-to-have shown on author pages; it must never hold a page
+# hostage waiting on Wikipedia. This lookup is synchronous in the request path
+# and the cache is per-process (cold after every restart), so keep the timeout
+# short — a slow Wikipedia should degrade to "no bio", not a slow page.
+_TIMEOUT = 2.0
+_http = httpx.Client(timeout=_TIMEOUT, follow_redirects=True,
                      headers={"User-Agent": "online-bibliotheek-catalogus/0.1"})
 
 _AUTHOR_WORDS = ("schrijf", "schrijver", "schrijfster", "auteur", "dichter",
@@ -39,4 +44,6 @@ def author_bio(name: str) -> dict | None:
                 "thumb": (d.get("thumbnail") or {}).get("source"),
                 "url": (d.get("content_urls", {}).get("desktop", {}) or {}).get("page")}
     except (httpx.HTTPError, ValueError):
+        # httpx.TimeoutException is a subclass of httpx.HTTPError, so a timed-out
+        # Wikipedia (the whole point of the short _TIMEOUT) is caught here too.
         return None
