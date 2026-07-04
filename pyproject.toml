@@ -37,7 +37,13 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-filterwarnings = ["ignore::DeprecationWarning"]
+filterwarnings = [
+    # Starlette's TestClient still imports httpx; the httpx2 migration is upstream's
+    # call, not ours. Scoped to this one message (category omitted — it's
+    # StarletteDeprecationWarning, not DeprecationWarning) instead of the old blanket
+    # ignore::DeprecationWarning that hid every upstream deprecation.
+    "ignore:Using `httpx` with `starlette.testclient`",
+]
 
 [tool.ty]
 # Green baseline, not a type-annotation campaign. The only diagnostics are
