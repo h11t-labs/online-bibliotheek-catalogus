@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Harvest checkpoint no longer leaks between runs: after a completed full harvest,
+  `scrape --reconcile` used to enumerate nothing and mark **every** title removed
+  (wiping the catalog on the next normalize), and `scrape --ereader` (or the
+  ereader pass of a re-run `--full`) wrote an empty set that cleared the e-reader
+  flag on every e-book. Reconcile now clears the resume state and the ereader pass
+  re-enumerates its own namespace; a single interrupted run still resumes.
+
 ### Added
 - `OBC_DATA` environment variable: one root directory for **all** catalog data
   (records, HTML cache, side files, checkpoint, and the DB). Defaults to `./data`,
