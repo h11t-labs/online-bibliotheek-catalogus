@@ -23,12 +23,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ereader pass of a re-run `--full`) wrote an empty set that cleared the e-reader
   flag on every e-book. Reconcile now clears the resume state and the ereader pass
   re-enumerates its own namespace; a single interrupted run still resumes.
+- The site footer is reachable again while browsing. Infinite scroll used to keep
+  auto-loading the next page as you neared the bottom, so the footer was pushed out
+  of reach; it now auto-loads a few pages, then pauses with a **"Meer laden"** button.
+  (This also fixes a latent bug that left the numbered pager visible under the button.)
 
 ### Added
 - `OBC_DATA` environment variable: one root directory for **all** catalog data
   (records, HTML cache, side files, checkpoint, and the DB). Defaults to `./data`,
   so behaviour is unchanged unless set — point it at a mounted volume to relocate
   everything with a single variable. `OBC_DB` still overrides the DB path alone.
+- Search is now a **full-screen overlay** with larger, easier-to-scan autocomplete
+  results (covers, format badges, grouped titles/authors/genres/publishers/lists).
+  Open it from the header search box, the mobile search icon, or the **`/`** key;
+  navigate with the arrow keys and close with `Esc`. A `<noscript>` form keeps
+  search working without JavaScript.
+
+### Changed
+- The site is now called **Online Bibliotheek Catalogus** — the header wordmark and
+  every page's browser/SEO title use the full name (body copy still refers to the
+  real "online Bibliotheek" it links out to).
+- The header search box is always visible (including on mobile) and centered on the
+  page, since search is the app's primary action.
+- Reworded the homepage hero to "Ontdek alle e-books & luisterboeken uit de catalogus
+  van de online Bibliotheek".
 
 ## [0.3.27] - 2026-07-01
 

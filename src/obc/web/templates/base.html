@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <title>{% block title %}Bibliotheek · eigen catalogus{% endblock %}</title>
+  <title>{% block title %}Online Bibliotheek Catalogus{% endblock %}</title>
   {% set _desc = meta_description or "Snelle zoekgids voor de collectie van de online Bibliotheek: e-books en luisterboeken doorzoeken en filteren op taal, genre, jaar en meer." %}
   {% set _base = site_url or (request.base_url|string).rstrip('/') %}
   {% set _canon = _base ~ request.url.path %}
@@ -68,29 +68,49 @@
     .site-header::before{content:"";position:absolute;inset:0;z-index:-1;
       backdrop-filter:saturate(1.4) blur(10px);
       background:color-mix(in oklab,var(--bg) 82%,transparent)}
+    /* equal outer columns (minmax(0,1fr) both) keep the search box centred on the
+       page — a plain 1fr/1fr splits leftover space equally but bases differ, so the
+       wider nav would shove the box left of centre */
     .site-header .row{max-width:1240px;margin:0 auto;padding:14px 24px;display:grid;
-      grid-template-columns:1fr minmax(0,680px) 1fr;gap:22px;align-items:center}
-    .brand{justify-self:start;display:flex;align-items:center;gap:10px;font-family:var(--serif);
-      font-size:20px;font-weight:700;letter-spacing:.2px;white-space:nowrap}
+      grid-template-columns:minmax(0,1fr) minmax(0,480px) minmax(0,1fr);gap:22px;align-items:center}
+    /* below ~1240px a centred 480px box would collide with the wider nav, so fill the
+       middle column instead (box stays ≤480, brand/nav never overlap it) */
+    @media (min-width:721px) and (max-width:1239px){
+      .site-header .row{grid-template-columns:1fr minmax(0,480px) 1fr}
+    }
+    .brand{justify-self:start;display:flex;align-items:center;gap:11px;font-family:var(--serif);
+      font-weight:700;letter-spacing:.2px;white-space:nowrap}
+    /* long site name reads as a compact two-line logo lockup beside the icon */
+    .brandname{font-size:14.5px;line-height:1.12}
     .site-header .navwrap{justify-self:end;position:relative;display:flex;align-items:center}
     .site-header .topnav{display:flex;gap:2px}
-    .nav-toggle,.search-toggle,.search-close,.menu-close{display:none;align-items:center;
+    .nav-toggle,.menu-close{display:none;align-items:center;
       justify-content:center;width:42px;height:42px;border:0;background:none;color:var(--ink);
       cursor:pointer;border-radius:10px}
-    .nav-toggle:hover,.search-toggle:hover,.search-close:hover,.menu-close:hover{
+    .nav-toggle:hover,.menu-close:hover{
       background:var(--accent-soft);color:var(--accent)}
     .brand .mark{width:30px;height:30px;display:grid;place-items:center;border-radius:9px;
       background:var(--accent);color:var(--accent-ink);font-size:16px;box-shadow:var(--shadow)}
-    .searchwrap{width:100%;max-width:680px;position:relative}
-    .searchform{display:flex;background:var(--card);
-      border:1px solid var(--line-strong);border-radius:999px;overflow:hidden;
-      box-shadow:0 1px 0 rgba(255,255,255,.4) inset, 6px 10px 30px -22px rgba(60,40,20,.5)}
-    .searchform input{flex:1;border:0;background:transparent;padding:12px 18px;
-      font-size:15px;color:var(--ink);outline:none}
-    .searchform input::placeholder{color:var(--ink-soft)}
-    .searchform button{border:0;background:var(--accent);color:var(--accent-ink);
-      padding:0 22px;font-size:14px;font-weight:600;cursor:pointer;letter-spacing:.3px}
-    .searchform button:hover{filter:brightness(1.06)}
+    /* giant search "button" in the header centre — looks like a field, opens the
+       full-screen search overlay (real form kept in <noscript> for no-JS) */
+    .searchslot{width:100%;max-width:600px;display:flex;justify-content:center}
+    .search-trigger{width:100%;display:flex;align-items:center;gap:11px;background:var(--card);
+      border:1px solid var(--line-strong);border-radius:999px;padding:11px 14px 11px 18px;
+      cursor:pointer;color:var(--ink-soft);font:inherit;font-size:15px;text-align:left;
+      box-shadow:0 1px 0 rgba(255,255,255,.4) inset,6px 12px 34px -22px rgba(60,40,20,.5);
+      transition:border-color .16s ease,transform .12s ease,box-shadow .16s ease}
+    .search-trigger:hover{border-color:var(--accent);transform:translateY(-1px)}
+    .search-trigger .mag{width:20px;height:20px;color:var(--accent);flex:none}
+    .search-trigger .ph{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .search-trigger .kbd{flex:none;font-size:11.5px;font-weight:700;color:var(--ink-soft);
+      background:var(--bg-soft);border:1px solid var(--line-strong);padding:3px 9px;border-radius:999px}
+    /* no-JS fallback */
+    .searchform{display:flex;width:100%;background:var(--card);border:1px solid var(--line-strong);
+      border-radius:999px;overflow:hidden}
+    .searchform input{flex:1;border:0;background:transparent;padding:12px 18px;font-size:15px;
+      color:var(--ink);outline:none}
+    .searchform button{border:0;background:var(--accent);color:var(--accent-ink);padding:0 22px;
+      font-size:14px;font-weight:600;cursor:pointer}
 
     .navlink{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;font-weight:600;
       font-size:14px;color:var(--ink);padding:8px 12px;border-radius:999px}
@@ -114,17 +134,13 @@
     /* phones/tablets: search shrinks to an icon (full-page search), nav -> hamburger
        (full-page menu). Both open as fixed full-screen overlays. */
     @media (max-width:720px){
-      .site-header .row{grid-template-columns:1fr auto;gap:8px;padding:12px 16px}
-      .nav-toggle,.search-toggle{display:inline-flex}
+      .site-header .row{grid-template-columns:auto minmax(0,1fr) auto;gap:10px;padding:12px 14px}
+      .nav-toggle{display:inline-flex}
 
-      /* search: icon -> full-page overlay (reuses the live autocomplete as results) */
-      .searchwrap{display:none}
-      .searchwrap.open{display:flex;flex-direction:column;position:fixed;inset:0;z-index:60;
-        background:var(--bg);max-width:none;padding:12px 16px 16px}
-      .searchwrap.open .search-close{display:inline-flex;align-self:flex-end}
-      .searchwrap.open .searchform{width:100%}
-      .searchwrap.open .ac-panel{position:static;margin-top:14px;flex:1;overflow:auto;
-        max-height:none;background:transparent;border:0;box-shadow:none;padding:0}
+      /* search stays visible on mobile — it's the app's core action. The box takes the
+         middle column; the "/" hint is dropped (no keyboard on touch). */
+      .search-trigger{padding:9px 12px;gap:9px}
+      .search-trigger .kbd{display:none}
 
       /* menu: hamburger -> full-page overlay (.site-header prefix beats the global rule) */
       .site-header .topnav{display:none}
@@ -143,9 +159,9 @@
         padding-top:14px;border-top:1px solid var(--line)}
       .site-header .topnav.open .theme-seg .seg-opt{font-size:14px;padding:11px 4px}
     }
-    /* only the very narrowest phones lose the wordmark; the icon-only search on
-       mobile leaves the header roomy enough to keep "Bibliotheek" otherwise */
-    @media (max-width:380px){ .brand span:not(.mark){display:none} }
+    /* on phones the always-visible search box shares the header, so the wordmark
+       gives way to the icon sooner to leave the box room */
+    @media (max-width:500px){ .brand span:not(.mark){display:none} }
     .btn{display:inline-flex;align-items:center;gap:7px;padding:10px 18px;border-radius:999px;
       background:var(--accent);color:var(--accent-ink);border:0;font-size:14px;font-weight:600;
       cursor:pointer;box-shadow:var(--shadow)}
@@ -212,40 +228,69 @@
     .combo-opt.on{color:var(--accent);font-weight:600}
     .combo-empty{padding:10px;color:var(--ink-soft);font-size:13px;text-align:center}
 
-    /* dim backdrop while searching */
-    #ac-backdrop{position:fixed;inset:0;background:rgba(8,5,3,.5);backdrop-filter:blur(1.5px);
-      z-index:15;opacity:0;pointer-events:none;transition:opacity .16s ease}
-    #ac-backdrop.show{opacity:1;pointer-events:auto}
-    /* autocomplete */
-    .ac-panel{position:absolute;top:calc(100% + 8px);left:0;right:0;z-index:40;
-      background:var(--card);border:1px solid var(--line-strong);border-radius:16px;
-      box-shadow:var(--shadow);overflow:hidden;padding:6px}
-    .ac-panel[hidden]{display:none}
-    .ac-group-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
-      color:var(--ink-soft);font-weight:700;padding:9px 12px 4px}
-    .ac-item{display:flex;align-items:center;gap:11px;padding:8px 12px;border-radius:10px;
-      cursor:pointer;color:var(--ink)}
+    /* full-screen search overlay (opened by the header trigger, the "/" key, or the
+       mobile search icon). Fades in; the input row and results ease into place. */
+    .search-overlay{position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;
+      background:var(--bg);opacity:0;visibility:hidden;
+      transition:opacity .2s ease,visibility .2s ease}
+    .search-overlay.open{opacity:1;visibility:visible}
+    .so-head{border-bottom:1px solid var(--line);background:var(--bg)}
+    .so-head .inner{max-width:860px;margin:0 auto;padding:10px 24px;display:flex;align-items:center;gap:16px;
+      transform:translateY(-9px);opacity:0;transition:transform .28s cubic-bezier(.2,.7,.2,1),opacity .24s ease}
+    .search-overlay.open .so-head .inner{transform:none;opacity:1}
+    .big-form{flex:1;display:flex;align-items:center;gap:16px;padding:18px 2px;min-width:0}
+    .big-form .mag{width:30px;height:30px;color:var(--accent);flex:none}
+    .big-form input{flex:1;min-width:0;border:0;background:transparent;outline:none;color:var(--ink);
+      font-family:var(--serif);font-size:33px;line-height:1.15}
+    .big-form input::placeholder{color:var(--ink-soft);opacity:.65}
+    .so-close{flex:none;width:48px;height:48px;display:grid;place-items:center;border:1px solid var(--line-strong);
+      background:var(--bg-soft);color:var(--ink);border-radius:12px;cursor:pointer;
+      transition:background .14s ease,color .14s ease,border-color .14s ease}
+    .so-close:hover{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+    .so-body{flex:1;overflow:auto;-webkit-overflow-scrolling:touch}
+    .so-results{max-width:860px;margin:0 auto;padding:14px 24px 90px;
+      transform:translateY(7px);opacity:0;transition:transform .3s cubic-bezier(.2,.7,.2,1) .04s,opacity .26s ease .04s}
+    .search-overlay.open .so-results{transform:none;opacity:1}
+    .so-hint{padding:26px 12px;color:var(--ink-soft);font-size:16px;line-height:1.6}
+    .so-hint kbd{font-family:var(--sans);font-size:12.5px;font-weight:700;background:var(--bg-soft);
+      border:1px solid var(--line-strong);border-radius:6px;padding:2px 8px;margin:0 2px}
+
+    /* autocomplete rows — larger type for the full-screen surface */
+    .ac-group-label{font-size:12.5px;text-transform:uppercase;letter-spacing:.09em;
+      color:var(--ink-soft);font-weight:700;padding:24px 8px 8px}
+    .ac-item{display:flex;align-items:center;gap:18px;padding:12px 14px;border-radius:16px;
+      cursor:pointer;color:var(--ink);transition:background .13s ease}
     .ac-item:hover,.ac-item.active{background:var(--accent-soft)}
-    .ac-item img{width:32px;height:46px;object-fit:cover;border-radius:4px;flex:none;
-      background:var(--line)}
+    .ac-item img{width:54px;height:79px;object-fit:cover;border-radius:8px;flex:none;background:var(--line)}
     /* which edition (e-book / audiobook) this suggestion is — a small corner badge
-       inset within the thumbnail (like .fmt-icons on the grid cards), so it's clear
-       before you even click through. Inset rather than overhanging the corner, so it
-       sits flush and doesn't shift under the cursor. */
+       inset within the thumbnail (like .fmt-icons on the grid cards). */
     .ac-cover{position:relative;flex:none;line-height:0}
-    .ac-fmt{position:absolute;right:2px;bottom:2px;width:15px;height:15px;border-radius:4px;
+    .ac-cover img{box-shadow:var(--shadow)}
+    .ac-fmt{position:absolute;right:3px;bottom:3px;width:20px;height:20px;border-radius:6px;
       display:flex;align-items:center;justify-content:center;color:#fff}
-    .ac-fmt svg{width:8px;height:8px;display:block;flex:none}
-    .ac-fmt.book{background:rgba(154,59,46,.9)}
+    .ac-fmt svg{width:11px;height:11px;display:block;flex:none}
+    .ac-fmt.book{background:rgba(154,59,46,.92)}
     .ac-fmt.audio{background:rgba(184,137,59,.95)}
     .ac-item .meta{min-width:0}
-    .ac-item .t{font-family:var(--serif);font-size:14.5px;white-space:nowrap;overflow:hidden;
+    .ac-item .t{font-family:var(--serif);font-size:22px;line-height:1.15;white-space:nowrap;
+      overflow:hidden;text-overflow:ellipsis}
+    .ac-item .a{font-size:15.5px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;
       text-overflow:ellipsis}
-    .ac-item .a{font-size:12.5px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;
-      text-overflow:ellipsis}
-    .ac-item.compact .ic{width:32px;height:32px;display:grid;place-items:center;flex:none;
+    .ac-item.compact .ic{width:54px;height:54px;display:grid;place-items:center;flex:none;
       border-radius:50%;background:var(--accent-soft);color:var(--accent)}
-    .ac-item.compact .ic svg{width:15px;height:15px}
+    .ac-item.compact .ic svg{width:26px;height:26px}
+    .ac-item.compact .t{font-size:19px}
+    /* phones: dial the overlay type back so it still fits */
+    @media (max-width:560px){
+      .big-form input{font-size:24px}
+      .ac-item .t{font-size:19px}
+      .ac-item.compact .t{font-size:17px}
+      .ac-item img{width:46px;height:67px}
+    }
+    @media (prefers-reduced-motion:reduce){
+      .search-overlay,.so-head .inner,.so-results{transition:opacity .12s ease}
+      .so-head .inner,.so-results{transform:none}
+    }
 
     /* shared book grid (search, author, list pages may override) */
     .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:26px 22px}
@@ -341,27 +386,25 @@
 
   <header class="site-header">
     <div class="row">
-      <a class="brand" href="/"><span class="mark">📖</span><span>Bibliotheek</span></a>
-      <div class="searchwrap">
-        <button class="search-close" type="button" aria-label="Sluit zoeken"
-                onclick="this.closest('.searchwrap').classList.remove('open');document.documentElement.classList.remove('ov-lock')">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      <a class="brand" href="/"><span class="mark">📖</span><span class="brandname">Online Bibliotheek<br>Catalogus</span></a>
+      <div class="searchslot">
+        <button class="search-trigger js-search-open" type="button" aria-haspopup="dialog"
+                aria-expanded="false" aria-label="Zoeken">
+          <svg class="mag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <span class="ph">Zoek op titel, auteur of onderwerp…</span>
+          <span class="kbd">/</span>
         </button>
-        <form class="searchform" action="/" method="get" role="search" autocomplete="off">
-          <input id="q" type="search" name="q" value="{{ q|default('') }}"
-                 placeholder="Zoek op titel, auteur of onderwerp…" aria-label="Zoeken"
-                 autocomplete="off" autofocus>
-          <button type="submit">Zoeken</button>
-        </form>
-        <div id="ac" class="ac-panel" hidden></div>
+        <noscript>
+          <form class="searchform" action="/" method="get" role="search">
+            <input type="search" name="q" value="{{ q|default('') }}"
+                   placeholder="Zoek op titel, auteur of onderwerp…" aria-label="Zoeken">
+            <button type="submit">Zoeken</button>
+          </form>
+        </noscript>
       </div>
       <div class="navwrap">
-      <button class="search-toggle" type="button" aria-label="Zoeken"
-              onclick="document.querySelector('.topnav').classList.remove('open');document.querySelector('.searchwrap').classList.add('open');document.documentElement.classList.add('ov-lock');setTimeout(function(){document.getElementById('q').focus()},30)">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      </button>
       <button class="nav-toggle" type="button" aria-label="Menu" aria-expanded="false"
-              onclick="document.querySelector('.searchwrap').classList.remove('open');const n=this.closest('.navwrap').querySelector('.topnav');const isOpen=n.classList.toggle('open');this.setAttribute('aria-expanded',isOpen);document.documentElement.classList.toggle('ov-lock',isOpen)">
+              onclick="const n=this.closest('.navwrap').querySelector('.topnav');const isOpen=n.classList.toggle('open');this.setAttribute('aria-expanded',isOpen);document.documentElement.classList.toggle('ov-lock',isOpen)">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
       </button>
       <nav class="topnav">
@@ -402,7 +445,23 @@
       </div>
     </div>
   </header>
-  <div id="ac-backdrop"></div>
+  <div class="search-overlay" id="search-overlay" role="dialog" aria-modal="true" aria-label="Zoeken">
+    <div class="so-head">
+      <div class="inner">
+        <form class="big-form" id="search-form" action="/" method="get" role="search" autocomplete="off">
+          <svg class="mag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input id="q" type="text" name="q" value="{{ q|default('') }}"
+                 placeholder="Zoek op titel, auteur of onderwerp…" aria-label="Zoeken" autocomplete="off">
+        </form>
+        <button class="so-close" id="search-close" type="button" aria-label="Sluit zoeken">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="so-body">
+      <div class="so-results" id="ac"></div>
+    </div>
+  </div>
   {% block body %}{% endblock %}
   <footer>
     Een zelfgemaakte zoekgids voor de collectie van de online Bibliotheek — om makkelijk je volgende boek te vinden.
@@ -445,13 +504,35 @@
   </script>
   <script>
   (function(){
+    const overlay=document.getElementById('search-overlay');
     const input=document.getElementById('q'), panel=document.getElementById('ac');
-    const backdrop=document.getElementById('ac-backdrop');
-    if(!input||!panel) return;
+    const closeBtn=document.getElementById('search-close');
+    const openers=document.querySelectorAll('.js-search-open');
+    if(!overlay||!input||!panel) return;
     let items=[], active=-1, timer=null, seq=0;
     const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-    function dim(on){ if(backdrop) backdrop.classList.toggle('show', on); }
-    function hide(){panel.hidden=true;panel.innerHTML='';items=[];active=-1;dim(false);}
+
+    function open(){
+      if(overlay.classList.contains('open')) return;
+      const nav=document.querySelector('.topnav'); if(nav) nav.classList.remove('open');
+      overlay.classList.add('open');
+      document.documentElement.classList.add('ov-lock');
+      openers.forEach(b=>b.setAttribute('aria-expanded','true'));
+      setTimeout(()=>{input.focus();input.select();},40);
+      const q=input.value.trim(); if(q.length>=2) fetchSug(q); else starter();
+    }
+    function close(){
+      overlay.classList.remove('open');
+      document.documentElement.classList.remove('ov-lock');
+      openers.forEach(b=>b.setAttribute('aria-expanded','false'));
+    }
+    function starter(){ items=[]; active=-1;
+      panel.innerHTML='<div class="so-hint">Typ om te zoeken in de hele collectie — '+
+        'titels, auteurs, genres, uitgevers en lijsten.<br>Navigeer met <kbd>↑</kbd> <kbd>↓</kbd>, '+
+        'open met <kbd>Enter</kbd>, sluit met <kbd>Esc</kbd>.</div>'; }
+    function noResults(q){ items=[]; active=-1;
+      panel.innerHTML='<div class="so-hint">Geen suggesties voor “'+esc(q)+'”. '+
+        'Druk op <kbd>Enter</kbd> om toch te zoeken.</div>'; }
     function go(it){
       if(it.kind==='title') location.href='/book/'+encodeURIComponent(it.ppn);
       else if(it.kind==='author') location.href='/author/'+encodeURIComponent(it.value);
@@ -471,7 +552,7 @@
           html+=`<div class="ac-item" data-i="${items.length-1}">
             <span class="ac-cover"><img loading="lazy" src="${esc(t.cover_url)}" alt="">
             <span class="ac-fmt ${audio?'audio':'book'}" title="${audio?'Luisterboek':'E-book'}">
-              <svg width="9" height="9"><use href="#ic-${audio?'audio':'book'}"/></svg></span></span>
+              <svg width="11" height="11"><use href="#ic-${audio?'audio':'book'}"/></svg></span></span>
             <div class="meta"><div class="t">${esc(t.title||'—')}</div>
             <div class="a">${esc(t.author||'')}</div></div></div>`; });
       }
@@ -505,32 +586,40 @@
           html+=`<div class="ac-item compact" data-i="${items.length-1}">
             ${icon('list')}<div class="meta"><div class="t">${esc(l.name)}</div></div></div>`; });
       }
-      if(!items.length){hide();return;}
-      panel.innerHTML=html; panel.hidden=false; active=-1; dim(true);
+      if(!items.length){ noResults(input.value.trim()); return; }
+      panel.innerHTML=html; active=-1;
       panel.querySelectorAll('.ac-item').forEach(el=>{
         el.addEventListener('mousedown',e=>{e.preventDefault();go(items[+el.dataset.i]);});
       });
     }
-    function highlight(){ panel.querySelectorAll('.ac-item').forEach((el,i)=>
-      el.classList.toggle('active', i===active)); }
+    function highlight(){ panel.querySelectorAll('.ac-item').forEach((el,i)=>{
+      const on=i===active; el.classList.toggle('active', on);
+      if(on) el.scrollIntoView({block:'nearest'}); }); }
     async function fetchSug(q){
       const my=++seq;
       try{ const r=await fetch('/suggest?q='+encodeURIComponent(q));
         const d=await r.json(); if(my===seq) render(d); }catch(e){}
     }
+
+    openers.forEach(b=>b.addEventListener('click',open));
+    if(closeBtn) closeBtn.addEventListener('click',close);
     input.addEventListener('input',()=>{ clearTimeout(timer);
-      const q=input.value.trim(); if(q.length<2){hide();return;}
+      const q=input.value.trim(); if(q.length<2){ seq++; starter(); return; }
       timer=setTimeout(()=>fetchSug(q),80); });
     input.addEventListener('keydown',e=>{
-      if(panel.hidden||!items.length) return;
-      if(e.key==='ArrowDown'){e.preventDefault();active=(active+1)%items.length;highlight();}
-      else if(e.key==='ArrowUp'){e.preventDefault();active=(active-1+items.length)%items.length;highlight();}
-      else if(e.key==='Enter'&&active>=0){e.preventDefault();go(items[active]);}
-      else if(e.key==='Escape'){hide();}
+      if(e.key==='ArrowDown'){ if(items.length){e.preventDefault();active=(active+1)%items.length;highlight();} }
+      else if(e.key==='ArrowUp'){ if(items.length){e.preventDefault();active=(active-1+items.length)%items.length;highlight();} }
+      else if(e.key==='Enter'){ if(active>=0){e.preventDefault();go(items[active]);} }
+      else if(e.key==='Escape'){e.preventDefault();close();}
     });
-    document.addEventListener('click',e=>{ if(!panel.contains(e.target)&&e.target!==input) hide(); });
-    if(backdrop) backdrop.addEventListener('click',hide);
-    input.addEventListener('focus',()=>{ if(items.length){ panel.hidden=false; dim(true); } });
+    // "/" anywhere opens search (unless typing in a field)
+    document.addEventListener('keydown',e=>{
+      if(overlay.classList.contains('open')) return;
+      if(e.key!=='/'||e.metaKey||e.ctrlKey||e.altKey) return;
+      const el=document.activeElement, tag=el?el.tagName:'';
+      if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||(el&&el.isContentEditable)) return;
+      e.preventDefault(); open();
+    });
   })();
 
   /* searchable multi-select comboboxes */
