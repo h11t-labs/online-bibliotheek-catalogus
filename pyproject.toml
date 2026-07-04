@@ -31,12 +31,31 @@ obc = ["web/templates/*.html", "web/static/*"]
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.6",
+    "ty>=0.0.56",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
 filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ty]
+# Green baseline, not a type-annotation campaign. The only diagnostics are
+# third-party stub imprecision, scoped-ignored below (not disabled globally).
+
+[[tool.ty.overrides]]
+# BeautifulSoup element accessors (.get/subscript/.string) are typed as broad
+# unions (str | AttributeValueList | None); the scrapers guard every access at
+# runtime, but ty can't narrow the bs4 stubs. Scope the noise to the parsers.
+include = ["src/obc/detail.py", "src/obc/listing.py"]
+rules = { "no-matching-overload" = "ignore", "unresolved-attribute" = "ignore", "invalid-argument-type" = "ignore" }
+
+[[tool.ty.overrides]]
+# Jinja2's Environment.globals is a plain dict; ty narrows its value type from the
+# first literal entries then flags each later assignment of a differently-typed
+# callable/str. Assigning template globals this way is the documented Jinja API.
+include = ["src/obc/web/app.py"]
+rules = { "invalid-assignment" = "ignore" }
 
 [tool.ruff]
 src = ["src"]
