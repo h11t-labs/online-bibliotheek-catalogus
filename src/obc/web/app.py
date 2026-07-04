@@ -144,9 +144,24 @@ app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan
 _CACHE_PREFIXES = ("/book/", "/author/", "/series/", "/list", "/stats", "/over")
 
 
+# Templates use inline <script>/<style> blocks (base.html), GoatCounter loads its
+# counter from gc.zgo.at and beacons to obc.goatcounter.com, and covers hotlink
+# leibniz.zbkb.nl plus several list providers' CDNs — hence 'unsafe-inline' and a
+# broad img-src https:. Kept as one string so the middleware sets it verbatim.
+_CSP = (
+    "default-src 'self'; script-src 'self' 'unsafe-inline' https://gc.zgo.at; "
+    "connect-src 'self' https://obc.goatcounter.com; img-src 'self' https: data:; "
+    "style-src 'self' 'unsafe-inline'; frame-ancestors 'self'; base-uri 'self'"
+)
+
+
 @app.middleware("http")
-async def _cache_control(request: Request, call_next):
+async def _response_headers(request: Request, call_next):
     response = await call_next(request)
+    # Security headers on every response (cheap, no per-user state).
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = _CSP
     if (request.method == "GET" and response.status_code == 200
             and "cache-control" not in response.headers):
         path = request.url.path

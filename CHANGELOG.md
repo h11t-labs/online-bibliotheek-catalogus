@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Every response now sends `X-Content-Type-Options: nosniff`, a
+  `Referrer-Policy`, and a `Content-Security-Policy` (allowing the inline
+  template scripts/styles, GoatCounter, and hotlinked cover images).
+
 ### Fixed
 - Search relevance ranking now weights the right columns. The bm25 weight list was
   missing the leading (UNINDEXED `ppn`) column, so the big title weight landed on
