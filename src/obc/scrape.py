@@ -26,12 +26,13 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 from .client import Client
+
+# Data paths live in obc.config; imported (and rebindable) at module level so
+# `scrape.RECORDS_DIR` etc. stay monkeypatchable by tests and the scheduler.
+from .config import CHECKPOINT, EREADER_FILE, GENRES_FILE, RECENT_FILE, RECORDS_DIR
 from .listing import parse_listing
 from .log import logger
 from .util import read_json, write_json
-
-RECORDS_DIR = Path("data/raw/records")
-CHECKPOINT = Path("data/checkpoint.json")
 
 _URL_RE = re.compile(r"/catalogus/([0-9xX]+)/([^/?#\s]+)")
 
@@ -47,9 +48,6 @@ LANGS = ["dut", "eng", "fre", "ger", "fry", "spa", "ita", "lat", "gre",
 # Dutch is year-rich (~98% have a `jaar`), so a per-year split keeps each cell
 # under the cap; a maker-sort window mops up the few year-less ones.
 YEARS = list(range(2027, 1899, -1))
-EREADER_FILE = Path("data/raw/ereader.json")
-GENRES_FILE = Path("data/raw/genres.json")
-RECENT_FILE = Path("data/raw/recent.json")
 
 # onderwerp (subject) facet code -> genre name, per audience. These ARE the
 # site's genres; tagging books via the facet avoids fetching detail pages.

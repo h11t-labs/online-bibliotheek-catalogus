@@ -33,7 +33,12 @@ The `obc` CLI auto-loads a `.env` file (copy from `.env.example`). Keys:
   enable the **Books API** → copy the key into `.env`. Without it the NYT list
   provider simply skips (no error). After setting it:
   `uv run obc lists update && uv run obc normalize`.
-- `OBC_DB` — optional path to a different SQLite catalog file.
+- `OBC_DATA` — optional root directory for **all** catalog data (records, HTML
+  cache, side files, checkpoint, and the DB). Defaults to `./data`; point it at a
+  mounted volume to keep everything on persistent storage with one setting.
+- `OBC_DB` — optional path to the SQLite catalog file specifically. Defaults to
+  `$OBC_DATA/catalog.db`; set it only if you want the DB somewhere other than the
+  data root.
 
 `.env` is gitignored; never commit your key.
 

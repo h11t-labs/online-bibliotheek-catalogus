@@ -15,12 +15,10 @@ from __future__ import annotations
 
 import datetime
 import json
-from pathlib import Path
 
+from ..config import LISTS_DIR  # rebindable module-level path (see obc.config)
 from ..log import logger
 from . import bestseller60, nyt, wikiprize
-
-LISTS_DIR = Path("data/raw/lists")
 
 # providers: each returns a list of list-dicts
 PROVIDERS = [

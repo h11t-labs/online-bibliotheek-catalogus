@@ -16,17 +16,16 @@ to re-run after a fresh scrape.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+# DEFAULT_DB honours OBC_DB so the CLI (scrape/normalize/sync) and the web app
+# share one path (e.g. a Fly volume at /app/data/catalog.db). Defined once in
+# obc.config; imported here so `db.DEFAULT_DB` keeps working for existing callers.
+from .config import DEFAULT_DB  # noqa: F401
 from .textnorm import fold
-
-# Honour OBC_DB so the CLI (scrape/normalize/sync) and the web app share one path
-# (e.g. a Railway volume at /app/data/catalog.db).
-DEFAULT_DB = Path(os.environ.get("OBC_DB", "data/catalog.db"))
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS books (
