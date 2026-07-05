@@ -412,6 +412,29 @@ def stream_rebuild(conn: sqlite3.Connection, records: Iterable[dict[str, Any]],
     return n
 
 
+def load_prior_ereader(path: str | Path | None) -> dict[str, int]:
+    """``{ppn: ereader}`` for books whose e-reader flag is already known in the
+    live DB. :mod:`obc.normalize` uses it to keep the flag when the ereader
+    side-file is missing, so a lost side-file can't silently blank the whole
+    facet on the next rebuild. Empty ``{}`` if the DB / table is absent (fresh
+    volume) — nothing to preserve then."""
+    if not path:
+        return {}
+    p = Path(path)
+    if not p.exists():
+        return {}
+    try:
+        conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT ppn, ereader FROM books WHERE ereader IS NOT NULL").fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {}
+    return dict(rows)
+
+
 def stats(conn: sqlite3.Connection) -> dict[str, Any]:
     def g(q: str, *a: Any) -> Any:
         return conn.execute(q, a).fetchone()[0]

@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
     tags: ['v*.*.*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 env:
@@ -24,6 +26,10 @@ jobs:
 
   build:
     needs: test
+    # PRs only need the test gate above — don't push images to GHCR for them
+    # (and fork PRs lack packages:write anyway). Build/release/deploy run on
+    # pushes to main (sha image) and version tags (semver image + Fly deploy).
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
