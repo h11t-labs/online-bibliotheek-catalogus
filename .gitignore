@@ -12,3 +12,6 @@ data/
 
 # macOS
 .DS_Store
+
+# Local tooling
+.claude/

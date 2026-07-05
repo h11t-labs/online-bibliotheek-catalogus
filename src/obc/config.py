@@ -13,10 +13,10 @@ from pathlib import Path
 
 from . import __version__
 
-# One versioned, contactable User-Agent for every outbound request (scrape client,
-# list providers, Wikipedia bio). The contact address lives only here.
+# One versioned User-Agent for every outbound request (scrape client, list
+# providers, Wikipedia bio).
 USER_AGENT = (f"online-bibliotheek-catalogus/{__version__} "
-              "(personal catalog project; contact: see repository)")
+              "(personal catalog project)")
 
 DATA_DIR = Path(os.environ.get("OBC_DATA", "data"))
 RAW_DIR = DATA_DIR / "raw"
