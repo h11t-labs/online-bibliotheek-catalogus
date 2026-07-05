@@ -5,6 +5,45 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/online-bibliotheek-catalogus-v1.0.0...online-bibliotheek-catalogus-v1.1.0) (2026-07-05)
+
+
+### Features
+
+* **web:** full-screen search redesign + rebrand to Online Bibliotheek Catalogus ([9fa3ac4](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/9fa3ac45b4983a033672bae7e89b5fb8ad17b4e7))
+
+
+### Bug Fixes
+
+* **c1:** expire the scrape checkpoint between runs (Critical) ([c1caf7f](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/c1caf7fae92473c84f679e4095f323932c83d46a))
+* **h1:** correct bm25 weight alignment in search ranking ([bcc1ec5](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/bcc1ec511f312bea213a5e6dced2b1f349c5f143))
+* **h2:** tests for scrape, client, and scheduler ([e69d738](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/e69d7385f2e80ea3620700b096b833337c751b14))
+* **l1:** close web DB connections via a FastAPI dependency ([0a474ef](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/0a474efead0e013e2781ef9e74b68101a8d08abd))
+* **l3:** one configurable data root (OBC_DATA) with sensible defaults ([020cbe1](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/020cbe1b78adcf8f65e7657b2c8db0103db67344))
+* **l4:** derive __version__ from installed package metadata ([1a07b8b](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/1a07b8b603e0de2603de32077e96f0d84666b427))
+* **l4:** one versioned User-Agent from obc.config ([f3ae076](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/f3ae0768cb62e395df1f331e3222912baa264a7e))
+* **l5:** narrow the pytest warnings filter ([27a0819](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/27a081930aaccfd608a8c6e12685fc4b45eca80f))
+* **l6:** pin toolchain, move runtime to Python 3.14 ([b600db5](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/b600db53272b8cf4f4529a4d7c9bf11204c6c603))
+* **l7:** add security response headers ([9c45556](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/9c45556cda41e6c5ba16714f5bdd3af786d4eb5e))
+* **m1:** remove the divergent per-row upsert write path ([0a546b7](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/0a546b73985884698740d5d5ae3889b88b92f7b5))
+* **m2+m5:** docs sweep — remove cover-cache claim + Render/Railway remnants ([bf1265d](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/bf1265d827dc9e7b5712ec0ca6b839cea52109cd))
+* **m3:** enforce ruff in CI, add ty type checker ([5c6922f](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/5c6922f4a3ff77d3f8b1b64639f7440a39264e40))
+* **m4:** shorten author-bio timeout so pages don't hang on Wikipedia ([effc7ca](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/effc7ca2178c9e6328c882e751bad2cd17dc155b))
+* **m5+l4:** remove render.yaml; derive __version__ from package metadata ([8724998](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/872499877cae6371e484c849691eee9278a49c3c))
+* **m6+l2:** safe WAL reclaim; drop stray Client in reconcile ([f69ca44](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/f69ca44cc9388ca2fb031f4b31f79eb6dcea33fe))
+* **normalize:** durable e-reader/genres/recency deltas + PR workflow docs ([#1](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/1)) ([f173654](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/f1736541dfa27aecec3852629175fa588411e00b))
+
+
+### Performance Improvements
+
+* index the book-page editions lookup (was a full table scan) ([19ea755](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/19ea755d1047fa3470d44fa107b59545f32a6958))
+
+
+### Documentation
+
+* changelog for the custom-domain pipeline ([276bba3](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/276bba396bb3ddc545b170eebd817585b42017d2))
+* **deploy:** finish release-please migration in DEPLOY.md ([#3](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/3)) ([e568a2e](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/e568a2e2b9355129f5f70ee4e84b6fd045385533))
+
 ## [1.0.0] - 2026-07-05
 
 ### Changed
