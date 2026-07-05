@@ -5,6 +5,7 @@
       "release-type": "python",
       "package-name": "online-bibliotheek-catalogus",
       "include-v-in-tag": true,
+      "include-component-in-tag": false,
       "changelog-path": "CHANGELOG.md"
     }
   }
