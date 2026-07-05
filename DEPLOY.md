@@ -41,7 +41,7 @@ fly tokens create deploy           # copy the token
 gh secret set FLY_API_TOKEN --repo mymix/online-bibliotheek-catalogus   # paste it
 ```
 
-Then `scripts/release.sh X.Y.Z && git push origin main --follow-tags` ships it.
+Then merging the release PR (see [Releasing a version](#releasing-a-version)) ships it.
 (Without the secret the job skips, so releases stay green.)
 
 Notes:
@@ -89,14 +89,42 @@ scripts/fly-cron.sh                                         # create the weekly 
 
 ## Releasing a version
 
-CI (`.github/workflows/deploy.yml`) on a version tag builds a versioned image to
-GHCR (provenance) and creates a GitHub Release from `CHANGELOG.md`. To cut one:
+Releases are automated by [release-please](https://github.com/googleapis/release-please)
+(`.github/workflows/release-please.yml`). It reads the Conventional Commit titles
+on `main`, keeps an open **`chore: release X.Y.Z` PR** with the next version +
+generated `CHANGELOG.md`, and — when you merge that PR — pushes the `vX.Y.Z` tag
+and creates the GitHub Release. The tag then triggers the `build` + `deploy` jobs
+in `.github/workflows/deploy.yml` (versioned GHCR image, then `flyctl deploy`).
+
+So the release step is simply: **merge the release PR.** No manual version bump,
+changelog edit, or tag.
+
+### One-time setup: the release-please GitHub App
+
+release-please authenticates with a **GitHub App token** (not the default
+`GITHUB_TOKEN`) so the tag it pushes actually triggers `deploy.yml`. Create it once:
+
+1. **`https://github.com/settings/apps` → New GitHub App** (owned by the
+   `h11t-labs` account). Uncheck the webhook. Repository permissions:
+   **Contents: Read and write** + **Pull requests: Read and write**. Install it on
+   **only** the `online-bibliotheek-catalogus` repo.
+2. Note the **App ID**; **Generate a private key** (downloads a `.pem`).
+3. Add repo secrets:
+   ```bash
+   gh secret set RELEASE_PLEASE_APP_ID --body "<app-id>"
+   gh secret set RELEASE_PLEASE_PRIVATE_KEY < path/to/app.private-key.pem
+   ```
+
+`.release-please-manifest.json` records the current released version; don't hand-edit
+it except in the break-glass case below.
+
+### Break-glass (release-please is broken and you must ship)
+
+The deploy pipeline keys off the tag, not the bot, so you can ship by hand:
 
 ```bash
-scripts/release.sh 0.2.0          # bumps pyproject + CHANGELOG, commits, tags v0.2.0
-git push origin main --follow-tags
+git tag vX.Y.Z && git push origin vX.Y.Z          # triggers build + Fly deploy
 ```
 
-The **version tag** is what triggers the deploy to Fly (the `deploy` job in
-`.github/workflows/deploy.yml`); the same run builds the GHCR image and the
-changelog-backed GitHub Release.
+Then bump `.release-please-manifest.json` (and `pyproject.toml`) to `X.Y.Z` on
+`main` so release-please stays in sync, and add the `CHANGELOG.md` entry yourself.
