@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
+# BREAK-GLASS ONLY. Releases are normally cut by release-please: merge the
+# "chore: release X.Y.Z" PR it maintains (see CONTRIBUTING.md). Use this manual
+# path only if the release-please workflow is broken and you must ship. Bumping
+# the version here by hand will desync .release-please-manifest.json — update it
+# to match afterwards.
+#
 # Cut a release: bump the version, roll the changelog, commit, tag.
 #
-#   scripts/release.sh 0.2.0
+#   scripts/release.sh 1.0.1
 #
 # Then push with:  git push origin main --follow-tags
 # which triggers the GitHub Actions workflow (build image -> GHCR -> Fly).

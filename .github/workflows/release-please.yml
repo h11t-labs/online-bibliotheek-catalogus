@@ -1,0 +1,33 @@
+name: release-please
+
+# Maintains a "chore: release X.Y.Z" pull request from the Conventional Commits
+# on main. Merging that PR bumps pyproject.toml + CHANGELOG.md, creates the
+# vX.Y.Z tag, and cuts the GitHub Release. The tag then drives build + Fly
+# deploy in deploy.yml — this workflow never deploys anything itself.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # A GitHub App token (NOT the default GITHUB_TOKEN) so the tag/commit this
+      # action pushes is treated as a real actor event — otherwise the vX.Y.Z tag
+      # would NOT trigger deploy.yml and nothing would ship.
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}
+
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
