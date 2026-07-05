@@ -60,3 +60,17 @@ def test_default_cmds_full_on_empty_sync_when_seeded(tmp_path, monkeypatch):
     # once a record file exists -> an incremental sync
     (records / "1.json").write_text("{}", encoding="utf-8")
     assert scheduler._default_cmds()[0] == ["scrape", "--sync"]
+
+
+def test_default_cmds_refreshes_recency_on_incremental_path(tmp_path, monkeypatch):
+    records = tmp_path / "records"
+    records.mkdir()
+    monkeypatch.setattr(scrape, "RECORDS_DIR", records)
+    monkeypatch.delenv("OBC_ENRICH", raising=False)
+
+    # a full harvest already collects recency -> no separate --recent step
+    assert ["scrape", "--recent"] not in scheduler._default_cmds()
+
+    # incremental path can't re-derive recency from --sync, so it runs --recent
+    (records / "1.json").write_text("{}", encoding="utf-8")
+    assert ["scrape", "--recent"] in scheduler._default_cmds()

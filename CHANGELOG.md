@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The **"voor e-reader"** statistic (and the e-reader filter) no longer collapse to
+  zero when the `ereader.json` side-file is missing at rebuild time. `normalize`
+  now resolves the flag as **per-title detail-page flag → side-file → the value
+  already in the live DB**, so a missing side-file preserves the facet instead of
+  blanking every e-book.
+
+### Changed
+- The e-reader flag and genres now ride the incremental refresh: new e-books pick
+  them up from their detail page during the weekly `--enrich` pass, so those facets
+  stay fresh via the delta without a full re-enumeration. The incremental refresh
+  also re-ranks recency (`scrape --recent`), which only `scrape --full` did before.
+
 ## [0.3.28] - 2026-07-04
 
 ### Security

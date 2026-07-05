@@ -119,6 +119,17 @@ def parse_detail(html: str, ppn: str | None = None) -> dict[str, Any]:
     desc = soup.find("meta", attrs={"name": "description"})
     rec["summary"] = (desc.get("content").strip() if desc and desc.get("content") else None)
 
+    # --- e-reader availability (e-books) -----------------------------------
+    # The "devicetypes" strip lists which devices an e-book supports; a
+    # <span class="ereader"> means it also works on a dedicated e-reader (vs.
+    # app / pc-only). This is the per-title source of the flag, so a freshly
+    # enriched new title carries it without waiting for an ereader.json rebuild.
+    # No strip -> left unset (normalize then falls back to the ereader side-file).
+    if rec.get("format") == "ebook":
+        device = soup.select_one("p.devicetypes")
+        if device is not None:
+            rec["ereader"] = 1 if device.select_one("span.ereader") else 0
+
     # --- dt/dd metadata ----------------------------------------------------
     subjects: list[str] = []
     keywords: list[str] = []

@@ -1,7 +1,9 @@
 """Load cached records from ``data/raw/`` into the SQLite catalog (fast rebuild).
 
 Besides loading book records it also:
-* applies the e-reader flag from ``data/raw/ereader.json``;
+* resolves the e-reader flag, preferring a per-title detail-page flag, then the
+  ``data/raw/ereader.json`` side-file, then the value already in the live DB (so
+  a missing side-file never silently blanks the whole facet);
 * canonicalises publisher spellings to the most-common variant;
 * splits multi-author strings into individual authors;
 * matches curated lists (``data/raw/lists/*.json``) to catalog PPNs.
@@ -46,8 +48,10 @@ def _read(path: Path):
     return [data] if isinstance(data, dict) else []
 
 
-def _load_aux() -> tuple[set, bool, dict, dict]:
-    """Load the small side-files: e-reader flags, facet genres, recency ranks."""
+def _load_aux(db_path: Path | None = None) -> tuple[set, bool, dict, dict, dict]:
+    """Load the small side-files: e-reader flags, facet genres, recency ranks.
+    Also snapshot the live DB's known e-reader flags (``prior_ereader``) so a
+    missing ereader side-file preserves the flag instead of blanking it."""
     ereader: set[str] = set()
     have_ereader = EREADER_FILE.exists()
     if have_ereader:
@@ -56,18 +60,26 @@ def _load_aux() -> tuple[set, bool, dict, dict]:
         ereader = set(data or [])
     genres_map: dict[str, list] = read_json(GENRES_FILE, default={}) or {}
     recent_map: dict[str, int] = read_json(RECENT_FILE, default={}) or {}
-    return ereader, have_ereader, genres_map, recent_map
+    prior_ereader: dict[str, int] = db.load_prior_ereader(db_path)
+    return ereader, have_ereader, genres_map, recent_map, prior_ereader
 
 
 def _transform(r: dict, ereader: set, have_ereader: bool, genres_map: dict,
-               recent_map: dict, canon: dict) -> dict | None:
+               recent_map: dict, canon: dict, prior_ereader: dict) -> dict | None:
     """Enrich one raw record in place; return it, or None to drop it. Files are
     named ``{ppn}.json`` (one record per ppn), so no cross-file dedup is needed."""
     ppn = r.get("ppn")
     if not ppn or r.get("removed_at"):  # drop removed / id-less titles
         return None
-    if have_ereader and r.get("format") == "ebook":
-        r["ereader"] = 1 if ppn in ereader else 0
+    if r.get("format") == "ebook" and r.get("ereader") is None:
+        # precedence: a per-title detail flag (set upstream, freshest — covers new
+        # titles not yet in the side-file) already won by being non-None; else the
+        # ereader side-file; else the value last known in the live DB, so a missing
+        # side-file preserves the facet rather than zeroing it.
+        if have_ereader:
+            r["ereader"] = 1 if ppn in ereader else 0
+        elif ppn in prior_ereader:
+            r["ereader"] = prior_ereader[ppn]
     r["language"] = valid_language(r.get("language"))  # drop non-language junk
     # split + canonicalise authors (merge known aliases like Bernlef/J. Bernlef)
     authors = [canonical_author(a) for a in split_authors(r.get("author"))]
@@ -131,10 +143,11 @@ def _prepass(paths: list[Path]) -> tuple[dict, dict, dict, tuple]:
 
 def iter_records(paths: list[Path], aux: tuple, canon: dict):
     """Yield enriched records one at a time (constant memory)."""
-    ereader, have_ereader, genres_map, recent_map = aux
+    ereader, have_ereader, genres_map, recent_map, prior_ereader = aux
     for path in paths:
         for r in _read(path):
-            t = _transform(r, ereader, have_ereader, genres_map, recent_map, canon)
+            t = _transform(r, ereader, have_ereader, genres_map, recent_map,
+                           canon, prior_ereader)
             if t is not None:
                 yield t
 
@@ -222,7 +235,7 @@ def normalize(raw_dir: Path = RAW_DIR, db_path: Path = db.DEFAULT_DB) -> dict:
     db_path = Path(db_path)
     _reclaim_disk(db_path, raw_dir)
     paths = sorted((raw_dir / "records").rglob("*.json"))
-    aux = _load_aux()
+    aux = _load_aux(db_path)  # reads the live DB's e-reader flags before the swap
     canon, by_isbn, by_key, genre_info = _prepass(paths)  # canon + match maps + genre codes
     lists = match_lists(by_isbn, by_key)
     # Build into a temp DB, then swap it in atomically — the web app keeps serving

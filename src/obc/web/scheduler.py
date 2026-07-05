@@ -33,13 +33,22 @@ def _seeded() -> bool:
 
 def _default_cmds() -> list[list[str]]:
     """The refresh pipeline: harvest (full on an empty volume, else incremental),
-    optionally enrich detail-only fields (age/series/keywords), refresh curated
-    lists, then a single normalize that reflects it all. Enrich is gated by
-    ``OBC_ENRICH=1`` since the first full pass fetches every detail page (slow)."""
-    harvest = ["scrape", "--sync"] if _seeded() else ["scrape", "--full"]
+    optionally enrich detail-only fields (age/series/keywords + the per-title
+    e-reader flag), refresh the recency ranking + curated lists, then a single
+    normalize that reflects it all. Enrich is gated by ``OBC_ENRICH=1`` since the
+    first full pass fetches every detail page (slow).
+
+    E-reader/genre facets ride the incremental path via ``--enrich`` (new titles'
+    detail pages carry both), so they no longer need a weekly full re-enumeration.
+    Recency is a cheap bounded scan, refreshed here on the incremental path (a
+    ``--full`` harvest already collects it)."""
+    seeded = _seeded()
+    harvest = ["scrape", "--sync"] if seeded else ["scrape", "--full"]
     cmds = [harvest]
     if os.environ.get("OBC_ENRICH") == "1":
         cmds.append(["scrape", "--enrich"])
+    if seeded:  # --full already ranks recency; the incremental path must refresh it
+        cmds.append(["scrape", "--recent"])
     cmds += [["lists", "update"], ["normalize"]]
     return cmds
 
