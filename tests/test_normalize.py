@@ -107,6 +107,43 @@ def test_ereader_flag_from_side_file(raw):
     assert records["2"]["ereader"] == 0
 
 
+def test_ereader_precedence_per_record_then_side_file_then_prior():
+    """The flag is resolved detail-flag > side-file > last-known DB value."""
+    T = normalize._transform
+    # per-title detail flag wins even when the side-file disagrees (or lacks it)
+    assert T({"ppn": "9", "format": "ebook", "ereader": 1}, set(), True,
+             {}, {}, {}, {})["ereader"] == 1
+    assert T({"ppn": "9", "format": "ebook", "ereader": 0}, {"9"}, True,
+             {}, {}, {}, {})["ereader"] == 0
+    # no detail flag -> fall back to the side-file membership set
+    assert T({"ppn": "9", "format": "ebook"}, {"9"}, True, {}, {}, {}, {})["ereader"] == 1
+    assert T({"ppn": "8", "format": "ebook"}, {"9"}, True, {}, {}, {}, {})["ereader"] == 0
+    # side-file missing (have_ereader False) -> preserve the live DB's prior value,
+    # and leave genuinely-unknown titles unset rather than forcing them to 0
+    assert T({"ppn": "9", "format": "ebook"}, set(), False,
+             {}, {}, {}, {"9": 1})["ereader"] == 1
+    assert T({"ppn": "x", "format": "ebook"}, set(), False,
+             {}, {}, {}, {}).get("ereader") is None
+
+
+def test_normalize_preserves_ereader_when_side_file_vanishes(raw, tmp_path):
+    """A rebuild with the ereader side-file missing must not blank the facet — it
+    keeps each e-book's last-known flag from the live DB (the bug behind the 0)."""
+    db_path = tmp_path / "out.db"
+    normalize.normalize(raw, db_path)                      # side-file has ["1"]
+    conn = db.connect(db_path)
+    assert conn.execute("SELECT ereader FROM books WHERE ppn='1'").fetchone()[0] == 1
+    assert conn.execute("SELECT ereader FROM books WHERE ppn='2'").fetchone()[0] == 0
+    conn.close()
+
+    (raw / "ereader.json").unlink()                        # side-file lost
+    normalize.normalize(raw, db_path)
+    conn = db.connect(db_path)
+    assert conn.execute("SELECT ereader FROM books WHERE ppn='1'").fetchone()[0] == 1
+    assert conn.execute("SELECT ereader FROM books WHERE ppn='2'").fetchone()[0] == 0
+    conn.close()
+
+
 def test_match_lists_by_isbn_then_title(raw):
     _, by_isbn, by_key = _enrich(raw)
     _write(raw / "lists" / "t.json", {"slug": "t", "name": "T", "items": [

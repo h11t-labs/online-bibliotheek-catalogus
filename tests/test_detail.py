@@ -21,6 +21,32 @@ def test_ebook():
     assert r["pages"] == 320
     assert r["isbn"] == "9789465170596"
     assert "Thrillers" in r["subjects"]
+    # the devicetypes strip carries a .ereader span -> works on an e-reader
+    assert r["ereader"] == 1
+
+
+def test_ereader_flag_app_only():
+    # an e-book whose devicetypes strip lists app + laptop but NOT e-reader
+    html = """<html><head>
+      <link rel="canonical" href="/catalogus/999/test-boek"/>
+      <title>Test Boek - Auteur | e-book | de online Bibliotheek</title>
+    </head><body>
+      <span class="title">Test Boek</span>
+      <p class="additional devicetypes"><span class="materialtype"> E-book </span>
+        <span class="devicewrapper">| voor&nbsp;
+          <span class="app" title="geschikt voor telefoon of tablet">telefoon of tablet</span>
+          <span class="laptop" title="geschikt voor pc of laptop">pc of laptop</span>
+        </span></p>
+    </body></html>"""
+    r = parse_detail(html)
+    assert r["format"] == "ebook"
+    assert r["ereader"] == 0
+
+
+def test_no_ereader_flag_for_audiobook():
+    # audiobooks have no e-reader concept -> the flag is left unset (NULL in DB)
+    r = _parse("audiobook_431630879.html")
+    assert "ereader" not in r
 
 
 def test_audiobook_alternate_canonical():

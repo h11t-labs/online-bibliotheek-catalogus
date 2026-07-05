@@ -285,6 +285,11 @@ def enrich(rate: float, limit=None) -> None:
             if detail:
                 merged = _merge(rec, detail)
                 merged["source"] = "listing+detail"
+                # _merge keeps only truthy values, so a detail ereader=0 (app-only)
+                # would be dropped — carry the flag through explicitly so app-only
+                # e-books aren't left blank.
+                if detail.get("ereader") is not None:
+                    merged["ereader"] = detail["ereader"]
                 write(merged)
                 n += 1
                 if n % 50 == 0:
