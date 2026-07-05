@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.29] - 2026-07-05
+
 ### Fixed
 - The **"voor e-reader"** statistic (and the e-reader filter) no longer collapse to
   zero when the `ereader.json` side-file is missing at rebuild time. `normalize`
