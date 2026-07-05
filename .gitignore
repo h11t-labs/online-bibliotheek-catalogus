@@ -7,15 +7,8 @@ venv/
 .pytest_cache/
 
 # Project data
-data/raw/
-data/catalog.db
-data/catalog.db.bak
-data/*.db-wal
-data/*.db-shm
-data/checkpoint.json
+data/
 .env
-
-data/*.log
 
 # macOS
 .DS_Store
