@@ -138,7 +138,7 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan)
 
-# Pages with no per-user state and a catalog that only changes on the weekly rebuild,
+# Pages with no per-user state and a catalog that only changes on the daily rebuild,
 # so they're safe to cache publicly — this offloads repeat hits and crawler traffic
 # from the single small VM. Detail pages cache an hour; the browse home a few minutes.
 _CACHE_PREFIXES = ("/book/", "/author/", "/series/", "/list", "/stats", "/over")
