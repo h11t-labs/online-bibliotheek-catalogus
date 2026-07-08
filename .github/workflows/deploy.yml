@@ -134,12 +134,12 @@ jobs:
           # Post-deploy refresh is handled in-process: the new machine triggers it
           # on startup (OBC_REFRESH_ON_STARTUP=1 in fly.toml).
 
-      - name: (Re)provision weekly refresh cron machine
+      - name: (Re)provision daily refresh cron machine
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           # The scheduled (cron) machine POSTs the token-protected /admin/refresh
-          # over Fly's private network once a week. The token comes from the app
+          # over Fly's private network once a day. The token comes from the app
           # secret OBC_REFRESH_TOKEN, injected into the machine at runtime. We
           # destroy + recreate so command/schedule changes always take effect.
           # The curl must NOT use -f and must exit 0, otherwise a 409 ("already
@@ -155,11 +155,11 @@ jobs:
           if flyctl machine run curlimages/curl:latest \
                --app "$app" \
                --name catalog-cron \
-               --schedule weekly \
+               --schedule daily \
                --region ams \
                --entrypoint /bin/sh \
                -- -c "curl -sS -m 60 -X POST -H \"Authorization: Bearer \$OBC_REFRESH_TOKEN\" $url || true"; then
-            echo "Weekly cron machine 'catalog-cron' provisioned."
+            echo "Daily cron machine 'catalog-cron' provisioned."
           else
             # Non-fatal: the app deploy already succeeded; surface but don't go red.
             echo "WARNING: cron provisioning failed (check FLY_API_TOKEN scope)."

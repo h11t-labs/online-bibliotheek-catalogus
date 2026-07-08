@@ -1,7 +1,7 @@
 # Deploying
 
 The app is a single FastAPI web service backed by a SQLite file, run from the
-`Dockerfile`, with the database on a **persistent volume/disk**. The weekly
+`Dockerfile`, with the database on a **persistent volume/disk**. The daily
 refresh runs in the web machine (where the volume is), triggered by a scheduled
 cron machine hitting a token-protected endpoint — see below.
 
@@ -46,7 +46,7 @@ Then merging the release PR (see [Releasing a version](#releasing-a-version)) sh
 
 Notes:
 - One machine only (`min_machines_running = 1`) — SQLite is single-writer.
-- `normalize` streams (~190MB peak), so the weekly refresh runs on the 512MB VM.
+- `normalize` streams (~190MB peak), so the daily refresh runs on the 512MB VM.
 
 ## Seed / refresh the database
 
@@ -62,7 +62,7 @@ $ uv run obc scrape --full && uv run obc lists update && uv run obc normalize
 built `data/catalog.db` to `/app/data` via `fly ssh sftp shell` (as in the seed
 step above) — lighter than scraping on a small VM.
 
-## Weekly refresh (Fly cron → protected endpoint)
+## Daily refresh (Fly cron → protected endpoint)
 
 The refresh must run in the machine that owns the volume, so a stateless **Fly
 scheduled (cron) machine** just triggers `POST /admin/refresh` over Fly's private
@@ -72,7 +72,7 @@ token so only the cron can call it.
 
 ```bash
 fly secrets set OBC_REFRESH_TOKEN=$(openssl rand -hex 32)   # shared secret
-scripts/fly-cron.sh                                         # create the weekly cron machine
+scripts/fly-cron.sh                                         # create the daily cron machine
 ```
 
 `normalize` streams at ~190MB, so this runs on the 512MB VM — no scaling.

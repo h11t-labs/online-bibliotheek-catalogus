@@ -39,7 +39,7 @@ def _default_cmds() -> list[list[str]]:
     first full pass fetches every detail page (slow).
 
     E-reader/genre facets ride the incremental path via ``--enrich`` (new titles'
-    detail pages carry both), so they no longer need a weekly full re-enumeration.
+    detail pages carry both), so they no longer need a periodic full re-enumeration.
     Recency is a cheap bounded scan, refreshed here on the incremental path (a
     ``--full`` harvest already collects it)."""
     seeded = _seeded()
