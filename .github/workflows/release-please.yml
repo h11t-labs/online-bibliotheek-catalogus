@@ -27,7 +27,55 @@ jobs:
           private-key: ${{ secrets.RELEASE_PLEASE_PRIVATE_KEY }}
 
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # release-type "python" only bumps pyproject.toml, so the release PR leaves
+      # uv.lock's self-referential version pin stale. Sync it here — but ONLY the
+      # version pin: if `uv lock` also touches dependency entries (possible any
+      # time a >= range resolves to a newer publish), that's a signal a dependency
+      # needs its own chore(deps) PR, not something to smuggle into a release PR,
+      # so the check fails loudly instead of auto-committing it.
+      - name: Checkout release PR branch
+        if: steps.release.outputs.prs_created == 'true'
+        uses: actions/checkout@v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+
+      - name: Set up uv
+        if: steps.release.outputs.prs_created == 'true'
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Sync uv.lock version pin in the release PR
+        if: steps.release.outputs.prs_created == 'true'
+        run: |
+          uv lock
+
+          if git diff --quiet -- uv.lock; then
+            echo "uv.lock already in sync with pyproject.toml"
+            exit 0
+          fi
+
+          diff_output=$(git diff -U3 -- uv.lock)
+          numstat=$(git diff --numstat -- uv.lock)
+          read -r added deleted _ <<< "$numstat"
+
+          if [ "$added" != "1" ] || [ "$deleted" != "1" ] \
+             || ! echo "$diff_output" | grep -qE '^\+version = "[0-9]+\.[0-9]+\.[0-9]+"$' \
+             || ! echo "$diff_output" | grep -q 'name = "online-bibliotheek-catalogus"'; then
+            echo "::error::uv lock changed more than the self-referential version pin — refusing to auto-commit into the release PR. This usually means a dependency needs its own chore(deps) PR; sync uv.lock manually."
+            echo "$diff_output"
+            exit 1
+          fi
+
+          git config user.name "release-please[bot]"
+          git config user.email "release-please[bot]@users.noreply.github.com"
+          git add uv.lock
+          git commit -m "chore: sync uv.lock version pin"
+          git push
