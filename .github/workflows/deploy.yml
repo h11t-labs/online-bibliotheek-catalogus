@@ -151,14 +151,20 @@ jobs:
             flyctl machine destroy "$id" --app "$app" --force 2>/dev/null \
               && echo "removed old cron machine $id"
           done
-          url="http://${app}.internal:8000/admin/refresh"
+          # Target the web *process group* ("app"), NOT "${app}.internal": the bare
+          # app name resolves to EVERY machine — including this cron machine itself,
+          # which has nothing on :8000 — so curl would hit itself and fail with an
+          # instant "connection refused". "app.process.<app>.internal" only returns
+          # the web machine. Retries cover the brief window on a fresh scheduled
+          # boot before 6PN/private DNS is ready.
+          url="http://app.process.${app}.internal:8000/admin/refresh"
           if flyctl machine run curlimages/curl:latest \
                --app "$app" \
                --name catalog-cron \
                --schedule daily \
                --region ams \
                --entrypoint /bin/sh \
-               -- -c "curl -sS -m 60 -X POST -H \"Authorization: Bearer \$OBC_REFRESH_TOKEN\" $url || true"; then
+               -- -c "curl -sS --connect-timeout 15 --max-time 60 --retry 10 --retry-delay 6 --retry-connrefused --retry-all-errors -X POST -H \"Authorization: Bearer \$OBC_REFRESH_TOKEN\" $url || true"; then
             echo "Daily cron machine 'catalog-cron' provisioned."
           else
             # Non-fatal: the app deploy already succeeded; surface but don't go red.
