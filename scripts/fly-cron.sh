@@ -16,7 +16,12 @@ set -euo pipefail
 
 APP="${FLY_APP:-online-bibliotheek-catalogus}"
 REGION="${FLY_REGION:-ams}"
-URL="http://${APP}.internal:8000/admin/refresh"
+# Target the web *process group* ("app"), NOT "${APP}.internal": the bare app name
+# resolves to every machine in the app — including this cron machine itself, which
+# has nothing on :8000 — so curl hits itself and fails with an instant "connection
+# refused". "app.process.<app>.internal" only returns the web machine. Retries cover
+# the brief window on a fresh scheduled boot before private DNS is ready.
+URL="http://app.process.${APP}.internal:8000/admin/refresh"
 
 fly machine run curlimages/curl:latest \
   --app "$APP" \
@@ -24,6 +29,6 @@ fly machine run curlimages/curl:latest \
   --schedule daily \
   --region "$REGION" \
   --entrypoint /bin/sh \
-  -- -c "curl -sS -m 60 -X POST -H \"Authorization: Bearer \$OBC_REFRESH_TOKEN\" $URL || true"
+  -- -c "curl -sS --connect-timeout 15 --max-time 60 --retry 10 --retry-delay 6 --retry-connrefused --retry-all-errors -X POST -H \"Authorization: Bearer \$OBC_REFRESH_TOKEN\" $URL || true"
 
 echo "Daily cron machine created. It will POST to $URL every day."

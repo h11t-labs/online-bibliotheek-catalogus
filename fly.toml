@@ -22,7 +22,7 @@ primary_region = "ams"                  # Amsterdam (EU)
   # resumable, zero-downtime); afterwards only new titles are fetched. Set to "0" to
   # pause it.
   OBC_ENRICH = "1"
-  # Weekly refresh is driven by a Fly scheduled (cron) machine that POSTs to
+  # Daily refresh is driven by a Fly scheduled (cron) machine that POSTs to
   # /admin/refresh; the work runs in-process here (normalize streams at ~190MB, so
   # the 512MB VM below is fine). Set the shared secret with:
   #   fly secrets set OBC_REFRESH_TOKEN=$(openssl rand -hex 32)
