@@ -231,6 +231,30 @@ def _reclaim_disk(db_path: Path, raw_dir: Path) -> None:
         pass
 
 
+def _build_similar(conn: sqlite3.Connection) -> None:
+    """Precompute the "meer zoals dit" recommendations into the *temp* DB, before the
+    atomic swap.
+
+    ``book_similar`` is not part of the base schema — it is derived from the finished
+    catalog — so a fresh rebuild never carries it over. Building it here (rather than
+    as a separate step afterwards) means the swap publishes the catalog and its
+    recommendations together: readers never see a new catalog with the strip missing,
+    and a rebuilt PPN set can't leave stale neighbours behind.
+
+    Optional: without the ``recommend`` extra (scikit-learn) the catalog is still
+    perfectly usable, so a missing dependency logs a warning instead of failing the
+    whole refresh."""
+    try:
+        from .similar import METHODS, build_similar
+        for method in METHODS:
+            build_similar(conn, method=method)
+    except ImportError as e:
+        logger.warning(f"[normalize] recommendations skipped ({e}); "
+                       "install the extra with `uv sync --extra recommend`")
+    except Exception as e:  # never let an optional extra abort the rebuild
+        logger.warning(f"[normalize] recommendations failed: {e}")
+
+
 def normalize(raw_dir: Path = RAW_DIR, db_path: Path = db.DEFAULT_DB) -> dict:
     db_path = Path(db_path)
     _reclaim_disk(db_path, raw_dir)
@@ -245,6 +269,7 @@ def normalize(raw_dir: Path = RAW_DIR, db_path: Path = db.DEFAULT_DB) -> dict:
     # stream records in batches — constant memory, no full in-RAM load
     n = db.stream_rebuild(conn, iter_records(paths, aux, canon), lists)
     db.set_book_genre_parents(conn, genre_info)  # per-book genre-hierarchy parent
+    _build_similar(conn)  # into the temp DB, so the swap publishes both at once
     s = db.stats(conn)
     conn.close()
     # Fold the *old* live WAL into its DB and truncate it before the swap, so a
