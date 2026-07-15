@@ -15,7 +15,11 @@ import threading
 
 from ..log import logger
 
-_OBC = ["uv", "run", "obc"]
+# The installed console script, not `uv run obc`: `uv run` re-syncs the env on
+# every call (including the "dev" group), so each refresh step would re-resolve
+# and hit PyPI. Resolved via PATH — the image puts /app/.venv/bin there, and a
+# local `uv run obc serve` exports the same venv to child processes.
+_OBC = ["obc"]
 
 _lock = threading.Lock()  # ensures only one refresh runs at a time
 
