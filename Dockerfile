@@ -18,6 +18,14 @@ RUN uv sync --frozen --no-dev
 # both read OBC_DB.
 ENV OBC_DB=/app/data/catalog.db
 
+# Run straight from the venv built above; do NOT wrap the runtime in `uv run`.
+# `uv run` re-syncs the environment on every invocation and defaults to including
+# the "dev" group, so it re-downloads pytest/ruff/ty at container start — undoing
+# `uv sync --no-dev` and making startup depend on PyPI being reachable (a machine
+# start with no network then fails to boot). This PATH also lets obc.web.scheduler
+# shell out to a bare `obc` for the refresh.
+ENV PATH="/app/.venv/bin:$PATH"
+
 # Fly provides $PORT (fly.toml sets it explicitly).
 #
 # --host '' (empty) is deliberate: it must listen on BOTH stacks.
@@ -32,4 +40,4 @@ ENV OBC_DB=/app/data/catalog.db
 #                     dual-stack despite bindv6only=0; this breaks the edge proxy)
 # Keep this single-process: with --workers/--reload uvicorn binds the socket
 # itself and an empty host would collapse back to IPv4-only.
-CMD ["sh", "-c", "uv run uvicorn obc.web.app:app --host '' --port ${PORT:-8000}"]
+CMD ["sh", "-c", "uvicorn obc.web.app:app --host '' --port ${PORT:-8000}"]
