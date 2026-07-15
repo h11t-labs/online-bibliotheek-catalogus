@@ -14,15 +14,16 @@ def test_format_filter_renders_only_matches(client):
     assert "/book/002" in body  # the audiobook edition is shown
 
 
-def test_dual_edition_cards_show_distinct_format_badges(client):
-    # 001 (e-book) and 002 (audiobook) are the same work under different PPNs; each
-    # card must show its OWN format as the solid badge, not an identical pair of icons
-    # for both cards (which made it unclear why the title appeared twice).
+def test_merged_editions_one_card_links_each_edition(client):
+    # 001 (e-book) and 002 (audiobook) are the same work under different PPNs. Search
+    # collapses them into ONE card: the cover + title open the e-book by default, and
+    # each edition has its own clickable format icon on the right of the cover.
     body = client.get("/?q=ontdekking").text
-    card_001 = body[body.index('href="/book/001"'):body.index('href="/book/001"') + 600]
-    card_002 = body[body.index('href="/book/002"'):body.index('href="/book/002"') + 600]
-    assert 'class="fmt-ic book"' in card_001 and 'class="fmt-ic alt"' in card_001
-    assert 'class="fmt-ic audio"' in card_002 and 'class="fmt-ic alt"' in card_002
+    assert body.count('class="book"') == 1                 # a single merged card
+    assert 'class="cover-link" href="/book/001"' in body   # default select -> e-book
+    assert 'class="fmt-ic ebook"' in body                  # e-book icon...
+    assert 'class="fmt-ic audio"' in body                  # ...and audiobook icon
+    assert 'href="/book/002"' in body                      # audiobook edition reachable
 
 
 def test_suggest(client):

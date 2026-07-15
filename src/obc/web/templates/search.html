@@ -27,7 +27,6 @@
 </div>
 {%- endmacro %}
 
-{% from "_macros.html" import fmt_icons %}
 
 {% block style %}
   .hero{text-align:center;padding:46px 16px 30px}
@@ -84,17 +83,63 @@
   .book:hover{transform:translateY(-4px)}
   .cover{position:relative;aspect-ratio:2/3;border-radius:12px;overflow:hidden;
     background:linear-gradient(145deg,var(--line) 0,var(--bg-soft) 100%);
-    box-shadow:var(--shadow);border:1px solid var(--line)}
+    box-shadow:var(--shadow)}
   .cover img{width:100%;height:100%;object-fit:cover;transition:transform .4s ease}
   .book:hover .cover img{transform:scale(1.05)}
+  /* the whole cover is one big link to the default (e-book) edition; the format icons
+     sit above it (top-right) as their own links, so each edition is one click away
+     without nesting <a> inside <a>. */
+  .cover-link{position:absolute;inset:0;z-index:1}
+  .book .cover .fmt-icons{left:auto;right:8px;z-index:3}   /* icons on the RIGHT, clickable */
+  .book .cover a.fmt-ic{transition:transform .12s ease,filter .12s ease}
+  .book .cover a.fmt-ic:hover{transform:scale(1.12);filter:brightness(1.1)}
   .list-ribbon{position:absolute;left:0;bottom:0;right:0;display:flex;align-items:center;
     gap:5px;padding:6px 9px;font-size:11.5px;font-weight:700;color:#fff;z-index:2;
+    pointer-events:none;   /* clicks fall through to the cover link */
     background:linear-gradient(0deg,rgba(154,59,46,.96),rgba(154,59,46,.7));}
   .list-ribbon svg{width:12px;height:12px;flex:none}
-  .book .t{font-family:var(--serif);font-size:15.5px;line-height:1.25;
-    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .book .a{font-size:13px;color:var(--ink-soft);
-    display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+  .binfo{display:flex;flex-direction:column;gap:3px;min-width:0}
+  /* full title + author, always visible: display:block disables base.html's
+     -webkit-box line-clamp, so they wrap fully instead of truncating to "…". */
+  .book .t{font-family:var(--serif);font-size:17px;line-height:1.28;
+    display:block;overflow:visible;-webkit-line-clamp:none;overflow-wrap:break-word}
+  .book .a{font-size:14px;color:var(--ink-soft);
+    display:block;overflow:visible;-webkit-line-clamp:none;overflow-wrap:break-word}
+  .book-fmts{display:none}   /* grid view: editions shown as the cover overlay instead */
+
+  /* raster / lijst view toggle: two equal rounded-square buttons sized so the whole
+     control is the same height (36px) as the sort dropdowns beside it. */
+  .viewseg{margin:0;padding:3px;gap:3px;border-radius:10px;align-self:center}
+  .viewseg .seg-opt{flex:none;width:32px;height:28px;padding:0;border-radius:7px;
+    display:grid;place-items:center}
+  .viewseg .seg-opt svg{width:15px;height:15px;display:block}
+
+  /* --- LIST view: one row per work — small cover | title+author | edition icons --- */
+  .grid.list{display:flex;flex-direction:column;gap:2px}
+  .grid.list .book{flex-direction:row;align-items:center;gap:18px;padding:10px;
+    border-radius:14px;transition:background .14s ease}
+  .grid.list .book:hover{transform:none;background:var(--card)}
+  .grid.list .cover{width:56px;flex:none}
+  .grid.list .book:hover .cover img{transform:none}
+  .grid.list .fmt-icons{display:none}          /* overlay hidden; icons go on the right */
+  .grid.list .binfo{flex:1;gap:4px}
+  .grid.list .book .t{font-size:20px}
+  .grid.list .book .a{font-size:14.5px}
+  .grid.list .book-fmts{display:grid;grid-template-columns:38px 38px;gap:8px;flex:none;margin-left:auto}
+  .grid.list .book-fmts .fmt-ic{position:static;width:38px;height:38px;border-radius:9px}
+  .grid.list .book-fmts a.fmt-ic:hover{transform:scale(1.06);filter:brightness(1.1)}
+  /* greyed placeholder for a format this work doesn't have (keeps columns aligned) */
+  .book-fmts .fmt-ic.na{background:var(--bg-soft);color:var(--ink-soft);opacity:.35;
+    box-shadow:none;pointer-events:none}
+  /* list view has room for a metadata line (year · language) + an award chip; the
+     big cover ribbon is for the full-size grid cover, so hide it on the thumbnail. */
+  .grid.list .list-ribbon{display:none}
+  .brow{display:none}
+  .grid.list .brow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:5px}
+  .bmeta{font-size:12.5px;color:var(--ink-soft)}
+  .award-chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;
+    color:var(--accent);background:var(--accent-soft);padding:3px 10px;border-radius:999px}
+  .award-chip svg{width:11px;height:11px;flex:none}
 
   .pager{display:flex;gap:8px;align-items:center;justify-content:center;margin:42px 0 0;flex-wrap:wrap}
   .pager a,.pager span{min-width:42px;text-align:center;padding:9px 13px;border-radius:10px;
@@ -186,6 +231,14 @@
         <span class="count"><b>{{ "{:,}".format(total).replace(",", ".") }}</b>
           {{ 'titel' if total==1 else 'titels' }}{% if q %} voor “{{ q }}”{% endif %}</span>
         <div class="toolbar">
+          <div class="seg viewseg" role="group" aria-label="Weergave">
+            <a class="seg-opt {{ 'on' if view != 'list' }}" href="{{ url_with(state, view='grid', page=1) }}" aria-label="Raster" title="Raster">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/></svg>
+            </a>
+            <a class="seg-opt {{ 'on' if view == 'list' }}" href="{{ url_with(state, view='list', page=1) }}" aria-label="Lijst" title="Lijst">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><line x1="3.5" y1="6" x2="3.6" y2="6"/><line x1="3.5" y1="12" x2="3.6" y2="12"/><line x1="3.5" y1="18" x2="3.6" y2="18"/></svg>
+            </a>
+          </div>
           <select class="field" onchange="if(this.value)location.href=this.value" aria-label="Sorteren">
             <option value="{{ url_with(state, sort='added', page=1) }}"     {{ 'selected' if sort=='added' }}>Recent toegevoegd</option>
             <option value="{{ url_with(state, sort='year_desc', page=1) }}" {{ 'selected' if sort=='year_desc' }}>Nieuwste eerst</option>
@@ -209,19 +262,40 @@
       </div>
       {% endif %}
 
+      {# a format icon: a link when the edition exists, else a greyed 'not available'
+         placeholder so the e-book / audiobook columns line up down the list. #}
+      {% macro fmt_ic(fmt, ppn) %}{% set audio = fmt == 'audiobook' %}{% if ppn %}<a class="fmt-ic {{ 'audio' if audio else 'ebook' }}" href="/book/{{ ppn }}" title="{{ 'Luisterboek' if audio else 'E-book' }} — open deze editie"><svg width="15" height="15"><use href="#ic-{{ 'audio' if audio else 'book' }}"/></svg></a>{% else %}<span class="fmt-ic {{ 'audio' if audio else 'ebook' }} na" title="Niet als {{ 'luisterboek' if audio else 'e-book' }} beschikbaar"><svg width="15" height="15"><use href="#ic-{{ 'audio' if audio else 'book' }}"/></svg></span>{% endif %}{% endmacro %}
+
       {% if books %}
-      <div class="grid">
+      <div class="grid{{ ' list' if view == 'list' }}">
         {% for b in books %}
-        <a class="book" href="/book/{{ b['ppn'] }}">
+        {# editions of this work; the card (cover + title) opens the e-book by default,
+           and each format icon links straight to that edition. #}
+        {% set ed = editions_map.get(b['ppn'], {b['format']: b['ppn']}) %}
+        {% set primary_ppn = ed.get('ebook') or b['ppn'] %}
+        {% set bl = lists_map.get(b['ppn']) %}
+        <div class="book">
           <div class="cover">
-            {{ fmt_icons(b['format'], formats_map.get(b['ppn'], [b['format']])) }}
-            {% set bl = lists_map.get(b['ppn']) %}
-            {% if bl %}<span class="list-ribbon"><svg><use href="#ic-award"/></svg>{{ bl[0].name }}{% if bl[0].year %} {{ bl[0].year }}{% elif bl[0].position %} #{{ bl[0].position }}{% endif %}</span>{% endif %}
             <img loading="lazy" src="{{ b['cover_url']|coverw(400) }}" alt="">
+            <a class="cover-link" href="/book/{{ primary_ppn }}" aria-label="{{ b['title'] }}"></a>
+            {# grid view: icons overlaid top-right of the cover #}
+            <div class="fmt-icons">{% for fmt in ['ebook', 'audiobook'] if fmt in ed %}{{ fmt_ic(fmt, ed[fmt]) }}{% endfor %}</div>
+            {% if bl %}<span class="list-ribbon"><svg><use href="#ic-award"/></svg>{{ bl[0].name }}{% if bl[0].year %} {{ bl[0].year }}{% elif bl[0].position %} #{{ bl[0].position }}{% endif %}</span>{% endif %}
           </div>
-          <span class="t">{{ b['title'] or '—' }}</span>
-          <span class="a">{{ b['author'] or '' }}</span>
-        </a>
+          <div class="binfo">
+            <a class="t" href="/book/{{ primary_ppn }}">{{ b['title'] or '—' }}</a>
+            {% if b['author'] %}<span class="a">{{ b['author'] }}</span>{% endif %}
+            {% if b['year'] or b['language'] or bl %}
+            <div class="brow">
+              {% if b['year'] or b['language'] %}<span class="bmeta">{{ b['year'] or '' }}{% if b['year'] and b['language'] %} · {% endif %}{{ b['language'] or '' }}</span>{% endif %}
+              {% if bl %}<span class="award-chip"><svg><use href="#ic-award"/></svg>{{ bl[0].name }}{% if bl[0].year %} {{ bl[0].year }}{% elif bl[0].position %} #{{ bl[0].position }}{% endif %}</span>{% endif %}
+            </div>
+            {% endif %}
+          </div>
+          {# list view: e-book + audiobook, each in its own column (greyed when the
+             work has no such edition) so the icons line up down the list #}
+          <div class="book-fmts">{% for fmt in ['ebook', 'audiobook'] %}{{ fmt_ic(fmt, ed.get(fmt)) }}{% endfor %}</div>
+        </div>
         {% endfor %}
       </div>
 
@@ -290,7 +364,7 @@
       const res = await fetch(nextUrl);
       if (!res.ok) throw new Error(res.status);
       const doc = new DOMParser().parseFromString(await res.text(), "text/html");
-      doc.querySelectorAll(".grid > a.book")
+      doc.querySelectorAll(".grid > .book")
          .forEach((c) => grid.appendChild(document.importNode(c, true)));
       const nl = doc.querySelector(".pager a[rel=next]");
       nextUrl = nl ? nl.href : null;

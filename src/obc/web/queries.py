@@ -149,7 +149,14 @@ def _build_where(f: SearchFilters) -> tuple[list[str], list]:
 def search(conn: sqlite3.Connection, f: SearchFilters, page: int,
            page_size: int) -> SearchResult:
     """Run a filtered + ranked search and return one page of rows plus the
-    total match count. FTS5 ``bm25`` ranking is weighted toward title/author."""
+    total match count. FTS5 ``bm25`` ranking is weighted toward title/author.
+
+    E-book and audiobook editions of the *same work* (shared title+author) are
+    collapsed into a single result — one row per work — so a title never appears
+    twice. (Skipped when the user filters to a specific format: every work then has
+    only that one edition anyway.) The card still shows both format badges via
+    :func:`formats_map`. When a format filter *is* set we keep the plain per-edition
+    path (cheaper, and there is nothing to merge)."""
     where, params = _build_where(f)
 
     joins = ""
@@ -164,6 +171,14 @@ def search(conn: sqlite3.Connection, f: SearchFilters, page: int,
             # over ALL declared columns): ppn, title, author, subjects, summary.
             order = "bm25(books_fts, 0.0, 10.0, 6.0, 2.0, 1.0)"
 
+    # Collapse editions by keeping only each work's primary edition (a flag stamped
+    # once at normalize time — see db.set_primary_editions). This is a plain indexed
+    # WHERE, so the hot browse query stays fast (no per-request window sort). A format
+    # filter turns it off: every work then has only that one edition anyway. Tolerate a
+    # catalog built before the column (the window right after a schema-changing deploy).
+    if not f.format and _has_primary_edition(conn):
+        where.append("b.primary_edition = 1")
+
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     total = conn.execute(
         f"SELECT COUNT(*) FROM books b {joins} {where_sql}", params).fetchone()[0]
@@ -173,6 +188,13 @@ def search(conn: sqlite3.Connection, f: SearchFilters, page: int,
         f"ORDER BY {order} LIMIT ? OFFSET ?",
         [*params, page_size, offset]).fetchall()
     return SearchResult(rows=rows, total=total)
+
+
+def _has_primary_edition(conn: sqlite3.Connection) -> bool:
+    """True if books.primary_edition exists (catalogs built before edition-merge lack
+    it — then search falls back to listing every edition until the next rebuild)."""
+    return any(r[1] == "primary_edition"
+               for r in conn.execute("PRAGMA table_info(books)"))
 
 
 def total_books(conn: sqlite3.Connection) -> int:
@@ -198,6 +220,28 @@ def formats_map(conn: sqlite3.Connection, rows) -> dict[str, list[str]]:
     for r in rows:
         key = ((r["title"] or "").lower(), (r["author"] or "").lower())
         out[r["ppn"]] = sorted(f for f in by_work.get(key, {r["format"]}) if f)
+    return out
+
+
+def editions_map(conn: sqlite3.Connection, rows) -> dict[str, dict[str, str]]:
+    """Map each row's ppn -> ``{format: ppn}`` for every edition of its *work*, so a
+    merged search card can link the e-book / audiobook icons straight to the right
+    edition. When a work has two editions of one format (rare) the lower PPN wins."""
+    titles = list({r["title"] for r in rows if r["title"]})
+    by_work: dict[tuple, dict[str, str]] = {}
+    if titles:
+        qmarks = ",".join("?" * len(titles))
+        for r in conn.execute(
+                f"SELECT ppn, title, author, format FROM books WHERE title IN ({qmarks}) "
+                "ORDER BY ppn", titles):
+            if not r["format"]:
+                continue
+            key = ((r["title"] or "").lower(), (r["author"] or "").lower())
+            by_work.setdefault(key, {}).setdefault(r["format"], r["ppn"])
+    out = {}
+    for r in rows:
+        key = ((r["title"] or "").lower(), (r["author"] or "").lower())
+        out[r["ppn"]] = by_work.get(key) or {r["format"]: r["ppn"]}
     return out
 
 
@@ -255,12 +299,16 @@ def suggest(conn: sqlite3.Connection, q: str, limit: int = 7) -> dict | None:
     # Unscoped (not title-only) so a match in subjects/keywords/summary/author also
     # surfaces a book here — e.g. a search term that's only in "Trefwoorden" used to
     # show nothing in the live dropdown even though the full search page found it.
-    # Same bm25 weights as the main search, so title hits still rank first.
+    # Same bm25 weights as the main search, so title hits still rank first. The
+    # primary_edition filter collapses e-book+audiobook of one work (like the results
+    # page) so a title never shows up twice in the dropdown.
     # first weight = the UNINDEXED ppn column (ppn, title, author, subjects, summary).
+    prim = " AND b.primary_edition = 1" if _has_primary_edition(conn) else ""
     title_rows = conn.execute(
         "SELECT b.ppn, b.title, b.author, b.cover_url, b.format "
         "FROM books_fts ft JOIN books b ON b.ppn = ft.ppn "
-        "WHERE books_fts MATCH ? ORDER BY bm25(books_fts, 0.0, 10.0, 6.0, 2.0, 1.0) LIMIT ?",
+        f"WHERE books_fts MATCH ?{prim} "
+        "ORDER BY bm25(books_fts, 0.0, 10.0, 6.0, 2.0, 1.0) LIMIT ?",
         (fts_match(q), limit)).fetchall()
     like = f"%{fold(q)}%"
     authors = [r["name"] for r in conn.execute(
@@ -364,6 +412,26 @@ def series_books(conn: sqlite3.Connection, name: str) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT b.* FROM books b WHERE b.series = ? "
         "ORDER BY b.series_no, b.year LIMIT 300", (name,)).fetchall()
+
+
+def similar_books(conn: sqlite3.Connection, ppn: str, method: str = "lsa",
+                  limit: int = 20) -> list[sqlite3.Row]:
+    """"Meer zoals dit": precomputed LSA neighbours for a book (see obc.similar).
+
+    Returns display rows ordered by similarity, or an empty list if the table isn't
+    built yet — the page just omits the strip.
+    """
+    limit = _limit(limit, 20, 30)
+    try:
+        return conn.execute(
+            "SELECT b.ppn, b.title, b.author, b.cover_url, b.format, s.score "
+            "FROM book_similar s JOIN books b ON b.ppn = s.other_ppn "
+            "WHERE s.book_ppn = ? AND s.method = ? ORDER BY s.rank LIMIT ?",
+            (ppn, method, limit)).fetchall()
+    except sqlite3.OperationalError as exc:  # table absent -> feature not built yet
+        if "book_similar" not in str(exc) and "method" not in str(exc):
+            raise
+        return []
 
 
 # --------------------------------------------------------------------------- #

@@ -7,7 +7,7 @@
 <div class="fmt-icons">
   {% for f in ['ebook', 'audiobook'] %}
     {% if f == own_format %}
-    <span class="fmt-ic {{ 'audio' if f == 'audiobook' else 'book' }}"
+    <span class="fmt-ic {{ 'audio' if f == 'audiobook' else 'ebook' }}"
           title="{{ 'Luisterboek' if f == 'audiobook' else 'E-book' }}">
       <svg width="15" height="15"><use href="#ic-{{ 'audio' if f == 'audiobook' else 'book' }}"/></svg>
     </span>

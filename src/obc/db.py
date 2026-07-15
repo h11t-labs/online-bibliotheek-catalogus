@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS books (
     age               TEXT,            -- reading age, e.g. "9-12 jaar" (detail page)
     keywords          TEXT,            -- free keyword tags (detail page)
     category          TEXT,            -- 'fictie' | 'nonfictie'
+    primary_edition   INTEGER,         -- 1 = this work's representative edition (search dedup)
     raw_json          TEXT,
     scraped_at        TEXT
 );
@@ -141,6 +142,7 @@ CREATE INDEX IF NOT EXISTS idx_books_ereader  ON books(ereader);
 CREATE INDEX IF NOT EXISTS idx_books_title     ON books(title);
 CREATE INDEX IF NOT EXISTS idx_books_added     ON books(added_rank);
 CREATE INDEX IF NOT EXISTS idx_books_series     ON books(series);
+CREATE INDEX IF NOT EXISTS idx_books_primary     ON books(primary_edition);
 -- case-insensitive (title, author) for the "other editions of this work" lookup on
 -- every book page — without it that query full-scans all books (≈4s on Fly's shared CPU)
 CREATE INDEX IF NOT EXISTS idx_books_title_author_lower
@@ -294,6 +296,22 @@ def _insert_fts(cur: sqlite3.Cursor, records: list[dict[str, Any]]) -> None:
         [_fts_values(r) for r in records if r.get("ppn")])
 
 
+def set_primary_editions(cur: sqlite3.Cursor) -> None:
+    """Stamp ``books.primary_edition``: 1 for each *work's* representative edition, 0
+    for the others. A "work" is a (title, author) pair; the representative is the
+    e-book if one exists, else the lowest PPN. Search collapses e-book+audiobook of one
+    work by keeping only ``primary_edition = 1`` — a plain indexed filter, so the hot
+    browse query needs no per-request window sort. Run once, after all books are
+    inserted, on every full rebuild."""
+    cur.execute("UPDATE books SET primary_edition = 0")
+    cur.execute(
+        "UPDATE books SET primary_edition = 1 WHERE ppn IN ("
+        "  SELECT ppn FROM (SELECT ppn, ROW_NUMBER() OVER ("
+        "    PARTITION BY lower(title), lower(COALESCE(author, '')) "
+        "    ORDER BY (CASE WHEN format = 'ebook' THEN 0 ELSE 1 END), ppn) AS rn "
+        "  FROM books) WHERE rn = 1)")
+
+
 def bulk_load(conn: sqlite3.Connection, records: Iterable[dict[str, Any]],
               lists: list[dict] | None = None) -> int:
     """Fast full rebuild: truncate then batch-insert everything.
@@ -319,6 +337,7 @@ def bulk_load(conn: sqlite3.Connection, records: Iterable[dict[str, Any]],
     _insert_facets(cur, records)
     _insert_lists(cur, lists or [])
     _insert_fts(cur, records)
+    set_primary_editions(cur)
     conn.commit()
     return n
 
@@ -408,6 +427,7 @@ def stream_rebuild(conn: sqlite3.Connection, records: Iterable[dict[str, Any]],
     cur.executemany("INSERT INTO languages(name, name_fold, n) VALUES (?, ?, ?)",
                     [(lg, fold(lg), c) for lg, c in lang_counts.items()])
     _insert_lists(cur, lists or [])
+    set_primary_editions(cur)
     conn.commit()
     return n
 

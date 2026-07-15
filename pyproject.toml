@@ -16,6 +16,12 @@ dependencies = [
     "loguru>=0.7.3",
 ]
 
+[project.optional-dependencies]
+# "meer zoals dit" recommendations (obc similar). Only the offline precompute
+# imports scikit-learn; the web app (serve) never does, so the runtime stays lean.
+# Install with: uv sync --extra recommend
+recommend = ["scikit-learn>=1.4"]
+
 [project.scripts]
 obc = "obc.cli:main"
 
