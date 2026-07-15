@@ -19,7 +19,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv sync --frozen
+      # --extra recommend: scikit-learn backs the "meer zoals dit" build. Without it
+      # ty can't resolve the (optional, try/except-guarded) sklearn imports, and the
+      # recommender's tests importorskip themselves into silence.
+      - run: uv sync --frozen --extra recommend
       - run: uv run pytest -q
       - run: uv run ruff check src tests
       - run: uv run ty check src
