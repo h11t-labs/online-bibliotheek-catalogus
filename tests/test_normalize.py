@@ -44,6 +44,46 @@ def raw(tmp_path, monkeypatch):
     return tmp_path
 
 
+def test_normalize_publishes_recommendations_with_the_swap(tmp_path, monkeypatch):
+    """``book_similar`` is derived from the finished catalog, so it is not in the base
+    schema and a rebuild never carries it over — and normalize swaps a freshly built
+    temp DB over the live file. It must therefore build the recommendations *before*
+    that swap: otherwise every nightly refresh would silently publish a catalog whose
+    "meer zoals dit" strip is gone (the queries fall back to empty), and it would only
+    come back if someone ran `obc similar` by hand.
+    """
+    pytest.importorskip("sklearn")
+    rec = tmp_path / "records"
+    # two thrillers + two cookbooks: pairs share subjects/summary words, so min_df=2
+    # keeps real vocabulary and the reduced space has an actual neighbour to find
+    books = [
+        ("Nacht in Parijs", "Spanning & Thrillers",
+         "Een rechercheur jaagt in Parijs op een moordenaar"),
+        ("Schaduw in Parijs", "Spanning & Thrillers",
+         "Een rechercheur zoekt in Parijs een moordenaar"),
+        ("Koken met vuur", "Koken & Eten", "Recepten voor de barbecue met vuur en rook"),
+        ("Vuur en rook", "Koken & Eten", "Barbecue recepten met rook en vuur"),
+    ]
+    for i, (title, subject, summary) in enumerate(books, start=1):
+        _write(rec / f"{i}.json",
+               {"ppn": str(i), "title": title, "author": f"Auteur {i}",
+                "format": "ebook", "language": "Nederlands",
+                "subjects": [subject], "summary": summary})
+    for name in ("EREADER_FILE", "GENRES_FILE", "RECENT_FILE"):
+        monkeypatch.setattr(normalize, name, tmp_path / f"{name.lower()}.json")
+    monkeypatch.setattr(normalize, "LISTS_DIR", tmp_path / "lists")
+
+    db_path = tmp_path / "catalog.db"
+    normalize.normalize(raw_dir=tmp_path, db_path=db_path)
+
+    conn = db.connect(db_path)
+    try:
+        rows = conn.execute("SELECT COUNT(*) FROM book_similar").fetchone()[0]
+    finally:
+        conn.close()
+    assert rows > 0, "normalize must publish book_similar together with the catalog"
+
+
 def _enrich(raw):
     """Run the read-only half of the pipeline; return (records, by_isbn, by_key)."""
     paths = sorted((raw / "records").rglob("*.json"))

@@ -6,13 +6,15 @@ COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /uvx /bin/
 
 WORKDIR /app
 
-# Install dependencies first (better layer caching)
+# Install dependencies first (better layer caching). --extra recommend pulls
+# scikit-learn: the nightly normalize builds the "meer zoals dit" recommendations,
+# and without it that step is skipped (see normalize._build_similar).
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project --extra recommend
 
 # Then the source + editable install of the project
 COPY . .
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra recommend
 
 # Catalog DB lives on the mounted volume (see DEPLOY.md). The web app and CLI
 # both read OBC_DB.

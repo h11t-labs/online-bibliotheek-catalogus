@@ -52,3 +52,9 @@ primary_region = "ams"                  # Amsterdam (EU)
 [[vm]]
   size = "shared-cpu-1x"
   memory = "512mb"
+  # The nightly refresh builds the recommendations in this machine (the volume only
+  # attaches here). Its Truncated-SVD peaks at ~1.1GB — measured on the 64k catalog —
+  # which 512mb of RAM can't hold. Swap absorbs that peak instead of paying for a
+  # bigger always-on VM: it's a once-a-day batch step, so the paging cost lands on a
+  # job nobody is waiting for. Serving itself stays comfortably within RAM.
+  swap_size_mb = 1024

@@ -34,8 +34,9 @@ def test_book_detail_tolerates_pre_hierarchy_schema(tmp_path):
 
 
 def test_browse_all_newest_first(ro_conn):
+    # 6 editions but 001+002 are one work (e-book+audiobook) -> merged to 5 results
     res = Q.search(ro_conn, Q.SearchFilters(sort="year_desc"), 1, 50)
-    assert res.total == 6
+    assert res.total == 5
     years = [r["year"] for r in res.rows]
     assert years == sorted(years, reverse=True)
 
@@ -46,8 +47,9 @@ def test_format_filter(ro_conn):
 
 
 def test_fts_query_matches_title_and_summary(ro_conn):
+    # both editions match, but they are one work -> merged to the e-book representative
     res = Q.search(ro_conn, Q.SearchFilters(q="ontdekking", sort="relevance"), 1, 50)
-    assert _ppns(res) == {"001", "002"}
+    assert _ppns(res) == {"001"}
 
 
 def test_fts_folds_diacritics(ro_conn):
@@ -58,7 +60,7 @@ def test_fts_folds_diacritics(ro_conn):
 def test_language_and_year_filters(ro_conn):
     assert _ppns(Q.search(ro_conn, Q.SearchFilters(languages=("Engels",)), 1, 50)) == {"003"}
     res = Q.search(ro_conn, Q.SearchFilters(year_from=2020, year_to=2021), 1, 50)
-    assert _ppns(res) == {"001", "002"}
+    assert _ppns(res) == {"001"}  # 001+002 are one work -> merged
 
 
 def test_ereader_author_genre_list_filters(ro_conn):
@@ -72,7 +74,7 @@ def test_ereader_author_genre_list_filters(ro_conn):
 def test_pagination(ro_conn):
     page1 = Q.search(ro_conn, Q.SearchFilters(sort="title"), 1, 2)
     page2 = Q.search(ro_conn, Q.SearchFilters(sort="title"), 2, 2)
-    assert page1.total == 6
+    assert page1.total == 5  # 6 editions, 001+002 merged into one work
     assert len(page1.rows) == 2
     assert _ppns(page1).isdisjoint(_ppns(page2))
 
@@ -246,12 +248,15 @@ def test_relevance_weights_subjects_above_summary(tmp_path):
     filler_subj, filler_summ = "vulonderwerp", "vulsamenvatting korte zin"
     # SUM inserted first (lower rowid): on the tied old weights it sorts ahead,
     # which is exactly the wrong order the fix corrects.
+    # distinct authors (same token length) so the edition-merge keeps them as two
+    # separate works — the term lives in subjects/summary, never the author, so bm25
+    # length-normalisation stays identical and only the column weight breaks the tie.
     recs = [
-        {"ppn": "SUM", "title": "Zelfde titel", "author": "Zelfde Auteur",
-         "authors": ["Zelfde Auteur"], "format": "ebook", "language": "Nederlands",
+        {"ppn": "SUM", "title": "Zelfde titel", "author": "Auteur Aaa",
+         "authors": ["Auteur Aaa"], "format": "ebook", "language": "Nederlands",
          "subjects": [filler_subj], "summary": f"{filler_summ} {term}"},
-        {"ppn": "SUB", "title": "Zelfde titel", "author": "Zelfde Auteur",
-         "authors": ["Zelfde Auteur"], "format": "ebook", "language": "Nederlands",
+        {"ppn": "SUB", "title": "Zelfde titel", "author": "Auteur Bbb",
+         "authors": ["Auteur Bbb"], "format": "ebook", "language": "Nederlands",
          "subjects": [filler_subj, term], "summary": filler_summ},
     ]
     # ~20 fillers so the term isn't in every row (bm25 IDF is 0 otherwise).

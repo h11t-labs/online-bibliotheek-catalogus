@@ -30,6 +30,51 @@
   .meta .r{display:grid;grid-template-columns:170px 1fr;gap:16px;padding:11px 0;border-bottom:1px solid var(--line)}
   .meta .k{color:var(--ink-soft);font-size:14px}
   .meta .v{font-size:15px}
+  /* "Meer zoals dit" — LSA content-based recommendations (obc.similar), a
+     horizontally-scrolling strip of small covers (images lazy-load as you scroll). */
+  .similar{margin-top:56px;border-top:1px solid var(--line);padding-top:28px}
+  .similar h2{font-family:var(--serif);font-size:23px;margin:0}
+  .similar .sub{color:var(--ink-soft);font-size:13.5px;margin:6px 0 18px}
+  .simstrip{position:relative}
+  .simscroll{display:flex;gap:18px;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x proximity;
+    padding:2px 4px 14px 0;margin:0 -4px;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent;
+    -webkit-overflow-scrolling:touch}
+  .simscroll::-webkit-scrollbar{height:8px}
+  .simscroll::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:99px}
+  .simscroll::-webkit-scrollbar-track{background:transparent}
+  /* min-width:0 keeps a card at its 108px basis even after its cover image loads —
+     without it flex-shrink:0 + min-width:auto lets the card grow to the image's
+     intrinsic width. */
+  .simcard{flex:0 0 108px;min-width:0;scroll-snap-align:start;display:flex;flex-direction:column;gap:7px}
+  /* edge fades: a gradient over the last/first covers so it's clear there's more to
+     scroll; shown only when scrollable that way (JS toggles .can-left/.can-right). */
+  .simstrip::before,.simstrip::after{content:"";position:absolute;top:0;bottom:16px;width:70px;
+    pointer-events:none;opacity:0;transition:opacity .2s ease;z-index:2}
+  .simstrip::before{left:-4px;background:linear-gradient(90deg,var(--bg) 30%,transparent)}
+  .simstrip::after{right:-4px;background:linear-gradient(270deg,var(--bg) 30%,transparent)}
+  .simstrip.can-left::before{opacity:1}
+  .simstrip.can-right::after{opacity:1}
+  /* click arrows (in addition to scrolling); centered on the cover row */
+  .simnav{position:absolute;top:83px;transform:translateY(-50%);z-index:3;width:40px;height:40px;
+    display:grid;place-items:center;border-radius:50%;cursor:pointer;color:var(--ink);
+    background:var(--card);border:1px solid var(--line-strong);box-shadow:0 4px 16px rgba(0,0,0,.28);
+    opacity:0;pointer-events:none;transition:opacity .2s ease,color .12s ease,border-color .12s ease}
+  .simnav:hover{color:var(--accent);border-color:var(--accent)}
+  .simnav.prev{left:-14px}
+  .simnav.next{right:-14px}
+  .simstrip.can-left .simnav.prev{opacity:1;pointer-events:auto}
+  .simstrip.can-right .simnav.next{opacity:1;pointer-events:auto}
+  .simcover{position:relative;aspect-ratio:2/3;border-radius:9px;overflow:hidden;
+    box-shadow:var(--shadow);background:linear-gradient(145deg,var(--line),var(--bg-soft))}
+  .simcover img{width:100%;height:100%;object-fit:cover;transition:transform .4s ease}
+  .simcard:hover .simcover img{transform:scale(1.05)}
+  .simcover .fmt-icons{left:6px;top:6px}
+  .simcover .fmt-ic{width:20px;height:20px}
+  .simcover .fmt-ic svg{width:11px;height:11px}
+  .simt{font-family:var(--serif);font-size:12.5px;line-height:1.25;color:var(--ink);
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .simcard:hover .simt{color:var(--accent)}
+  .sima{font-size:11px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   @media (max-width:720px){
     .detail{grid-template-columns:1fr;gap:24px}
     /* hero pattern: cover + CTA centered as a group; reading content below stays left-aligned */
@@ -47,7 +92,7 @@
     <div class="poster">
       <div class="cover">
         <div class="fmt-icons">
-          {% if 'ebook' in editions %}<span class="fmt-ic book" title="E-book"><svg width="15" height="15"><use href="#ic-book"/></svg></span>{% endif %}
+          {% if 'ebook' in editions %}<span class="fmt-ic ebook" title="E-book"><svg width="15" height="15"><use href="#ic-book"/></svg></span>{% endif %}
           {% if 'audiobook' in editions %}<span class="fmt-ic audio" title="Luisterboek"><svg width="15" height="15"><use href="#ic-audio"/></svg></span>{% endif %}
         </div>
         <img src="{{ b['cover_url']|coverw(600) }}" alt="Omslag van {{ b['title'] }}">
@@ -109,5 +154,58 @@
       </div>
     </div>
   </article>
+
+  {% macro simcard(s) %}
+  <a class="simcard" href="/book/{{ s['ppn'] }}" title="{{ s['title'] }}{% if s['author'] %} — {{ s['author'] }}{% endif %}">
+    <div class="simcover">
+      <div class="fmt-icons">
+        <span class="fmt-ic {{ 'audio' if s['format']=='audiobook' else 'ebook' }}" title="{{ 'Luisterboek' if s['format']=='audiobook' else 'E-book' }}">
+          <svg width="15" height="15"><use href="#ic-{{ 'audio' if s['format']=='audiobook' else 'book' }}"/></svg>
+        </span>
+      </div>
+      <img loading="lazy" src="{{ s['cover_url']|coverw(300) }}" alt="Omslag van {{ s['title'] }}">
+    </div>
+    <span class="simt">{{ s['title'] or '—' }}</span>
+    <span class="sima">{{ s['author'] or '' }}</span>
+  </a>
+  {% endmacro %}
+
+  {% if similar %}
+  <section class="similar">
+    <h2>Meer zoals dit</h2>
+    <p class="sub">Op basis van onderwerp, genre en beschrijving.</p>
+    <div class="simstrip">
+      <div class="simscroll">
+        {% for s in similar %}{{ simcard(s) }}{% endfor %}
+      </div>
+      <button type="button" class="simnav prev" aria-label="Vorige suggesties">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      <button type="button" class="simnav next" aria-label="Volgende suggesties">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
+  </section>
+  <script>
+  (function () {
+    const strip = document.querySelector('.simscroll');
+    if (!strip) return;
+    const wrap = strip.closest('.simstrip');
+    const prev = wrap.querySelector('.simnav.prev');
+    const next = wrap.querySelector('.simnav.next');
+    const step = () => Math.max(strip.clientWidth * 0.8, 240);
+    function update() {
+      const max = strip.scrollWidth - strip.clientWidth;
+      wrap.classList.toggle('can-left', strip.scrollLeft > 4);
+      wrap.classList.toggle('can-right', strip.scrollLeft < max - 4);
+    }
+    prev.addEventListener('click', () => strip.scrollBy({ left: -step(), behavior: 'smooth' }));
+    next.addEventListener('click', () => strip.scrollBy({ left: step(), behavior: 'smooth' }));
+    strip.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    update();
+  })();
+  </script>
+  {% endif %}
 </main>
 {% endblock %}

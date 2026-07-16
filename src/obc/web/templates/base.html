@@ -183,7 +183,10 @@
       background:rgba(20,15,10,.62);backdrop-filter:blur(3px);color:#fff;
       box-shadow:0 2px 8px rgba(0,0,0,.3)}
     .fmt-ic svg{width:15px;height:15px;display:block}
-    .fmt-ic.book{background:rgba(154,59,46,.85)}
+    /* the book glyph's visual mass sits right of centre (thin spine left, solid cover
+       right); nudge it back a hair so it looks centred in the filled format squares */
+    .fmt-ic.ebook > svg,.ac-fmt-btn.ebook > svg{transform:translateX(-0.75px)}
+    .fmt-ic.ebook{background:rgba(154,59,46,.85)}
     .fmt-ic.audio{background:rgba(184,137,59,.9)}
     /* "this work also exists as X" hint — dim so it reads as secondary, not the
        card's own format (which keeps the solid colour above) */
@@ -262,16 +265,24 @@
       cursor:pointer;color:var(--ink);transition:background .13s ease}
     .ac-item:hover,.ac-item.active{background:var(--accent-soft)}
     .ac-item img{width:54px;height:79px;object-fit:cover;border-radius:8px;flex:none;background:var(--line)}
-    /* which edition (e-book / audiobook) this suggestion is — a small corner badge
-       inset within the thumbnail (like .fmt-icons on the grid cards). */
     .ac-cover{position:relative;flex:none;line-height:0}
     .ac-cover img{box-shadow:var(--shadow)}
-    .ac-fmt{position:absolute;right:3px;bottom:3px;width:20px;height:20px;border-radius:6px;
-      display:flex;align-items:center;justify-content:center;color:#fff}
-    .ac-fmt svg{width:11px;height:11px;display:block;flex:none}
-    .ac-fmt.book{background:rgba(154,59,46,.92)}
-    .ac-fmt.audio{background:rgba(184,137,59,.95)}
-    .ac-item .meta{min-width:0}
+    /* per-edition format icons on the RIGHT of a title suggestion: each opens that
+       edition (the row itself opens the e-book). Fixed 2-column grid so the e-book
+       icon and the audiobook icon each keep their own column and line up down the
+       list — an absent edition shows a greyed placeholder in its column. */
+    .ac-fmts{margin-left:auto;display:grid;grid-template-columns:36px 36px;gap:8px;flex:none}
+    .ac-fmt-btn{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;
+      color:#fff;cursor:pointer;transition:transform .12s ease,filter .12s ease}
+    .ac-fmts .ac-fmt-btn.na{background:var(--bg-soft);color:var(--ink-soft);opacity:.35;
+      cursor:default;pointer-events:none}
+    .ac-fmt-btn svg{width:15px;height:15px;display:block}
+    .ac-fmt-btn.ebook{background:rgba(154,59,46,.92)}
+    .ac-fmt-btn.audio{background:rgba(184,137,59,.95)}
+    .ac-fmt-btn:hover{transform:scale(1.08);filter:brightness(1.12)}
+    /* own class (not .meta) so a page's scoped `.meta` rule — e.g. the book detail
+       table's border-top — never leaks onto the autocomplete rows */
+    .ac-item .ac-meta{min-width:0}
     .ac-item .t{font-family:var(--serif);font-size:22px;line-height:1.15;white-space:nowrap;
       overflow:hidden;text-overflow:ellipsis}
     .ac-item .a{font-size:15.5px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;
@@ -299,7 +310,7 @@
     .book:hover{transform:translateY(-4px)}
     .book .cover{position:relative;aspect-ratio:2/3;border-radius:12px;overflow:hidden;
       background:linear-gradient(145deg,var(--line) 0,var(--bg-soft) 100%);
-      box-shadow:var(--shadow);border:1px solid var(--line)}
+      box-shadow:var(--shadow)}
     .book .cover img{width:100%;height:100%;object-fit:cover;transition:transform .4s ease}
     .book:hover .cover img{transform:scale(1.05)}
     .book .t{font-family:var(--serif);font-size:15.5px;line-height:1.25;
@@ -548,48 +559,59 @@
       if(d.titles&&d.titles.length){
         html+=group('Titels');
         d.titles.forEach(t=>{ items.push({kind:'title',ppn:t.ppn});
-          const audio=t.format==='audiobook';
+          const ed=t.editions||{};
+          const fmts=['ebook','audiobook'].map(f=>{ const audio=f==='audiobook';
+            return ed[f]
+              ? `<span class="ac-fmt-btn ${audio?'audio':'ebook'}" data-ppn="${ed[f]}"
+                  title="${audio?'Luisterboek':'E-book'} — open deze editie">
+                  <svg width="14" height="14"><use href="#ic-${audio?'audio':'book'}"/></svg></span>`
+              : `<span class="ac-fmt-btn na ${audio?'audio':'ebook'}" title="Niet als ${audio?'luisterboek':'e-book'} beschikbaar">
+                  <svg width="14" height="14"><use href="#ic-${audio?'audio':'book'}"/></svg></span>`; }).join('');
           html+=`<div class="ac-item" data-i="${items.length-1}">
-            <span class="ac-cover"><img loading="lazy" src="${esc(t.cover_url)}" alt="">
-            <span class="ac-fmt ${audio?'audio':'book'}" title="${audio?'Luisterboek':'E-book'}">
-              <svg width="11" height="11"><use href="#ic-${audio?'audio':'book'}"/></svg></span></span>
-            <div class="meta"><div class="t">${esc(t.title||'—')}</div>
-            <div class="a">${esc(t.author||'')}</div></div></div>`; });
+            <span class="ac-cover"><img loading="lazy" src="${esc(t.cover_url)}" alt=""></span>
+            <div class="ac-meta"><div class="t">${esc(t.title||'—')}</div>
+            <div class="a">${esc(t.author||'')}</div></div>
+            <div class="ac-fmts">${fmts}</div></div>`; });
       }
       if(d.authors&&d.authors.length){
         html+=group('Auteurs');
         d.authors.forEach(a=>{ items.push({kind:'author',value:a});
           html+=`<div class="ac-item compact" data-i="${items.length-1}">
-            ${icon('author')}<div class="meta"><div class="t">${esc(a)}</div></div></div>`; });
+            ${icon('author')}<div class="ac-meta"><div class="t">${esc(a)}</div></div></div>`; });
       }
       if(d.publishers&&d.publishers.length){
         html+=group('Uitgevers');
         d.publishers.forEach(p=>{ items.push({kind:'publisher',value:p});
           html+=`<div class="ac-item compact" data-i="${items.length-1}">
-            ${icon('publisher')}<div class="meta"><div class="t">${esc(p)}</div></div></div>`; });
+            ${icon('publisher')}<div class="ac-meta"><div class="t">${esc(p)}</div></div></div>`; });
       }
       if(d.genres&&d.genres.length){
         html+=group('Genres');
         d.genres.forEach(g=>{ items.push({kind:'genre',value:g});
           html+=`<div class="ac-item compact" data-i="${items.length-1}">
-            ${icon('genre')}<div class="meta"><div class="t">${esc(g)}</div></div></div>`; });
+            ${icon('genre')}<div class="ac-meta"><div class="t">${esc(g)}</div></div></div>`; });
       }
       if(d.languages&&d.languages.length){
         html+=group('Talen');
         d.languages.forEach(l=>{ items.push({kind:'language',value:l});
           html+=`<div class="ac-item compact" data-i="${items.length-1}">
-            ${icon('lang')}<div class="meta"><div class="t">${esc(l)}</div></div></div>`; });
+            ${icon('lang')}<div class="ac-meta"><div class="t">${esc(l)}</div></div></div>`; });
       }
       if(d.lists&&d.lists.length){
         html+=group('Lijsten');
         d.lists.forEach(l=>{ items.push({kind:'list',value:l.slug});
           html+=`<div class="ac-item compact" data-i="${items.length-1}">
-            ${icon('list')}<div class="meta"><div class="t">${esc(l.name)}</div></div></div>`; });
+            ${icon('list')}<div class="ac-meta"><div class="t">${esc(l.name)}</div></div></div>`; });
       }
       if(!items.length){ noResults(input.value.trim()); return; }
       panel.innerHTML=html; active=-1;
       panel.querySelectorAll('.ac-item').forEach(el=>{
         el.addEventListener('mousedown',e=>{e.preventDefault();go(items[+el.dataset.i]);});
+      });
+      // available-edition icons open their own edition (greyed 'na' ones aren't clickable)
+      panel.querySelectorAll('.ac-fmt-btn[data-ppn]').forEach(btn=>{
+        btn.addEventListener('mousedown',e=>{e.preventDefault();e.stopPropagation();
+          location.href='/book/'+btn.dataset.ppn;});
       });
     }
     function highlight(){ panel.querySelectorAll('.ac-item').forEach((el,i)=>{

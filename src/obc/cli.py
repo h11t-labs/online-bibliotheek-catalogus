@@ -49,6 +49,12 @@ def main(argv: list[str] | None = None) -> int:
     lp = sub.add_parser("lists", help="update curated lists (bestsellers, prizes)")
     lp.add_argument("args", nargs="*",
                     help="optional 'update' action and/or specific list slugs")
+    simp = sub.add_parser("similar",
+                          help="precompute 'meer zoals dit' (LSA) recommendations")
+    simp.add_argument("-k", type=int, default=24,
+                      help="neighbours to store per book (default 24)")
+    simp.add_argument("--lsa-dim", type=int, default=300,
+                      help="Truncated-SVD dimensions (default 300)")
 
     args, rest = p.parse_known_args(argv)
 
@@ -76,6 +82,9 @@ def main(argv: list[str] | None = None) -> int:
         from . import lists
         slugs = [a for a in args.args if a != "update"]  # 'update' is the implied action
         lists.update(slugs or None)
+    elif args.cmd == "similar":
+        from . import similar
+        similar.main(k=args.k, lsa_dim=args.lsa_dim)
     return 0
 
 

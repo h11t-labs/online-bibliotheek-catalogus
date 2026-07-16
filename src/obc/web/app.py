@@ -286,11 +286,13 @@ def search(
     year_from: str = "",
     year_to: str = "",
     sort: str = "",
+    view: str = "",
     page: int = Query(1, ge=1),
     per_page: int = Query(PAGE_SIZE, alias="per_page"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     q = q.strip()
+    view = view if view in ("grid", "list") else "grid"
     page_size = per_page if per_page in PER_PAGE_OPTIONS else PAGE_SIZE
     yf, yt = queries.parse_year(year_from), queries.parse_year(year_to)
     # unset sort -> relevance for a search, newest-first when browsing
@@ -311,7 +313,7 @@ def search(
     result = queries.search(conn, filters, page, page_size)
     rows = result.rows
     facets = _facets(conn)
-    formats_map = queries.formats_map(conn, rows)
+    editions_map = queries.editions_map(conn, rows)
     lists_map = queries.lists_map(conn, rows)
     total_indexed = queries.total_books(conn)
 
@@ -324,6 +326,7 @@ def search(
              "ereader": ereader if ereader == "1" else "", "sort": sort,
              "year_from": year_from if yf is not None else "",
              "year_to": year_to if yt is not None else "",
+             "view": view if view == "list" else "",   # empty = default grid (clean URLs)
              "per_page": str(page_size) if page_size != PAGE_SIZE else ""}
 
     # active-filter chips (each with a remove URL + icon)
@@ -356,10 +359,10 @@ def search(
         "publisher": publisher, "author": author, "list": lists_, "ereader": ereader,
         "year_from": state["year_from"], "year_to": state["year_to"], "sort": sort,
         "page": page, "pages": pages, "facets": facets, "page_size": page_size,
-        "per_page_options": list(PER_PAGE_OPTIONS),
+        "view": view, "per_page_options": list(PER_PAGE_OPTIONS),
         "chips": chips, "has_filters": bool(q or chips), "state": state,
         "robots": "noindex,follow" if (q or chips) else "index,follow",
-        "formats_map": formats_map, "lists_map": lists_map,
+        "editions_map": editions_map, "lists_map": lists_map,
         "list_options": [lst["slug"] for lst in facets["lists"]],
         "list_labels": {lst["slug"]: lst["name"] for lst in facets["lists"]},
     })
@@ -518,9 +521,13 @@ def book(request: Request, ppn: str, conn: sqlite3.Connection = Depends(get_conn
                              if b["format"] == "audiobook" else "https://schema.org/EBook"),
               "url": f"{_origin(request)}/book/{ppn}"}
     jsonld = {k: v for k, v in jsonld.items() if v}
+    # "meer zoals dit": LSA content-based recommendations (see obc.similar), shown as
+    # a horizontal scroll strip on the book page.
+    similar = queries.similar_books(conn, ppn, limit=20)
     return _templates.TemplateResponse(request, "book.html", {
         "b": b, "genres": detail["genres"], "editions": detail["editions"],
         "authors": detail["authors"], "book_lists": detail["book_lists"],
+        "similar": similar,
         "meta_description": summary[:300] or f"{b['title']} in de online Bibliotheek.",
         "og_image": cover, "jsonld": jsonld})
 
@@ -535,9 +542,13 @@ def suggest(q: str = "", limit: int = Query(7, ge=1, le=20),
     data = queries.suggest(conn, q.strip(), limit)
     if data is None:
         return {"titles": [], "authors": []}
+    # editions per suggested work, so the dropdown can show an e-book / audiobook icon
+    # that links straight to that edition (the row itself opens the e-book).
+    emap = queries.editions_map(conn, data["title_rows"])
     titles = [
         {"ppn": r["ppn"], "title": r["title"], "author": r["author"],
-         "cover_url": _coverw(r["cover_url"], 80), "format": r["format"]}
+         "cover_url": _coverw(r["cover_url"], 80), "format": r["format"],
+         "editions": emap.get(r["ppn"], {r["format"]: r["ppn"]})}
         for r in data["title_rows"]
     ]
     return {"titles": titles, "authors": data["authors"],

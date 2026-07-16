@@ -46,7 +46,13 @@ Then merging the release PR (see [Releasing a version](#releasing-a-version)) sh
 
 Notes:
 - One machine only (`min_machines_running = 1`) — SQLite is single-writer.
-- `normalize` streams (~190MB peak), so the daily refresh runs on the 512MB VM.
+- Record loading itself streams (~190MB peak), but `normalize` also precomputes the
+  "meer zoals dit" recommendations, whose Truncated-SVD peaks at ~1.1GB on the 64k
+  catalog. The 512MB VM absorbs that with `swap_size_mb = 1024` (fly.toml) — it's a
+  nightly batch step, so paging costs land on a job nobody waits for. Serving stays
+  within RAM.
+- The image installs the `recommend` extra (scikit-learn); without it `normalize`
+  logs a warning and skips the recommendations, leaving the catalog fully usable.
 
 ## Seed / refresh the database
 
@@ -75,7 +81,10 @@ fly secrets set OBC_REFRESH_TOKEN=$(openssl rand -hex 32)   # shared secret
 scripts/fly-cron.sh                                         # create the daily cron machine
 ```
 
-`normalize` streams at ~190MB, so this runs on the 512MB VM — no scaling.
+Runs on the 512MB VM — no scaling. Loading records streams at ~190MB; the
+recommendation build inside `normalize` peaks at ~1.1GB and leans on the machine's
+1GB swap (see fly.toml). It builds into the temp DB, so the atomic swap publishes the
+catalog and its recommendations together — readers never see one without the other.
 
 ## Environment variables
 
