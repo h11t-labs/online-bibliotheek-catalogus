@@ -27,8 +27,18 @@ from ..textnorm import fold
 # --------------------------------------------------------------------------- #
 def connect_ro(db_path: str | Path) -> sqlite3.Connection:
     """Open a read-only connection with a ``fold()`` SQL function for
-    diacritic/case-insensitive ``LIKE`` matching (Klöpping ~ klopping)."""
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    diacritic/case-insensitive ``LIKE`` matching (Klöpping ~ klopping).
+
+    ``check_same_thread=False``: FastAPI can run a ``yield`` dependency's setup and
+    the route handler on different threadpool threads, so a connection opened in
+    ``get_conn`` and used in the handler would otherwise raise a
+    ``sqlite3.ProgrammingError`` intermittently (only when the two land on
+    different threads, i.e. under load). The connection is per-request and only
+    ever touched sequentially — never by two threads at once — so disabling the
+    same-thread guard is safe."""
+    conn = sqlite3.connect(
+        f"file:{db_path}?mode=ro", uri=True, check_same_thread=False
+    )
     conn.row_factory = sqlite3.Row
     conn.create_function("fold", 1, lambda s: fold(s) if s else "", deterministic=True)
     return conn

@@ -228,3 +228,31 @@ def test_security_headers_on_every_response(client):
         csp = r.headers["Content-Security-Policy"]
         assert "default-src 'self'" in csp
         assert "gc.zgo.at" in csp  # GoatCounter script host must be allowed
+
+
+def test_connect_ro_usable_across_threads(catalog_db):
+    """A connection from connect_ro must be usable from a thread other than the one
+    that opened it. FastAPI runs a yield-dependency's setup and the route handler on
+    different threadpool threads, so without check_same_thread=False this raised an
+    intermittent sqlite3.ProgrammingError under load. Regression guard.
+    """
+    import threading
+
+    from obc.web import queries
+
+    conn = queries.connect_ro(catalog_db)  # opened in this (main) thread
+    out = {}
+
+    def use():
+        try:
+            out["n"] = conn.execute("SELECT count(*) FROM books").fetchone()[0]
+        except Exception as exc:  # noqa: BLE001 — capture to assert in main thread
+            out["err"] = exc
+
+    t = threading.Thread(target=use)
+    t.start()
+    t.join()
+    conn.close()
+
+    assert "err" not in out, f"cross-thread use raised: {out.get('err')!r}"
+    assert out["n"] > 0
