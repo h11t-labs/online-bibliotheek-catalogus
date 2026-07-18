@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v1.1.0...v1.1.1) (2026-07-18)
+
+
+### Bug Fixes
+
+* **deploy:** put swap_size_mb at fly.toml top level so it actually applies ([#19](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/19)) ([d1889cd](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/d1889cdedc1bef2843106a6195528017881286ba))
+
 ## [1.1.0](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v1.0.4...v1.1.0) (2026-07-16)
 
 
