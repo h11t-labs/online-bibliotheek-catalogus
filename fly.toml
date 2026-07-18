@@ -4,6 +4,14 @@
 app = "online-bibliotheek-catalogus"   # must be globally unique; change if taken
 primary_region = "ams"                  # Amsterdam (EU)
 
+# Swap for the nightly batch. `normalize` precomputes the "meer zoals dit"
+# recommendations, whose Truncated-SVD peaks at ~1.1GB on the 64k catalog — more than
+# the 512MB VM's RAM. Swap absorbs that once-a-day peak instead of paying for a bigger
+# always-on VM; serving itself stays within RAM. NOTE: this MUST be a top-level key —
+# nested under [[vm]] flyctl silently ignores it (SwapTotal stays 0 and the rebuild
+# gets OOM-killed, which freezes the catalog and leaves recommendations unbuilt).
+swap_size_mb = 1024
+
 [build]
   dockerfile = "Dockerfile"
 
@@ -52,9 +60,6 @@ primary_region = "ams"                  # Amsterdam (EU)
 [[vm]]
   size = "shared-cpu-1x"
   memory = "512mb"
-  # The nightly refresh builds the recommendations in this machine (the volume only
-  # attaches here). Its Truncated-SVD peaks at ~1.1GB — measured on the 64k catalog —
-  # which 512mb of RAM can't hold. Swap absorbs that peak instead of paying for a
-  # bigger always-on VM: it's a once-a-day batch step, so the paging cost lands on a
-  # job nobody is waiting for. Serving itself stays comfortably within RAM.
-  swap_size_mb = 1024
+  # Serving stays within RAM. The nightly `normalize` peaks at ~1.1GB (Truncated-SVD
+  # for the "meer zoals dit" recommendations); that peak is absorbed by swap — see the
+  # top-level `swap_size_mb` above. Swap must live at the top level, not here.
