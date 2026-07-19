@@ -5,6 +5,14 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v1.1.1...v1.1.2) (2026-07-19)
+
+
+### Bug Fixes
+
+* **refresh:** stream progress logs live (unbuffered + normalize heartbeat) ([#22](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/22)) ([fa871ed](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/fa871ede6f35e47601ed4f3fe7cf8dad0b14264d))
+* **web:** open read-only connections with check_same_thread=False ([#21](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/21)) ([eb58dc9](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/eb58dc92560e3b4c76e07b364a111bda85f666e3))
+
 ## [1.1.1](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v1.1.0...v1.1.1) (2026-07-18)
 
 
