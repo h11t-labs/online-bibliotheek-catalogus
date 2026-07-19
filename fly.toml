@@ -18,6 +18,10 @@ swap_size_mb = 1024
 [env]
   PORT = "8000"
   OBC_DB = "/app/data/catalog.db"
+  # Unbuffered stdout/stderr so the refresh subprocesses (scrape/normalize/similar,
+  # spawned by scheduler._run) stream their progress logs live instead of flushing
+  # only on exit — otherwise a ~1h normalize shows nothing until it finishes.
+  PYTHONUNBUFFERED = "1"
   # Absolute origin for canonical / Open Graph / sitemap URLs. Set to your custom
   # domain if you add one.
   OBC_SITE_URL = "https://online-bibliotheek-catalogus.fly.dev"

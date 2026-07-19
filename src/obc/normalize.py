@@ -144,7 +144,10 @@ def _prepass(paths: list[Path]) -> tuple[dict, dict, dict, tuple]:
 def iter_records(paths: list[Path], aux: tuple, canon: dict):
     """Yield enriched records one at a time (constant memory)."""
     ereader, have_ereader, genres_map, recent_map, prior_ereader = aux
-    for path in paths:
+    total = len(paths)
+    for seen, path in enumerate(paths, 1):
+        if seen % 10_000 == 0 or seen == total:
+            logger.info(f"[normalize] loading records: {seen}/{total}")
         for r in _read(path):
             t = _transform(r, ereader, have_ereader, genres_map, recent_map,
                            canon, prior_ereader)
