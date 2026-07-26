@@ -523,6 +523,20 @@ def series_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         "GROUP BY series ORDER BY titles DESC, series COLLATE NOCASE").fetchall()
 
 
+def genre_books(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """``(genre name, book ppn)`` for every genre link, editions collapsed.
+
+    The web layer groups these by slug and counts *distinct* ppns: two spellings
+    of one genre routinely share books, so summing their separate counts
+    advertised more titles than the page delivers.
+    """
+    return conn.execute(
+        "SELECT g.name AS name, bg.book_ppn AS ppn FROM genres g "
+        "JOIN book_genres bg ON bg.genre_id = g.id "
+        f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)}"
+    ).fetchall()
+
+
 def genre_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Every genre with its work count, largest first.
 
@@ -546,8 +560,17 @@ def browse_summary(conn: sqlite3.Connection, f: SearchFilters,
     every genre gets a different, factual paragraph, and the author names double
     as internal links into the author pages. The format split deliberately counts
     *editions*: it exists to say how many of these titles you can listen to.
+
+    Authors with an empty fold are excluded: several unrelated non-Latin names
+    fold to "" and would otherwise be grouped into one person with a summed count.
     """
     where, params = _build_where(f)
+    # Mirror search(): a format filter turns the collapse off there, so applying
+    # it here regardless made the summary describe a different set than the shelf
+    # below it — A.C. Baantjer vanished from /luisterboeken because his primary
+    # edition is an e-book.
+    if not f.format:
+        where.append("b.primary_edition = 1" if _has_primary_edition(conn) else "1=1")
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     row = conn.execute(
         "SELECT SUM(b.format = 'ebook') AS ebooks, "
@@ -559,7 +582,7 @@ def browse_summary(conn: sqlite3.Connection, f: SearchFilters,
         "SELECT a.name AS name, COUNT(DISTINCT ba.book_ppn) AS titles FROM books b "
         "JOIN book_authors ba ON ba.book_ppn = b.ppn "
         "JOIN authors a ON a.id = ba.author_id "
-        f"{where_sql}{' AND' if where_sql else 'WHERE'} 1=1{_collapse_editions(conn)} "
+        f"{where_sql}{' AND' if where_sql else 'WHERE'} a.name_fold <> '' "
         "GROUP BY a.name_fold ORDER BY titles DESC, a.name_fold LIMIT ?",
         [*params, top_authors]).fetchall()
     return {"ebooks": row["ebooks"] or 0, "audiobooks": row["audiobooks"] or 0,

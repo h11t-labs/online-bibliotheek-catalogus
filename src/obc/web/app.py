@@ -596,15 +596,21 @@ def _genres(conn: sqlite3.Connection) -> dict[str, dict]:
         key = None
     if _genres_cache["key"] == key and _genres_cache["data"] is not None:
         return _genres_cache["data"]
-    merged: dict[str, dict] = {}
-    for row in queries.genre_index(conn):
+    # Counted over distinct books rather than by summing each spelling's own
+    # count: the two "Biografieën" share a book, so the sum advertised three
+    # titles for a page that shows two.
+    books: dict[str, set] = {}
+    names: dict[str, list[str]] = {}
+    for row in queries.genre_books(conn):
         slug = slugify(row["name"])
         if not slug:
             continue
-        # rows arrive title-count descending, so the first spelling wins the heading
-        entry = merged.setdefault(slug, {"name": row["name"], "names": [], "titles": 0})
-        entry["names"].append(row["name"])
-        entry["titles"] += row["titles"]
+        books.setdefault(slug, set()).add(row["ppn"])
+        if row["name"] not in names.setdefault(slug, []):
+            names[slug].append(row["name"])
+    merged = {slug: {"name": max(names[slug], key=len), "names": names[slug],
+                     "titles": len(ppns)}
+              for slug, ppns in books.items()}
     _genres_cache.update(key=key, data=merged)
     return merged
 
