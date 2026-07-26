@@ -153,6 +153,17 @@ def test_hub_lists_one_entry_per_slug(client, ro_conn):
     assert hub.count('href="/author/bob-de-wit"') == 1
 
 
+def test_about_page_moved_but_the_old_url_still_resolves(client):
+    # /over shipped in v1.1.2 and sits in the live sitemap, so it owes a redirect
+    r = client.get("/over", follow_redirects=False)
+    assert r.status_code == 301 and r.headers["location"] == "/about"
+    assert "Over deze catalogus" in client.get("/about").text
+    # and the sitemap advertises the destination, not the redirect
+    assert "/about<" in client.get("/sitemap-static.xml").text
+    assert "/over<" not in client.get("/sitemap-static.xml").text
+    assert 'href="/about"' in client.get("/").text          # header points there too
+
+
 def test_authors_are_alphabetised_on_surname(client):
     # "Alexander Klöpping" belongs under K; bucketing on the first character of
     # the full name filed every author under their first name instead
@@ -206,7 +217,7 @@ def test_stats_health_static(client):
 
 
 def test_about_page(client):
-    r = client.get("/over")
+    r = client.get("/about")
     assert r.status_code == 200
     assert "Over deze catalogus" in r.text
 
@@ -225,7 +236,7 @@ def test_robots_and_sitemaps(client):
     idx = client.get("/sitemap.xml")
     assert idx.status_code == 200 and "<sitemapindex" in idx.text
     stat = client.get("/sitemap-static.xml")
-    assert stat.status_code == 200 and "/over" in stat.text
+    assert stat.status_code == 200 and "/about" in stat.text
     books = client.get("/sitemap-books-1.xml")
     assert books.status_code == 200 and "/book/001" in books.text
 
@@ -317,7 +328,7 @@ def test_website_jsonld_only_on_bare_home(client):
     # ?sort= and ?view= carry no chips and no query text, so they'd slip through a
     # filters-only check — the rule keys off the query string itself.
     for path in ("/?q=de", "/?format=ebook", "/?page=2", "/?sort=title",
-                 "/?view=list", "/?per_page=48", "/over", "/book/001"):
+                 "/?view=list", "/?per_page=48", "/about", "/book/001"):
         assert not [d for d in _jsonld(client.get(path).text)
                     if d.get("@type") == "WebSite"], path
 
@@ -374,7 +385,7 @@ def test_breadcrumbs_jsonld(client):
     # a book by a known author routes through that author's page
     assert any(i.get("item", "").startswith(items[0]["item"] + "author/") for i in items)
     # and the other detail pages carry a trail too
-    for path in ("/author/Anna Vrij", "/list/test-top", "/over", "/stats"):
+    for path in ("/author/Anna Vrij", "/list/test-top", "/about", "/stats"):
         body = client.get(path).text
         assert any(d.get("@type") == "BreadcrumbList" for d in _jsonld(body)), path
 
@@ -420,7 +431,7 @@ def test_crawl_delay_lets_bing_finish_a_pass(client):
 def test_head_is_answered_like_get(client):
     # FastAPI's APIRoute doesn't add HEAD to GET routes, so every page used to
     # answer 405 — link checkers and monitors read that as a broken URL.
-    for path in ("/", "/book/001", "/over", "/robots.txt", "/sitemap.xml", "/healthz"):
+    for path in ("/", "/book/001", "/about", "/robots.txt", "/sitemap.xml", "/healthz"):
         head, get = client.head(path), client.get(path)
         assert head.status_code == 200, path
         assert head.status_code == get.status_code

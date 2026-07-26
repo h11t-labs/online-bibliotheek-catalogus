@@ -192,7 +192,7 @@ app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan
 # Pages with no per-user state and a catalog that only changes on the daily rebuild,
 # so they're safe to cache publicly — this offloads repeat hits and crawler traffic
 # from the single small VM. Detail pages cache an hour; the browse home a few minutes.
-_CACHE_PREFIXES = ("/book/", "/author", "/series/", "/list", "/stats", "/over")
+_CACHE_PREFIXES = ("/book/", "/author", "/series/", "/list", "/stats", "/about")
 
 
 # Templates use inline <script>/<style> blocks (base.html), GoatCounter loads its
@@ -592,11 +592,18 @@ def stats_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         "s": data, "breadcrumbs": _breadcrumbs(request, ("Statistieken", ""))})
 
 
-@app.get("/over", response_class=HTMLResponse)
+@app.get("/about", response_class=HTMLResponse)
 def about(request: Request):
     """Static 'about' page — independent of the catalog DB so it always renders."""
-    return _templates.TemplateResponse(request, "over.html", {
+    return _templates.TemplateResponse(request, "about.html", {
         "breadcrumbs": _breadcrumbs(request, ("Over deze catalogus", ""))})
+
+
+# /over shipped in v1.1.2 and is in the live sitemap, so unlike the other URLs
+# renamed alongside it this one owes a permanent redirect.
+@app.get("/over", include_in_schema=False)
+def about_legacy():
+    return RedirectResponse("/about", status_code=301)
 
 
 # --------------------------------------------------------------------------- #
@@ -686,7 +693,7 @@ def sitemap_index(request: Request, conn: sqlite3.Connection = Depends(get_conn)
 @app.get("/sitemap-static.xml", include_in_schema=False)
 def sitemap_static(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     slugs = [r["slug"] for r in conn.execute("SELECT slug FROM lists ORDER BY slug")]
-    paths = ["/", "/over", "/lists", "/stats", *[f"/list/{s}" for s in slugs]]
+    paths = ["/", "/about", "/lists", "/stats", *[f"/list/{s}" for s in slugs]]
     # These really are rewritten by every rebuild (new titles, new list positions).
     return _sitemap(_origin(request), paths, lastmod=_w3c(_data_updated()))
 
