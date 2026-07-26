@@ -73,6 +73,32 @@ def test_author_page(client):
     assert client.get("/author/Zzz Niemand").status_code == 404
 
 
+def test_author_masthead(client, monkeypatch):
+    from obc.web import app as appmod
+    monkeypatch.setattr(appmod, "author_bio", lambda name: {
+        "extract": "Anna Vrij is een Nederlandse schrijver.",
+        "thumb": "https://example.test/anna.jpg",
+        "url": "https://nl.wikipedia.org/wiki/Anna_Vrij"})
+    body = client.get("/author/Anna Vrij").text
+    # portrait sits beside the name it belongs to, bio runs as prose beneath it
+    assert 'class="ident"' in body and 'class="portrait"' in body
+    assert 'alt="Portret van Anna Vrij"' in body
+    assert 'class="bio"' in body and "Nederlandse schrijver" in body
+    assert "nl.wikipedia.org/wiki/Anna_Vrij" in body
+    # the panel it replaced is gone: no accent bar, no card, no shouty eyebrow
+    assert "authorcard" not in body
+    assert "border-left:4px solid var(--accent)" not in body
+    assert "Over de auteur" not in body
+
+
+def test_author_masthead_without_a_bio(client):
+    # most authors have no Wikipedia match — the header must not leave an empty
+    # portrait slot or a stray rule behind (author_bio is stubbed to None)
+    body = client.get("/author/Anna Vrij").text
+    assert 'class="portrait"' not in body and 'class="bio"' not in body
+    assert "<h1>Anna Vrij</h1>" in body
+
+
 def test_series_page(client):
     assert client.get("/series/Het Mysterie").status_code == 200
     assert client.get("/series/Zzz Geen Reeks").status_code == 404
