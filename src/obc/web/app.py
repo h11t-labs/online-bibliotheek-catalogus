@@ -635,7 +635,14 @@ def _genre_data(conn: sqlite3.Connection) -> dict:
         rows = per_aud[aud]
         parent_of, titles_of = {}, {}
         for slug, a in rows.items():
-            pslug = a["parents"].most_common(1)[0][0]
+            # An explicit parent outranks "filed at top level": most adult Film
+            # records carry no parent, a minority put it under Kunst & Cultuur, and
+            # promoting it to sit beside Literatuur & Romans would both read wrong
+            # and disagree with the breadcrumb its own page shows. Only when this
+            # audience never names a parent do we fall back to the catalog-wide one.
+            named = [(pslug, n) for pslug, n in a["parents"].items()
+                     if pslug and pslug != slug and pslug in rows]
+            pslug = max(named, key=lambda kv: kv[1])[0] if named else flat[slug]["parent"]
             parent_of[slug] = pslug if pslug and pslug != slug and pslug in rows else ""
             titles_of[slug] = len(a["books"])
         tops = []

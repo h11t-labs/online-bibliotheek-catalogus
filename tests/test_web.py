@@ -855,6 +855,16 @@ def test_genre_hierarchy(tmp_path, monkeypatch):
     assert 'href="/genre/spanning-thrillers"' in hub
     assert hub.index("/genre/spanning-thrillers") < hub.index("/genre/thrillers")
     # jeugd and volwassenen are separate taxonomies, switched rather than stacked
+    # A genre's own page and the hub must agree on where it sits: whenever the
+    # parent is present in a tree at all, the child may not also head that tree.
+    # (A parent with no books in this audience is a legitimate exception — for
+    # jeugd, "Waargebeurde verhalen" really is a shelf of its own.)
+    data = appmod._genre_data(conn)
+    for tops in data["trees"].values():
+        present = {t["slug"] for t in tops} | {k["slug"] for t in tops for k in t["children"]}
+        for t in tops:
+            parent = data["flat"][t["slug"]]["parent"]
+            assert not (parent and parent in present), t["slug"]
     assert 'class="audbar"' in hub
     assert 'href="/genres?publiek=jeugd"' in hub
     jeugd = client.get("/genres?publiek=jeugd").text
