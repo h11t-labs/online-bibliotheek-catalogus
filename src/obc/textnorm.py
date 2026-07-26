@@ -99,16 +99,22 @@ _TRANSLITERATE = str.maketrans({
 })
 
 
-# Trailing generation markers, editorial roles and "and others" abbreviations —
-# they are not the surname, but they are the last token, so alphabetising put
-# "A.H. Huussen jr." under J, "Ferdinand Bordewijk e.a." under A and "Wim
-# Kloppenburg (red.)" under R. Matched as *token sequences* against the folded
-# name, which has already dropped the dots and brackets: "e" alone is a plausible
+# Editorial roles only ever appear bracketed — "Wim Kloppenburg (red.)", "Adam
+# J.B. Lane (ill.)" — so they are stripped as brackets rather than as words. A
+# word rule would misfile the real surname in "Ludique le Vert" under L.
+_ROLE_BRACKET = re.compile(r"\([^)]*\)")
+# Two authors are websites; their TLD is not a surname.
+_DOMAIN_TAIL = re.compile(r"\.(?:nl|com|be|org|net|eu|de)\s*$", re.I)
+# fold() treats an apostrophe as a separator, which cuts "O'Brien" into "o brien"
+# and files 123 authors under the tail of their own surname (O'Brien under B).
+# Dropping it binds the name back together; the standalone Dutch "'t" in
+# "van 't Spijker" becomes a bare "t" token, which is not the last one anyway.
+_APOSTROPHE = re.compile(r"[’'`]")
+# Generation markers and "and others". Matched as token *sequences* against the
+# folded name, which has already dropped the dots: "e" alone is a plausible
 # surname, ("e", "a") is not.
 _NAME_SUFFIXES = (
-    ("e", "v", "a"), ("e", "a"), ("c", "s"), ("et", "al"),
-    ("jr",), ("sr",), ("red",), ("ill",), ("ed",), ("eds",),
-    ("vert",), ("bew",), ("samensteller",), ("samenstelling",),
+    ("e", "v", "a"), ("e", "a"), ("c", "s"), ("et", "al"), ("jr",), ("sr",),
 )
 
 
@@ -119,7 +125,8 @@ def surname_key(name: str | None) -> str:
     A-Z index has to sort on this rather than on the first character of the full
     name. "Bob de Wit" lands on 'wit', "Buren, van" on 'buren'.
     """
-    parts = fold((name or "").translate(_TRANSLITERATE)).split()
+    raw = _DOMAIN_TAIL.sub("", _ROLE_BRACKET.sub(" ", name or ""))
+    parts = fold(_APOSTROPHE.sub("", raw).translate(_TRANSLITERATE)).split()
     trimmed = True
     while trimmed and len(parts) > 1:
         trimmed = False

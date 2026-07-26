@@ -189,9 +189,18 @@ def test_authors_are_alphabetised_on_surname(client):
     assert surname_key("Ferdinand Bordewijk e.a.") == "bordewijk"
     assert surname_key("Klaartje Gras e.v.a.") == "gras"
     assert surname_key("Daniël Mok c.s.") == "mok"
+    # editorial roles are stripped as brackets, not as words — a word rule filed
+    # the real surname in "Ludique le Vert" under L
     assert surname_key("Wim Kloppenburg (red.)") == "kloppenburg"
     assert surname_key("Simon Dikker Hupkes (samensteller)") == "hupkes"
     assert surname_key("Adam J.B. Lane (ill.)") == "lane"
+    assert surname_key("Ludique le Vert") == "vert"
+    # an apostrophe is a separator to fold(), which cut "O'Brien" down to "brien"
+    assert surname_key("Ally O'Brien") == "obrien"
+    assert surname_key("Jean-Michel Caradec'h") == "caradech"
+    assert surname_key("Adriaan van 't Spijker") == "spijker"   # 't stays a particle
+    # two authors are websites; the TLD is not their surname
+    assert surname_key("Vakantietaal.nl") == "vakantietaal"
     assert surname_key("Onno van Gelder jr.") == "gelder"   # suffix and particle
     # a single letter can genuinely be the surname, so it is left alone
     assert surname_key("Christiane F") == "f"
