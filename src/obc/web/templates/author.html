@@ -42,8 +42,7 @@
       {% endif %}
       <div class="who">
         <h1>{{ name }}</h1>
-        <div class="sub">{{ total }} {{ 'titel' if total==1 else 'titels' }} in de bibliotheek
-          · <a class="flink" style="text-decoration:underline dotted" href="/?author={{ name|urlencode }}">filter in zoeken ›</a></div>
+        <div class="sub">{{ total }} {{ 'titel' if total==1 else 'titels' }} in de bibliotheek</div>
       </div>
     </div>
     {% if bio %}

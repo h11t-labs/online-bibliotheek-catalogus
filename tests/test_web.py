@@ -69,8 +69,34 @@ def test_book_detail_mobile_layout(client):
 
 
 def test_author_page(client):
-    assert client.get("/author/Anna Vrij").status_code == 200
+    assert client.get("/author/anna-vrij").status_code == 200
     assert client.get("/author/Zzz Niemand").status_code == 404
+
+
+def test_author_urls_are_slugs(client):
+    from obc.textnorm import fold, slugify
+    # a slug round-trips into a name_fold, which is what makes it an indexed
+    # lookup instead of a stored column — and what merges the catalog's spelling
+    # duplicates ("Ad Van Schaik" / "Ad van Schaik") onto one page
+    for name in ("Ad Van Schaik", "Ad van Schaik", "Agnès Martin-Lugand"):
+        assert slugify(name).replace("-", " ") == fold(name)
+    assert slugify("Ad Van Schaik") == slugify("Ad van Schaik") == "ad-van-schaik"
+    assert slugify("Lisbeth Imbo") == "lisbeth-imbo"
+    assert slugify("Λήδα Βάρβαρούση") == ""     # no Latin characters to slug
+
+    assert client.get("/author/anna-vrij").status_code == 200
+    # the old percent-encoded links keep working and move to the slug
+    for legacy in ("/author/Anna Vrij", "/author/Anna%20Vrij", "/author/ANNA-VRIJ"):
+        r = client.get(legacy, follow_redirects=False)
+        assert r.status_code == 301, legacy
+        assert r.headers["location"] == "/author/anna-vrij", legacy
+    # and nothing links to the encoded form any more
+    book = client.get("/book/001").text
+    assert 'href="/author/anna-vrij"' in book
+    assert "/author/Anna%20Vrij" not in book
+    crumbs = [d for d in _jsonld(book) if d.get("@type") == "BreadcrumbList"][0]
+    assert any(i.get("item", "").endswith("/author/anna-vrij")
+               for i in crumbs["itemListElement"])
 
 
 def test_author_masthead(client, monkeypatch):

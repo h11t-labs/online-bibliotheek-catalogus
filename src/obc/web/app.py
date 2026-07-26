@@ -22,11 +22,11 @@ from pathlib import Path
 from urllib.parse import quote, urlencode
 
 from fastapi import Depends, FastAPI, Header, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from .. import db
-from ..textnorm import language_code
+from ..textnorm import language_code, slugify
 from . import queries
 from .bio import author_bio
 
@@ -123,6 +123,16 @@ def _snippet(text: str, limit: int = 155) -> str:
     return head[:head.rfind(" ")].rstrip(" ,;:-–—") + "…" if " " in head else head + "…"
 
 
+def _author_path(name: str) -> str:
+    """The canonical URL path for an author: ``/author/lisbeth-imbo``.
+
+    A handful of names (Greek script, a stray "|" row) hold no Latin characters
+    and fold to nothing, so they have no slug and keep their encoded name. One
+    helper so links, breadcrumbs and sitemaps can never drift apart.
+    """
+    return f"/author/{slugify(name) or quote(name, safe='')}"
+
+
 def _data_updated() -> float | None:
     """Epoch seconds the catalog was last (re)built — the DB file's mtime."""
     try:
@@ -133,6 +143,7 @@ def _data_updated() -> float | None:
 
 _templates.env.filters["coverw"] = _coverw
 _templates.env.filters["nldate"] = _nldate
+_templates.env.filters["author_path"] = _author_path
 _templates.env.globals["url_with"] = _url_with
 _templates.env.globals["url_without"] = _url_without
 _templates.env.globals["data_updated"] = _data_updated
@@ -521,11 +532,26 @@ def sitemap_books(request: Request, n: int, conn: sqlite3.Connection = Depends(g
 
 # ``:path`` because two catalog authors carry a slash in their name ("Elizabeth
 # August/Dreamshield"). With a plain ``{name}`` their page 404s under either
-# spelling — both the link on the book page and the breadcrumb item URL added
-# here would have pointed at a dead URL.
+# spelling — both the link on the book page and the breadcrumb item URL would
+# have pointed at a dead URL.
 @app.get("/author/{name:path}", response_class=HTMLResponse)
 def author_page(request: Request, name: str, conn: sqlite3.Connection = Depends(get_conn)):
-    rows = queries.author_books(conn, name)
+    """Author page, addressed by slug: /author/lisbeth-imbo.
+
+    Anything that folds to the same key lands here, so the old percent-encoded
+    ``/author/Lisbeth%20Imbo`` links keep working and redirect to the slug.
+    """
+    slug = slugify(name)
+    if slug:
+        display = queries.author_display_name(conn, slug.replace("-", " "))
+        rows = queries.author_books_by_fold(conn, slug.replace("-", " ")) if display else []
+        if rows and name != slug:
+            return RedirectResponse(f"/author/{slug}", status_code=301)
+        name = display or name
+    else:
+        # Names with no Latin characters (Greek script, a stray "|" row) fold to
+        # nothing, so they have no slug and stay on their encoded URL.
+        rows = queries.author_books(conn, name)
     if not rows:
         return HTMLResponse("<h1>Auteur niet gevonden</h1>", status_code=404)
     formats_map = queries.formats_map(conn, rows)
@@ -613,7 +639,7 @@ def book(request: Request, ppn: str, conn: sqlite3.Connection = Depends(get_conn
         "og_image": cover, "jsonld": jsonld,
         "breadcrumbs": _breadcrumbs(
             request,
-            *([(detail["authors"][0], f"/author/{quote(detail['authors'][0], safe='')}")]
+            *([(detail["authors"][0], _author_path(detail["authors"][0]))]
               if detail["authors"] else []),
             (b["title"], ""))})
 

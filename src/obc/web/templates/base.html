@@ -324,9 +324,11 @@
     .book .a{font-size:13px;color:var(--ink-soft);
       display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
     .pagehead{margin:6px 0 22px}
-    .pagehead .crumb{color:var(--ink-soft);font-size:14px}
+    /* The back link is navigation, not a kicker for the title — give it enough
+       room that it reads as its own row instead of crowding the heading. */
+    .pagehead .crumb{color:var(--ink-soft);font-size:14px;margin-bottom:20px}
     .pagehead .crumb a:hover{color:var(--accent)}
-    .pagehead h1{font-family:var(--serif);font-size:clamp(26px,4vw,40px);margin:6px 0 4px}
+    .pagehead h1{font-family:var(--serif);font-size:clamp(26px,4vw,40px);margin:0 0 4px}
     .pagehead .sub{color:var(--ink-soft)}
 
     footer{width:100%;max-width:1240px;margin:auto auto 0;padding:30px 24px;
@@ -550,9 +552,15 @@
     function noResults(q){ items=[]; active=-1;
       panel.innerHTML='<div class="so-hint">Geen suggesties voor “'+esc(q)+'”. '+
         'Druk op <kbd>Enter</kbd> om toch te zoeken.</div>'; }
+    // Mirror of textnorm.slugify(): lowercase, drop diacritics, collapse the rest
+    // to dashes. Jumping straight to the slug saves the 301 the server would send
+    // for an encoded name. Names that hold no a-z0-9 keep their encoded form.
+    const authorPath=n=>'/author/'+(n.normalize('NFKD').replace(/[\u0300-\u036f]/g,'')
+      .toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')
+      || encodeURIComponent(n));
     function go(it){
       if(it.kind==='title') location.href='/book/'+encodeURIComponent(it.ppn);
-      else if(it.kind==='author') location.href='/author/'+encodeURIComponent(it.value);
+      else if(it.kind==='author') location.href=authorPath(it.value);
       else if(it.kind==='publisher') location.href='/?publisher='+encodeURIComponent(it.value);
       else if(it.kind==='genre') location.href='/?genre='+encodeURIComponent(it.value);
       else if(it.kind==='language') location.href='/?language='+encodeURIComponent(it.value);

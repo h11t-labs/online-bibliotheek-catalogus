@@ -412,10 +412,40 @@ def book_detail(conn: sqlite3.Connection, ppn: str) -> dict | None:
 
 
 def author_books(conn: sqlite3.Connection, name: str) -> list[sqlite3.Row]:
+    """Books by the exact author name — the fallback for names that don't slug."""
     return conn.execute(
         "SELECT b.* FROM books b JOIN book_authors ba ON ba.book_ppn = b.ppn "
         "JOIN authors a ON a.id = ba.author_id WHERE a.name = ? "
         "ORDER BY b.year DESC, b.title COLLATE NOCASE LIMIT 300", (name,)).fetchall()
+
+
+# A slug round-trips into a name_fold by swapping dashes for spaces, so the two
+# functions below look up an indexed column rather than a computed one. The catalog
+# holds the same person under several spellings ("Ad Van Schaik" / "Ad van Schaik",
+# "Agnès" / "Agnes") — 359 of them — and those fold together, so slugging the URL
+# also merges those duplicates onto a single page instead of splitting the shelf.
+def author_display_name(conn: sqlite3.Connection, fold_key: str) -> str | None:
+    """The spelling to show for a folded author key: whichever variant carries the
+    most titles. ``None`` when no author folds to this key."""
+    row = conn.execute(
+        "SELECT a.name AS name, COUNT(*) AS titles FROM authors a "
+        "JOIN book_authors ba ON ba.author_id = a.id WHERE a.name_fold = ? "
+        "GROUP BY a.id ORDER BY titles DESC, a.name COLLATE NOCASE LIMIT 1",
+        (fold_key,)).fetchone()
+    return row["name"] if row else None
+
+
+def author_books_by_fold(conn: sqlite3.Connection, fold_key: str) -> list[sqlite3.Row]:
+    """Books by every author spelling that folds to ``fold_key``.
+
+    ``GROUP BY b.ppn`` because a title credited to two spellings of one name would
+    otherwise appear on the shelf twice.
+    """
+    return conn.execute(
+        "SELECT b.* FROM books b JOIN book_authors ba ON ba.book_ppn = b.ppn "
+        "JOIN authors a ON a.id = ba.author_id WHERE a.name_fold = ? "
+        "GROUP BY b.ppn ORDER BY b.year DESC, b.title COLLATE NOCASE LIMIT 300",
+        (fold_key,)).fetchall()
 
 
 def series_books(conn: sqlite3.Connection, name: str) -> list[sqlite3.Row]:

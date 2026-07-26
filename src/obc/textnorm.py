@@ -64,6 +64,18 @@ def fold(value: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
 
+def slugify(value: str | None) -> str:
+    """URL slug from a display name: 'Lisbeth Imbo' -> 'lisbeth-imbo'.
+
+    Built on :func:`fold`, so it is always URL-safe ASCII and — importantly —
+    reversible into a ``name_fold`` by swapping the dashes back to spaces. That
+    makes a slug an indexed lookup key rather than something to store. Names with
+    no Latin characters at all (Greek script, junk rows) fold to an empty string
+    and therefore have no slug; callers must handle that.
+    """
+    return fold(value).replace(" ", "-")
+
+
 # Author aliases: fold(variant) -> canonical display name. The catalog sometimes
 # lists the same person under shortened/variant names; collapse them here. Extend
 # as you spot more (left side is the folded form of any spelling that should map).
