@@ -382,6 +382,22 @@ def test_format_pages_are_not_a_catch_all_route(client):
     assert client.get("/zomaar-iets").status_code == 404
 
 
+def test_colliding_genre_spellings_share_one_page(client, ro_conn):
+    # the catalog holds "Biografieën" twice — combining diaeresis and precomposed —
+    # and both fold to `biografieen`. Keyed on the slug, a plain dict dropped one
+    # spelling and its books with it.
+    from obc.textnorm import slugify
+    from obc.web import app as appmod
+    from obc.web import queries
+    rows = queries.genre_index(ro_conn)
+    merged = appmod._genres(ro_conn)
+    assert sum(len(e["names"]) for e in merged.values()) == len(rows), "a genre vanished"
+    for slug, entry in merged.items():
+        assert slugify(entry["name"]) == slug
+        assert entry["titles"] == sum(
+            r["titles"] for r in rows if slugify(r["name"]) == slug)
+
+
 def test_genre_slugs_are_unique_and_stable(client, ro_conn):
     from obc.textnorm import slugify
     from obc.web import queries

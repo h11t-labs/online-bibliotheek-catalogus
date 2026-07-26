@@ -582,17 +582,31 @@ FORMAT_PAGES = {
 }
 
 
-def _genres(conn: sqlite3.Connection) -> dict[str, sqlite3.Row]:
-    """``{slug: row(name, titles)}`` for every genre with its own page."""
+def _genres(conn: sqlite3.Connection) -> dict[str, dict]:
+    """``{slug: {"name": display, "names": [spellings…], "titles": n}}``.
+
+    Genres collide the same way series do — the catalog holds "Biografieën" twice,
+    once with a combining diaeresis and once precomposed, and both fold to
+    `biografieen`. Keying a plain dict on the slug silently dropped one of them and
+    its books with it, so they are merged instead, as everywhere else.
+    """
     try:
         key = DB_PATH.stat().st_mtime_ns
     except OSError:
         key = None
     if _genres_cache["key"] == key and _genres_cache["data"] is not None:
         return _genres_cache["data"]
-    data = {slugify(row["name"]): row for row in queries.genre_index(conn)}
-    _genres_cache.update(key=key, data=data)
-    return data
+    merged: dict[str, dict] = {}
+    for row in queries.genre_index(conn):
+        slug = slugify(row["name"])
+        if not slug:
+            continue
+        # rows arrive title-count descending, so the first spelling wins the heading
+        entry = merged.setdefault(slug, {"name": row["name"], "names": [], "titles": 0})
+        entry["names"].append(row["name"])
+        entry["titles"] += row["titles"]
+    _genres_cache.update(key=key, data=merged)
+    return merged
 
 
 def _browse_page(request: Request, conn: sqlite3.Connection, *, heading: str,
@@ -912,9 +926,9 @@ def sitemap_books(request: Request, n: int, conn: sqlite3.Connection = Depends(g
 @app.get("/genres", response_class=HTMLResponse)
 def genres_index(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """Hub over the genre pages, largest genre first."""
-    rows = queries.genre_index(conn)
-    genres = [{"name": r["name"], "slug": slugify(r["name"]), "titles": r["titles"]}
-              for r in rows]
+    genres = sorted(({"name": e["name"], "slug": slug, "titles": e["titles"]}
+                     for slug, e in _genres(conn).items()),
+                    key=lambda g: (-g["titles"], g["name"].lower()))
     return _templates.TemplateResponse(request, "genres.html", {
         "genres": genres, "total": len(genres),
         "breadcrumbs": _breadcrumbs(request, ("Genres", "")),
@@ -926,17 +940,17 @@ def genres_index(request: Request, conn: sqlite3.Connection = Depends(get_conn))
 @app.get("/genre/{slug}", response_class=HTMLResponse)
 def genre_page(request: Request, slug: str,
                conn: sqlite3.Connection = Depends(get_conn)):
-    row = _genres(conn).get(slug.lower())
-    if row is None:
+    entry = _genres(conn).get(slugify(slug))
+    if entry is None:
         return HTMLResponse("<h1>Genre niet gevonden</h1>", status_code=404)
-    if slug != slug.lower():   # one canonical spelling per genre
-        return RedirectResponse(f"/genre/{slug.lower()}", status_code=301)
-    name = row["name"]
+    if slug != slugify(slug):   # one canonical spelling per genre
+        return RedirectResponse(f"/genre/{slugify(slug)}", status_code=301)
+    name = entry["name"]
     return _browse_page(
         request, conn, heading=name,
         lead=f"Alle titels in het genre {name} uit de collectie van de online "
              f"Bibliotheek.",
-        filters=queries.SearchFilters(genres=(name,), sort="year_desc"),
+        filters=queries.SearchFilters(genres=tuple(entry["names"]), sort="year_desc"),
         search_url=f"/?genre={quote(name, safe='')}", crumb=("Genres", "/genres"))
 
 
