@@ -759,7 +759,8 @@ def test_404_serves_the_branded_page_for_every_kind_of_miss(client):
              ("/author/zzz-niemand", "Auteur niet gevonden"),
              ("/series/zzz-geen-reeks", "Reeks niet gevonden"),
              ("/list/zzznope", "Lijst niet gevonden"),
-             ("/authors/zzz", "Geen auteurs onder deze letter"))
+             ("/authors/zzz", "Geen auteurs onder deze letter"),
+             ("/genre/bestaat-niet", "Genre niet gevonden"))
     for path, head in cases:
         r = client.get(path)
         assert r.status_code == 404, path

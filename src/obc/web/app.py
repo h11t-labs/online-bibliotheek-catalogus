@@ -328,6 +328,9 @@ _NOT_FOUND_COPY = {
     "author": ("Auteur niet gevonden",
                "Deze auteur staat niet in de catalogus — of de naam wordt net iets "
                "anders geschreven."),
+    "genre": ("Genre niet gevonden",
+              "Dit genre staat niet in de catalogus — kijk in het overzicht welke er "
+              "wel zijn."),
     "series": ("Reeks niet gevonden",
                "Deze reeks staat niet in de catalogus, of de delen staan er onder een "
                "andere reeksnaam."),
@@ -1048,7 +1051,7 @@ def genre_page(request: Request, slug: str,
                conn: sqlite3.Connection = Depends(get_conn)):
     entry = _genres(conn).get(slugify(slug))
     if entry is None:
-        return HTMLResponse("<h1>Genre niet gevonden</h1>", status_code=404)
+        return _not_found(request, "genre", _slug_words(slug))
     if slug != slugify(slug):   # one canonical spelling per genre
         return RedirectResponse(f"/genre/{slugify(slug)}", status_code=301)
     index = _genres(conn)
