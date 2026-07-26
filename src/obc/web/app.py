@@ -19,7 +19,7 @@ import re
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, unquote, urlencode
 
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
@@ -303,6 +303,114 @@ async def _db_unavailable(request: Request, exc: sqlite3.OperationalError):
         "<p style='color:#7a6a5a;line-height:1.6'>De database is nog niet geladen. "
         "Kom over een moment terug.</p></body></html>",
         status_code=503)
+
+
+# --------------------------------------------------------------------------- #
+# 404
+# --------------------------------------------------------------------------- #
+# Heading + explanation per kind of miss. A dead /book/… link is a different
+# situation from a mistyped URL, and saying which one it is beats one generic
+# "niet gevonden" for every case.
+_NOT_FOUND_COPY = {
+    "page": ("Deze pagina bestaat niet",
+             "De link klopt niet (meer), of er is een typefout in het adres geslopen."),
+    "book": ("Dit boek staat niet in de catalogus",
+             "Mogelijk is de titel uit de collectie gehaald, of klopt de link niet meer."),
+    "author": ("Auteur niet gevonden",
+               "Deze auteur staat niet in de catalogus — of de naam wordt net iets "
+               "anders geschreven."),
+    "series": ("Reeks niet gevonden",
+               "Deze reeks staat niet in de catalogus, of de delen staan er onder een "
+               "andere reeksnaam."),
+    "list": ("Lijst niet gevonden",
+             "Deze lijst bestaat niet (meer). In het lijstenoverzicht staan ze allemaal."),
+    "letter": ("Geen auteurs onder deze letter",
+               "Onder deze letter staat niemand in de catalogus. Kies een andere letter "
+               "in het auteursoverzicht."),
+}
+# A path segment worth feeding to the suggester: a plain word slug. Keeps the
+# random URLs bots probe (``/wp-login.php``, ``/.env``) from each costing an
+# FTS query for nothing.
+_WORDY_SLUG = re.compile(r"[a-z][a-z0-9]{2,}(?:-[a-z0-9]+)*$", re.IGNORECASE)
+
+
+def _slug_words(value: str) -> str:
+    """A slug or encoded path segment as a plain search phrase.
+
+    ``annie-mg-schmidt`` -> ``annie mg schmidt``.
+    """
+    return re.sub(r"[\s\-_]+", " ", unquote(value)).strip()
+
+
+def _near_matches(term: str, limit: int = 6, titles: bool = True) -> list[dict]:
+    """Best-effort "bedoelde je" links for ``term``.
+
+    Runs on a page that is itself an error, so it never raises: no catalog, a
+    half-built one or a term FTS can't parse simply yields no suggestions.
+
+    ``titles=False`` for a mistyped *site* URL: an author or list whose name
+    matches is a real answer, but AND-ing the words of "/veelgestelde-vragen"
+    over the full text index just dredges up unrelated books.
+    """
+    if not term:
+        return []
+    try:
+        conn = queries.connect_ro(DB_PATH)
+    except sqlite3.Error:
+        return []
+    try:
+        data = queries.suggest(conn, term, limit)
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+    if not data:
+        return []
+    # Authors and lists first: they are whole destinations, while a title row is
+    # one book out of many that matched the same words.
+    out = [{"kind": "author", "icon": "author", "label": name, "url": _author_path(name)}
+           for name in data["authors"]]
+    out += [{"kind": "list", "icon": "list", "label": lst["name"],
+             "url": f"/list/{lst['slug']}"} for lst in data["lists"]]
+    # A genre has no page of its own; it is a filter on the browse view.
+    out += [{"kind": "genre", "icon": "genre", "label": name,
+             "url": f"/?genre={quote(name, safe='')}"} for name in data["genres"]]
+    if titles:
+        out += [{"kind": "book", "icon": "book", "label": row["title"] or "—",
+                 "sub": row["author"] or "", "url": f"/book/{row['ppn']}"}
+                for row in data["title_rows"]]
+    return out[:limit]
+
+
+def _not_found(request: Request, kind: str = "page", term: str = "") -> Response:
+    """The site's 404 page: what was missed, what to do next, close matches.
+
+    ``term`` is the words behind the failed URL (an author slug, a list slug);
+    it prefills the search box and drives the suggestions. Pass "" where the URL
+    holds no readable words — a PPN, say — so the box opens empty instead of
+    seeded with catalog gibberish.
+    """
+    head, lead = _NOT_FOUND_COPY.get(kind, _NOT_FOUND_COPY["page"])
+    return _templates.TemplateResponse(request, "404.html", {
+        "kind": kind, "head": head, "lead": lead, "term": term,
+        "matches": _near_matches(term, titles=kind != "page"),
+        # Error pages are never worth indexing, but their links are worth crawling.
+        "robots": "noindex,follow",
+        "meta_description": f"{head} — zoek in de collectie van de online Bibliotheek."},
+        status_code=404)
+
+
+@app.exception_handler(404)
+async def _route_not_found(request: Request, exc):
+    """Unmatched URLs. Without this they get FastAPI's ``{"detail":"Not Found"}``.
+
+    The last path segment is often a readable slug (an old or mistyped link), so
+    it seeds the search — but only when it looks like words rather than the
+    random paths scanners probe.
+    """
+    tail = request.url.path.rstrip("/").rsplit("/", 1)[-1]
+    term = _slug_words(tail) if _WORDY_SLUG.match(tail) else ""
+    return _not_found(request, "page", term)
 
 
 @app.get("/healthz", include_in_schema=False)
@@ -591,7 +699,7 @@ def series_page(request: Request, name: str, conn: sqlite3.Connection = Depends(
     else:
         rows = queries.series_books(conn, (name,))
     if not rows:
-        return HTMLResponse("<h1>Reeks niet gevonden</h1>", status_code=404)
+        return _not_found(request, "series", _slug_words(name))
     formats_map = queries.formats_map(conn, rows)
     return _templates.TemplateResponse(request, "series.html", {
         "name": name, "books": rows, "total": len(rows), "formats_map": formats_map,
@@ -774,7 +882,7 @@ def authors_letter(request: Request, letter: str, sort: str = BY_SURNAME,
     index = _author_index(conn, sort)
     key = letter.upper() if len(letter) == 1 else letter.lower()
     if key not in index:
-        return HTMLResponse("<h1>Geen auteurs onder deze letter</h1>", status_code=404)
+        return _not_found(request, "letter")
     # One canonical spelling per letter, so /authors/A and /authors/a don't become
     # two URLs with the same content.
     canonical = key.lower()
@@ -816,7 +924,7 @@ def author_page(request: Request, name: str, conn: sqlite3.Connection = Depends(
         # nothing, so they have no slug and stay on their encoded URL.
         rows = queries.author_books(conn, name)
     if not rows:
-        return HTMLResponse("<h1>Auteur niet gevonden</h1>", status_code=404)
+        return _not_found(request, "author", _slug_words(name))
     formats_map = queries.formats_map(conn, rows)
     lists_map = queries.lists_map(conn, rows)
     # distinct lists/awards across this author's books (newest year first)
@@ -852,7 +960,7 @@ def list_detail(request: Request, slug: str, show: str = "",
                 conn: sqlite3.Connection = Depends(get_conn)):
     lst = queries.list_row(conn, slug)
     if lst is None:
-        return HTMLResponse("<h1>Lijst niet gevonden</h1>", status_code=404)
+        return _not_found(request, "list", _slug_words(slug))
     rows = queries.list_items(conn, lst["id"])
     total = len(rows)
     available = sum(1 for i in rows if i["ppn"])
@@ -873,7 +981,8 @@ def list_detail(request: Request, slug: str, show: str = "",
 def book(request: Request, ppn: str, conn: sqlite3.Connection = Depends(get_conn)):
     detail = queries.book_detail(conn, ppn)
     if detail is None:
-        return HTMLResponse("<h1>Niet gevonden</h1>", status_code=404)
+        # A PPN carries no readable words, so nothing seeds the search box here.
+        return _not_found(request, "book")
     b = detail["row"]
     summary = (b["summary"] or "").strip()
     cover = _coverw(b["cover_url"], 400)

@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}{{ head }} · Online Bibliotheek Catalogus{% endblock %}
+{% block style %}
+  main{width:100%;max-width:760px}
+  .nf{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:34px 34px 30px;text-align:center}
+  .nf-kicker{font-size:12px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--ink-soft)}
+  /* the shelf illustration paints from CSS, not fill="…" attributes: a presentation
+     attribute can't resolve var(), so the palette (and the dark theme with it)
+     would be lost on every spine */
+  .shelf{width:100%;max-width:330px;height:auto;margin:14px auto 20px}
+  .shelf .sp{fill:var(--line-strong)}
+  .shelf .sp-a{fill:var(--accent)}
+  .shelf .sp-g{fill:var(--gold)}
+  .shelf .det{fill:var(--card);opacity:.55}
+  .shelf .slot{fill:none;stroke:var(--line-strong);stroke-width:2;stroke-dasharray:6 6}
+  .shelf .qm{font-family:var(--serif);font-size:34px;fill:var(--ink-soft);opacity:.6}
+  .nf h1{font-family:var(--serif);font-size:clamp(24px,4.4vw,36px);line-height:1.15;margin:0 0 10px}
+  .nf-lead{color:var(--ink-soft);line-height:1.6;max-width:46ch;margin:0 auto}
+
+  /* search: the one thing that actually rescues a dead link, so it gets the
+     weight here instead of the header's compact pill */
+  .nf-form{display:flex;gap:8px;margin:24px auto 0;max-width:520px}
+  .nf-form input{flex:1;min-width:0;border:1px solid var(--line-strong);border-radius:999px;
+    background:var(--bg-soft);color:var(--ink);font:inherit;font-size:15px;
+    padding:12px 18px;outline:none}
+  .nf-form input:focus{border-color:var(--accent)}
+  .nf-form button{flex:none}
+
+  /* "bedoelde je" — left-aligned rows inside the centred card, because names read
+     as a list, not as a centred paragraph */
+  .dym{margin-top:26px;padding-top:20px;border-top:1px solid var(--line);text-align:left}
+  .dym-label{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ink-soft);margin-bottom:8px}
+  .dym-item{display:flex;align-items:center;gap:12px;padding:9px 10px;border-radius:12px;
+    transition:background .13s ease}
+  .dym-item:hover{background:var(--accent-soft)}
+  .dym-ic{flex:none;width:32px;height:32px;display:grid;place-items:center;border-radius:50%;
+    background:var(--accent-soft);color:var(--accent)}
+  .dym-ic svg{width:16px;height:16px}
+  .dym-item:hover .dym-ic{background:var(--card)}
+  .dym-txt{min-width:0}
+  .dym-t{display:block;font-family:var(--serif);font-size:17px;line-height:1.2;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dym-s{display:block;font-size:13px;color:var(--ink-soft);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* 240px min so the four cards land as a 2×2 block; at 168px they broke 3 + 1,
+     leaving the last one stranded on its own row */
+  .nf-links{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+    gap:12px;margin-top:22px}
+  .nf-card{display:flex;align-items:flex-start;gap:11px;text-align:left;padding:14px;
+    border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--bg-soft);
+    transition:border-color .14s ease,transform .14s ease}
+  .nf-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .nf-card svg{flex:none;width:18px;height:18px;margin-top:2px;color:var(--accent)}
+  .nf-card b{display:block;font-size:14.5px;font-weight:600;color:var(--ink)}
+  .nf-card span{display:block;font-size:12.5px;color:var(--ink-soft);line-height:1.35}
+  @media (max-width:480px){ .nf{padding:26px 18px 22px} .nf-form{flex-direction:column} }
+  @media (prefers-reduced-motion:reduce){ .nf-card:hover{transform:none} }
+{% endblock %}
+{% block body %}
+<main>
+  <div class="nf">
+    <div class="nf-kicker">404 · niet gevonden</div>
+    {# a shelf with one book missing — the page's whole message in one glance #}
+    <svg class="shelf" viewBox="0 0 340 136" aria-hidden="true">
+      <g>
+        <rect class="sp-a" x="34" y="40" width="24" height="76" rx="4" opacity=".9"/>
+        <rect class="det" x="38" y="52" width="16" height="2.5" rx="1.25"/>
+        <rect class="sp-g" x="62" y="28" width="17" height="88" rx="4" opacity=".85"/>
+        <rect class="sp" x="83" y="48" width="27" height="68" rx="4"/>
+        <rect class="det" x="88" y="60" width="17" height="2.5" rx="1.25"/>
+        <rect class="sp-a" x="114" y="34" width="18" height="82" rx="4" opacity=".45"/>
+      </g>
+      <g>
+        <rect class="slot" x="140" y="26" width="40" height="90" rx="6"/>
+        <text class="qm" x="160" y="82" text-anchor="middle">?</text>
+      </g>
+      <g>
+        <rect class="sp-a" x="188" y="38" width="23" height="78" rx="4" opacity=".7"/>
+        <rect class="sp" x="215" y="52" width="17" height="64" rx="4"/>
+        <rect class="sp-g" x="236" y="30" width="26" height="86" rx="4" opacity=".6"/>
+        <rect class="det" x="241" y="44" width="16" height="2.5" rx="1.25"/>
+        <rect class="sp-a" x="266" y="42" width="19" height="74" rx="4" opacity=".85"/>
+        {# the last one leans into the gap the missing book left #}
+        <rect class="sp" x="288" y="46" width="18" height="70" rx="4"
+              transform="rotate(9 297 116)"/>
+      </g>
+      <rect class="sp" x="16" y="116" width="308" height="8" rx="4"/>
+    </svg>
+    <h1>{{ head }}</h1>
+    <p class="nf-lead">{{ lead }}</p>
+
+    <form class="nf-form" action="/" method="get" role="search">
+      <input type="search" name="q" value="{{ term }}" autocomplete="off"
+             placeholder="Zoek op titel, auteur of onderwerp…" aria-label="Zoeken in de catalogus">
+      <button class="btn" type="submit">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        Zoeken
+      </button>
+    </form>
+
+    {% if matches %}
+    <div class="dym">
+      <div class="dym-label">Bedoelde je</div>
+      {% for m in matches %}
+      <a class="dym-item" href="{{ m.url }}">
+        <span class="dym-ic"><svg><use href="#ic-{{ m.icon }}"/></svg></span>
+        <span class="dym-txt">
+          <span class="dym-t">{{ m.label }}</span>
+          {% if m.sub %}<span class="dym-s">{{ m.sub }}</span>{% endif %}
+        </span>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="nf-links">
+      <a class="nf-card" href="/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <span class="nf-card-txt"><b>Alle boeken</b><span>Zoeken en filteren in de collectie</span></span>
+      </a>
+      <a class="nf-card" href="/authors">
+        <svg><use href="#ic-author"/></svg>
+        <span class="nf-card-txt"><b>Auteurs</b><span>Blader op naam door alle schrijvers</span></span>
+      </a>
+      <a class="nf-card" href="/lists">
+        <svg><use href="#ic-award"/></svg>
+        <span class="nf-card-txt"><b>Lijsten</b><span>Bestsellers, prijzen &amp; nominaties</span></span>
+      </a>
+      <a class="nf-card" href="/about">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
+        <span class="nf-card-txt"><b>Over deze catalogus</b><span>Wat dit is en hoe het werkt</span></span>
+      </a>
+    </div>
+  </div>
+</main>
+{% endblock %}
