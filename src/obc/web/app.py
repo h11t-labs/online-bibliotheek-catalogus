@@ -203,7 +203,14 @@ _CSP = (
 # OBC_SITE_URL is set as a Fly secret and only shadows the [env] default, so a
 # blanket rule would silently 301 the live domain onto whatever a stale config
 # said — deindexing the site. An alias that no longer matches just serves the page.
-_CANONICAL_HOST = SITE_URL.split("//", 1)[-1] if SITE_URL else ""
+def _hostname(value: str) -> str:
+    """Bare hostname from an origin or a Host header — no scheme, no port, folded."""
+    return value.split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0].lower()
+
+
+# Compared port-less on both sides: a SITE_URL carrying a port (local runs, a
+# staging origin) would otherwise match nothing and quietly disable the redirect.
+_CANONICAL_HOST = _hostname(SITE_URL) if SITE_URL else ""
 # Health checks and the cron machine reach the app over the private network under
 # the machine's own Host; those paths are never redirected.
 _NO_REDIRECT = ("/healthz", "/admin/")
@@ -211,7 +218,7 @@ _NO_REDIRECT = ("/healthz", "/admin/")
 
 def _is_alias(host: str) -> bool:
     """Is ``host`` a known alias of the canonical one (so safe to 301 away)?"""
-    host = host.split(":", 1)[0].lower()
+    host = _hostname(host)
     if not _CANONICAL_HOST or not host or host == _CANONICAL_HOST:
         return False
     return host == f"www.{_CANONICAL_HOST}" or host.endswith(".fly.dev")
@@ -716,9 +723,18 @@ def facet(kind: str = Query("", alias="type"), q: str = "",
 # --------------------------------------------------------------------------- #
 # Starlette's plain Route adds HEAD alongside GET; FastAPI's APIRoute does not, so
 # every page answered `HEAD` with 405. Link checkers, uptime monitors and some
-# crawlers probe with HEAD first and read that as a broken URL. Registering HEAD on
-# the existing GET routes is enough: the handler runs, and the server drops the
-# body off the response.
-for _route in app.routes:
+# crawlers probe with HEAD first and read that as a broken URL.
+#
+# Each GET gets a *twin* HEAD route rather than an extra method on the original.
+# APIRoute freezes its `unique_id` at construction, so widening `methods`
+# afterwards would publish a second OpenAPI operation carrying the GET's
+# operationId — ten duplicate IDs in /openapi.json. The twins are kept out of the
+# schema entirely, which is also the truthful description: HEAD is transport
+# plumbing here, not a distinct operation. The handler still runs; the server
+# drops the body off the response.
+for _route in list(app.routes):
     if isinstance(_route, APIRoute) and "GET" in (_route.methods or ()):
-        _route.methods = set(_route.methods or ()) | {"HEAD"}
+        app.add_api_route(
+            _route.path, _route.endpoint, methods=["HEAD"], include_in_schema=False,
+            name=_route.name, response_class=_route.response_class,
+            dependencies=_route.dependencies)

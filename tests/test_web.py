@@ -314,6 +314,19 @@ def test_head_is_answered_like_get(client):
         assert head.headers.get("cache-control") == get.headers.get("cache-control"), path
 
 
+def test_head_twins_stay_out_of_the_openapi_schema(client):
+    # APIRoute freezes unique_id at construction, so widening an existing route's
+    # methods would publish a HEAD operation carrying the GET's operationId
+    import collections
+    schema = client.get("/openapi.json").json()
+    ops = [(m, op.get("operationId"))
+           for p, methods in schema["paths"].items() for m, op in methods.items()]
+    assert ops, "schema unexpectedly empty"
+    assert not [m for m, _ in ops if m == "head"]
+    dupes = [i for i, n in collections.Counter(i for _, i in ops).items() if n > 1]
+    assert not dupes, dupes
+
+
 def test_alternate_hosts_redirect_to_the_canonical_one(client, monkeypatch):
     from obc.web import app as appmod
     monkeypatch.setattr(appmod, "SITE_URL", "https://example.nl")
@@ -347,6 +360,20 @@ def test_only_known_aliases_are_redirected(client, monkeypatch):
                  "www.something-else.nl"):
         assert client.get("/", headers={"host": host},
                           follow_redirects=False).status_code == 200, host
+
+
+def test_alias_matching_ignores_ports_on_both_sides(client, monkeypatch):
+    # a SITE_URL carrying a port (a local run, a staging origin) must still
+    # recognise its own host and its www. alias, not silently match nothing
+    from obc.web import app as appmod
+    monkeypatch.setattr(appmod, "SITE_URL", "http://example.nl:8001")
+    monkeypatch.setattr(appmod, "_CANONICAL_HOST", appmod._hostname("http://example.nl:8001"))
+    assert appmod._CANONICAL_HOST == "example.nl"
+    assert client.get("/", headers={"host": "example.nl:8001"},
+                      follow_redirects=False).status_code == 200
+    r = client.get("/", headers={"host": "www.example.nl:8001"}, follow_redirects=False)
+    assert r.status_code == 301
+    assert r.headers["location"] == "http://example.nl:8001/"
 
 
 def test_no_host_redirect_without_a_configured_site_url(client):
