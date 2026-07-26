@@ -77,12 +77,12 @@
        page — a plain 1fr/1fr splits leftover space equally but bases differ, so the
        wider nav would shove the box left of centre */
     .site-header .row{max-width:1240px;margin:0 auto;padding:14px 24px;display:grid;
-      grid-template-columns:minmax(0,1fr) minmax(0,480px) minmax(0,1fr);gap:22px;align-items:center}
-    /* below ~1240px a centred 480px box would collide with the wider nav, so fill the
-       middle column instead (box stays ≤480, brand/nav never overlap it) */
-    @media (min-width:721px) and (max-width:1239px){
-      .site-header .row{grid-template-columns:1fr minmax(0,480px) 1fr}
-    }
+      grid-template-columns:1fr minmax(0,480px) 1fr;gap:22px;align-items:center}
+    /* `1fr`, not `minmax(0,1fr)`: the side tracks keep a min-content floor, so the
+       brand and the nav can never be squeezed narrower than they render and the
+       search box gives way instead. Centring the box exactly would need both side
+       tracks as wide as the nav (446px since it gained Authors) — a ~1460px header,
+       wider than the content sitting under it. */
     .brand{justify-self:start;display:flex;align-items:center;gap:11px;font-family:var(--serif);
       font-weight:700;letter-spacing:.2px;white-space:nowrap}
     /* long site name reads as a compact two-line logo lockup beside the icon */

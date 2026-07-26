@@ -178,6 +178,25 @@ def test_authors_are_alphabetised_on_surname(client):
     assert client.get("/authors/b").status_code == 404     # ...and not here
 
 
+def test_hub_can_alphabetise_on_first_name_too(client, ro_conn):
+    # both orders are defensible — hunting a known writer you look under the
+    # surname, browsing you recognise the whole name — so the hub offers both
+    from obc.web import app as appmod
+    by_surname = appmod._author_index(ro_conn, appmod.BY_SURNAME)
+    by_first = appmod._author_index(ro_conn, appmod.BY_FIRST)
+    assert list(by_surname) == ["W"]        # Bob de Wit
+    assert list(by_first) == ["B"]          # ...same author, other letter
+    assert client.get("/authors/b").status_code == 404
+    assert client.get("/authors/b?sort=voornaam").status_code == 200
+    hub = client.get("/authors?sort=voornaam").text
+    assert 'href="/authors/b?sort=voornaam"' in hub     # letter links keep the order
+    assert 'class="on"' in hub
+    # an unknown value falls back rather than 404s, and the canonical stays clean
+    assert client.get("/authors?sort=onzin").status_code == 200
+    assert '<link rel="canonical" href="http://testserver/authors">' in \
+        client.get("/authors?sort=voornaam").text
+
+
 def test_hub_counts_match_the_page_they_link_to(client, ro_conn):
     # the threshold decides what goes in the sitemap, so a count that disagrees
     # with its own page would publish a "2 titles" author whose page shows one

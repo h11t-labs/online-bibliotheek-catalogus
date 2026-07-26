@@ -365,13 +365,21 @@ _authors_cache: dict = {"key": None, "data": None}
 _OTHER_LETTER = "overig"  # names that don't start with a plain A-Z letter
 
 
-def _author_letter(name: str) -> str:
-    """Bucket an author under the first letter of their surname, or the catch-all."""
-    first = surname_key(name)[:1].upper()
+# Two ways to alphabetise a name index, both defensible: readers hunting a known
+# writer look under the surname, readers browsing recognise the whole name.
+BY_SURNAME, BY_FIRST = "achternaam", "voornaam"
+AUTHOR_SORTS = (BY_SURNAME, BY_FIRST)
+
+
+def _author_letter(name: str, by: str = BY_SURNAME) -> str:
+    """Bucket an author under a letter, or the catch-all."""
+    key = surname_key(name) if by == BY_SURNAME else slugify(name)
+    first = key[:1].upper()
     return first if "A" <= first <= "Z" else _OTHER_LETTER
 
 
-def _author_index(conn: sqlite3.Connection) -> dict[str, list[dict]]:
+def _author_index(conn: sqlite3.Connection,
+                  by: str = BY_SURNAME) -> dict[str, list[dict]]:
     """``{"A": [{name, titles}…], …, "overig": […]}`` — authors with their own page.
 
     Spelling variants are folded together first, because that is what the slug URL
@@ -383,8 +391,11 @@ def _author_index(conn: sqlite3.Connection) -> dict[str, list[dict]]:
         key = DB_PATH.stat().st_mtime_ns
     except OSError:
         key = None
-    if _authors_cache["key"] == key and _authors_cache["data"] is not None:
-        return _authors_cache["data"]
+    if _authors_cache["key"] != key or _authors_cache["data"] is None:
+        _authors_cache.update(key=key, data={})
+    cached = _authors_cache["data"]
+    if by in cached:
+        return cached[by]
     counts = queries.author_title_counts(conn)
     merged: dict[str, dict] = {}
     for row in queries.author_index(conn):
@@ -397,14 +408,15 @@ def _author_index(conn: sqlite3.Connection) -> dict[str, list[dict]]:
         # seen for a key is the one that carries the most titles
         merged.setdefault(row["fold"],
                           {"name": row["name"], "titles": counts.get(row["fold"], 0)})
+    sort_key = surname_key if by == BY_SURNAME else slugify
     buckets: dict[str, list[dict]] = {}
     for entry in merged.values():
         if entry["titles"] >= queries.MIN_INDEXABLE_TITLES:
-            buckets.setdefault(_author_letter(entry["name"]), []).append(entry)
-    # surname first, then the full name, so a letter page reads as a name index
+            buckets.setdefault(_author_letter(entry["name"], by), []).append(entry)
+    # the chosen key first, then the whole name, so a letter page reads as an index
     for rows in buckets.values():
-        rows.sort(key=lambda e: (surname_key(e["name"]), slugify(e["name"])))
-    _authors_cache.update(key=key, data=buckets)
+        rows.sort(key=lambda e: (sort_key(e["name"]), slugify(e["name"])))
+    cached[by] = buckets
     return buckets
 
 
@@ -726,18 +738,20 @@ def sitemap_books(request: Request, n: int, conn: sqlite3.Connection = Depends(g
 
 
 @app.get("/authors", response_class=HTMLResponse)
-def authors_index(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+def authors_index(request: Request, sort: str = BY_SURNAME,
+                  conn: sqlite3.Connection = Depends(get_conn)):
     """A-Z hub over the author pages.
 
     Author pages used to hang off individual book pages only, which left ~10k of
     the site's most search-worthy pages ("boeken van X") several clicks deep and
     out of every sitemap.
     """
-    index = _author_index(conn)
+    sort = sort if sort in AUTHOR_SORTS else BY_SURNAME
+    index = _author_index(conn, sort)
     letters = _letter_order(index)
     total = sum(len(rows) for rows in index.values())
     return _templates.TemplateResponse(request, "authors.html", {
-        "letters": letters, "letter": "", "authors": [], "total": total,
+        "letters": letters, "letter": "", "authors": [], "total": total, "sort": sort,
         "counts": {ltr: len(index[ltr]) for ltr in letters},
         "meta_description": f"Blader alfabetisch door {_nlnum(total)} auteurs met "
                             f"meerdere titels in de online Bibliotheek — e-books en "
@@ -745,9 +759,10 @@ def authors_index(request: Request, conn: sqlite3.Connection = Depends(get_conn)
 
 
 @app.get("/authors/{letter}", response_class=HTMLResponse)
-def authors_letter(request: Request, letter: str,
+def authors_letter(request: Request, letter: str, sort: str = BY_SURNAME,
                    conn: sqlite3.Connection = Depends(get_conn)):
-    index = _author_index(conn)
+    sort = sort if sort in AUTHOR_SORTS else BY_SURNAME
+    index = _author_index(conn, sort)
     key = letter.upper() if len(letter) == 1 else letter.lower()
     if key not in index:
         return HTMLResponse("<h1>Geen auteurs onder deze letter</h1>", status_code=404)
@@ -755,12 +770,14 @@ def authors_letter(request: Request, letter: str,
     # two URLs with the same content.
     canonical = key.lower()
     if letter != canonical:
-        return RedirectResponse(f"/authors/{canonical}", status_code=301)
+        return RedirectResponse(f"/authors/{canonical}" +
+                                (f"?sort={sort}" if sort != BY_SURNAME else ""),
+                                status_code=301)
     rows = index[key]
     label = key.upper() if key != _OTHER_LETTER else "Overig"
     return _templates.TemplateResponse(request, "authors.html", {
         "letters": _letter_order(index), "letter": key, "label": label,
-        "authors": rows, "total": len(rows),
+        "authors": rows, "total": len(rows), "sort": sort,
         "counts": {ltr: len(index[ltr]) for ltr in index},
         "meta_description": f"{_nlnum(len(rows))} auteurs waarvan de naam met {label} "
                             f"begint, met al hun e-books en luisterboeken in de online "
