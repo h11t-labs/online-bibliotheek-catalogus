@@ -144,8 +144,8 @@ def test_hub_lists_one_entry_per_slug(client, ro_conn):
     # that lead to the same page — folding decides both the entry and who
     # qualifies, since two rows of one title each are one author with two
     from obc.textnorm import slugify
-    from obc.web import app as appmod
-    index = appmod._author_index(ro_conn)
+    from obc.web import indexes as indexmod
+    index = indexmod.authors_by_letter(ro_conn)
     entries = [e for rows in index.values() for e in rows]
     slugs = [slugify(e["name"]) for e in entries]
     assert len(set(slugs)) == len(slugs), "two hub entries share a slug"
@@ -227,9 +227,9 @@ def test_authors_are_alphabetised_on_surname(client):
 def test_hub_can_alphabetise_on_first_name_too(client, ro_conn):
     # both orders are defensible — hunting a known writer you look under the
     # surname, browsing you recognise the whole name — so the hub offers both
-    from obc.web import app as appmod
-    by_surname = appmod._author_index(ro_conn, appmod.BY_SURNAME)
-    by_first = appmod._author_index(ro_conn, appmod.BY_FIRST)
+    from obc.web import indexes as indexmod
+    by_surname = indexmod.authors_by_letter(ro_conn, indexmod.BY_SURNAME)
+    by_first = indexmod.authors_by_letter(ro_conn, indexmod.BY_FIRST)
     assert sorted(by_surname) == ["K", "L", "S", "V", "W"]   # Kok, Licht, Sol, Vrij, de Wit
     assert sorted(by_first) == ["A", "B", "C", "D", "E"]     # ...same five, by first name
     hub = client.get("/authors/w").text
@@ -248,9 +248,9 @@ def test_hub_counts_match_the_page_they_link_to(client, ro_conn):
     # the threshold decides what goes in the sitemap, so a count that disagrees
     # with its own page would publish a "2 titles" author whose page shows one
     from obc.textnorm import slugify
-    from obc.web import app as appmod
+    from obc.web import indexes as indexmod
     from obc.web import queries
-    for rows in appmod._author_index(ro_conn).values():
+    for rows in indexmod.authors_by_letter(ro_conn).values():
         for entry in rows:
             fold_key = slugify(entry["name"]).replace("-", " ")
             shelf = queries.author_books_by_fold(ro_conn, fold_key)
@@ -260,8 +260,8 @@ def test_hub_counts_match_the_page_they_link_to(client, ro_conn):
 def test_unsluggable_authors_are_not_merged_into_one_entry(client, ro_conn):
     # fold() returns "" for a name with no Latin characters; using that as a merge
     # key would fuse every such author into a single hub entry with a summed count
-    from obc.web import app as appmod
-    entries = [e for rows in appmod._author_index(ro_conn).values() for e in rows]
+    from obc.web import indexes as indexmod
+    entries = [e for rows in indexmod.authors_by_letter(ro_conn).values() for e in rows]
     assert not [e for e in entries if not e["name"].strip()]
     from obc.textnorm import slugify
     assert all(slugify(e["name"]) for e in entries), "an entry has no slug to link to"
@@ -380,10 +380,10 @@ def test_colliding_genre_spellings_share_one_page(client, ro_conn):
     # and both fold to `biografieen`. Keyed on the slug, a plain dict dropped one
     # spelling and its books with it.
     from obc.textnorm import slugify
-    from obc.web import app as appmod
+    from obc.web import indexes as indexmod
     from obc.web import queries
     rows = queries.genre_index(ro_conn)
-    merged = appmod._genres(ro_conn)
+    merged = indexmod.genres(ro_conn)
     assert sum(len(e["names"]) for e in merged.values()) == len(rows), "a genre vanished"
     for slug, entry in merged.items():
         assert slugify(entry["name"]) == slug
@@ -584,13 +584,18 @@ def test_head_twins_stay_out_of_the_openapi_schema(client):
 
 def test_alternate_hosts_redirect_to_the_canonical_one(client, monkeypatch):
     from obc.web import app as appmod
-    monkeypatch.setattr(appmod, "SITE_URL", "https://example.nl")
+    from obc.web import seo as seomod
+    monkeypatch.setattr(seomod, "SITE_URL", "https://example.nl")
     monkeypatch.setattr(appmod, "_CANONICAL_HOST", "example.nl")
 
     r = client.get("/book/001", headers={"host": "www.example.nl"},
                    follow_redirects=False)
     assert r.status_code == 301
     assert r.headers["location"] == "https://example.nl/book/001"
+    # the bounce is a response the site sends, so it carries the same security
+    # headers as any other — it gets them in the same middleware pass
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert "Content-Security-Policy" in r.headers
     # the query string survives the bounce
     r = client.get("/?q=de", headers={"host": "app.fly.dev"}, follow_redirects=False)
     assert r.headers["location"] == "https://example.nl/?q=de"
@@ -609,7 +614,8 @@ def test_only_known_aliases_are_redirected(client, monkeypatch):
     # two ever disagree, "301 anything that isn't SITE_URL" would bounce the live
     # domain onto a stale one and deindex the site — so unknown hosts are served.
     from obc.web import app as appmod
-    monkeypatch.setattr(appmod, "SITE_URL", "https://example.nl")
+    from obc.web import seo as seomod
+    monkeypatch.setattr(seomod, "SITE_URL", "https://example.nl")
     monkeypatch.setattr(appmod, "_CANONICAL_HOST", "example.nl")
     for host in ("onlinebibliotheekcatalogus.nl", "localhost:8000", "1.2.3.4:8000",
                  "www.something-else.nl"):
@@ -621,7 +627,8 @@ def test_alias_matching_ignores_ports_on_both_sides(client, monkeypatch):
     # a SITE_URL carrying a port (a local run, a staging origin) must still
     # recognise its own host and its www. alias, not silently match nothing
     from obc.web import app as appmod
-    monkeypatch.setattr(appmod, "SITE_URL", "http://example.nl:8001")
+    from obc.web import seo as seomod
+    monkeypatch.setattr(seomod, "SITE_URL", "http://example.nl:8001")
     monkeypatch.setattr(appmod, "_CANONICAL_HOST", appmod._hostname("http://example.nl:8001"))
     assert appmod._CANONICAL_HOST == "example.nl"
     assert client.get("/", headers={"host": "example.nl:8001"},
@@ -695,12 +702,13 @@ def test_missing_db_shows_friendly_bootstrap_page(catalog_db, monkeypatch):
     from fastapi.testclient import TestClient
 
     from obc.web import app as appmod
+    from obc.web import indexes as indexmod
 
-    monkeypatch.setattr(appmod, "DB_PATH", catalog_db.parent / "does-not-exist.db")
+    monkeypatch.setattr(indexmod, "DB_PATH", catalog_db.parent / "does-not-exist.db")
     monkeypatch.setattr(appmod, "author_bio", lambda name: None)
-    appmod._facets_cache.update(key=None, data=None)
+    indexmod.catalog_cache.clear()
     resp = TestClient(appmod.app).get("/stats")
-    appmod._facets_cache.update(key=None, data=None)
+    indexmod.catalog_cache.clear()
     assert resp.status_code == 503
     assert "wordt opgebouwd" in resp.text
 
@@ -838,13 +846,14 @@ def test_genre_hierarchy(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     from obc.web import app as appmod
+    from obc.web import indexes as indexmod
     from obc.web import queries
     path = _catalog_with_genre_parents(tmp_path)
-    monkeypatch.setattr(appmod, "DB_PATH", path)
+    monkeypatch.setattr(indexmod, "DB_PATH", path)
     monkeypatch.setattr(appmod, "author_bio", lambda name: None)
-    appmod._genres_cache.update(key=None, data=None)
+    indexmod.catalog_cache.clear()
     conn = queries.connect_ro(path)
-    index = appmod._genres(conn)
+    index = indexmod.genres(conn)
 
     assert index["thrillers"]["parent"] == "spanning-thrillers"
     assert "thrillers" in index["spanning-thrillers"]["children"]
@@ -858,13 +867,13 @@ def test_genre_hierarchy(tmp_path, monkeypatch):
     # jeugd and volwassenen are separate taxonomies, switched rather than stacked
     # A tree may only state what its own audience files: every parent it shows
     # must be one this audience's own rows actually name.
-    data = appmod._genre_data(conn)
+    data = indexmod.genre_data(conn)
     for aud, tops in data["trees"].items():
         for top in tops:
             for kid in top["children"]:
                 # books with an unknown audience land on the default shelf, so the
                 # check has to resolve the audience the way the app does
-                known = [a for a, _ in appmod.AUDIENCES]
+                known = [a for a, _ in indexmod.AUDIENCES]
                 marks = ",".join("?" * len(known))
                 named = conn.execute(
                     "SELECT COUNT(*) FROM book_genres bg "
@@ -875,7 +884,7 @@ def test_genre_hierarchy(tmp_path, monkeypatch):
                     f"  lower(COALESCE(b.audience, '')) IN ({marks}) "
                     "  THEN lower(COALESCE(b.audience, '')) ELSE ? END)",
                     (kid["name"], top["name"], aud, *known,
-                     appmod.AUDIENCES[0][0])).fetchone()[0]
+                     indexmod.AUDIENCES[0][0])).fetchone()[0]
                 assert named, f"{aud}: {kid['name']} under {top['name']}"
     assert 'class="audbar"' in hub
     assert 'href="/genres?publiek=jeugd"' in hub
@@ -894,4 +903,44 @@ def test_genre_hierarchy(tmp_path, monkeypatch):
     parent = client.get("/genre/spanning-thrillers").text
     assert 'class="subgenres"' in parent and 'href="/genre/thrillers"' in parent
     conn.close()
-    appmod._genres_cache.update(key=None, data=None)
+    indexmod.catalog_cache.clear()
+
+
+def test_catalog_cache_rebuilds_when_the_catalog_does(tmp_path, monkeypatch):
+    """A rebuild must invalidate every derived index at once.
+
+    `normalize` publishes a rebuild by swapping the file in, so the version is
+    the file's mtime. Everything derived from the catalog hangs off that single
+    key — which is the point of having one cache rather than four.
+    """
+    import sampledata
+
+    from obc import db
+    from obc.web import indexes as indexmod
+    from obc.web import queries
+
+    path = tmp_path / "catalog.db"
+
+    def build(records):
+        conn = db.connect(path)
+        db.bulk_load(conn, records, [])
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.close()
+
+    records = sampledata.records()
+    build(records)
+    monkeypatch.setattr(indexmod, "DB_PATH", path)
+    indexmod.catalog_cache.clear()
+
+    conn = queries.connect_ro(path)
+    before = len(indexmod.genres(conn))
+    conn.close()
+
+    # a second build with one genre fewer, published the way normalize does
+    stripped = [{**r, "subjects": []} for r in records]
+    path.unlink()
+    build(stripped)
+    conn = queries.connect_ro(path)
+    assert len(indexmod.genres(conn)) < before, "the cache outlived its catalog"
+    conn.close()
+    indexmod.catalog_cache.clear()

@@ -88,13 +88,22 @@ catalog and its recommendations together — readers never see one without the o
 
 ## Environment variables
 
-| Variable           | Example                | Purpose                                               |
-|--------------------|------------------------|-------------------------------------------------------|
-| `OBC_DB`           | `/app/data/catalog.db` | DB path (set in `fly.toml` + Dockerfile)              |
-| `OBC_REFRESH_TOKEN`| `…` (secret)           | Bearer token guarding `POST /admin/refresh`           |
-| `NYT_API_KEY`      | `…` (secret)           | Optional — enables the NYT bestseller lists           |
+| Variable                 | Example                            | Purpose                                                                 |
+|--------------------------|------------------------------------|-------------------------------------------------------------------------|
+| `OBC_DB`                 | `/app/data/catalog.db`             | DB path (set in `fly.toml` + Dockerfile)                                 |
+| `OBC_DATA`               | `data`                             | Root for *all* catalog data; `OBC_DB` defaults under it                  |
+| `OBC_SITE_URL`           | `https://onlinebibliotheekcatalogus.nl` | Absolute origin for canonical/OG/sitemap URLs, and the 301 target for known aliases |
+| `OBC_REFRESH_TOKEN`      | `…` (secret)                       | Bearer token guarding `POST /admin/refresh`                              |
+| `OBC_REFRESH_ON_STARTUP` | `1`                                | Refresh on every machine start (full harvest on an empty volume, else a sync) |
+| `OBC_ENRICH`             | `1`                                | Let the refresh fetch detail pages too; `0` pauses it                    |
+| `NYT_API_KEY`            | `…` (secret)                       | Optional — enables the NYT bestseller lists                              |
 
-`PORT` is provided by the host automatically.
+All of these except the two secrets are set in `fly.toml`'s `[env]`. `PORT` is
+provided by the host automatically.
+
+> `OBC_SITE_URL` is also settable as a Fly *secret*, which shadows the `[env]`
+> value. Keep the two in sync — a redeploy that drops the secret would otherwise
+> start pointing search engines at whatever the config says.
 
 ## Releasing a version
 
