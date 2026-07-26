@@ -19,7 +19,7 @@ import re
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -36,6 +36,12 @@ PER_PAGE_OPTIONS = (12, 24, 48, 96)  # selectable items-per-page (PAGE_SIZE is t
 # locally → those fall back to the request's own base URL.
 SITE_URL = os.environ.get("OBC_SITE_URL", "").rstrip("/")
 SITEMAP_PAGE = 45000  # book URLs per sitemap file (under the 50k/file limit)
+# The brand Google should print above the result instead of the bare domain. It
+# is fed to Search through WebSite structured data and og:site_name — the two
+# strongest signals, see https://developers.google.com/search/docs/appearance/site-names
+SITE_NAME = "Online Bibliotheek Catalogus"
+# Search Console "HTML tag" verification token; empty → no meta tag is rendered.
+GOOGLE_VERIFICATION = os.environ.get("OBC_GOOGLE_VERIFICATION", "").strip()
 
 _templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _STATIC = Path(__file__).parent / "static"
@@ -95,6 +101,27 @@ def _nldate(value) -> str:
     return f"{dt.day} {_NL_MONTHS[dt.month]} {dt.year}"
 
 
+def _rounded(n: int) -> str:
+    """``65.530`` -> ``'65.000+'``. Titles and meta descriptions quote the catalog
+    size, and the exact count shifts with every refresh — rounding keeps the
+    <title> stable between crawls instead of churning on each rebuild."""
+    return f"{n // 1000}.000+" if n >= 1000 else str(n)
+
+
+def _snippet(text: str, limit: int = 155) -> str:
+    """Turn a raw catalog summary into a meta description.
+
+    Publisher blurbs arrive wrapped in quote marks and padded with newlines, which
+    reads as broken text in a result snippet. Collapse the whitespace, drop the
+    wrapping quotes, and cut on a word boundary at roughly the width Search shows.
+    """
+    text = re.sub(r"\s+", " ", (text or "")).strip().strip('"“”\'')
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    return head[:head.rfind(" ")].rstrip(" ,;:-–—") + "…" if " " in head else head + "…"
+
+
 def _data_updated() -> float | None:
     """Epoch seconds the catalog was last (re)built — the DB file's mtime."""
     try:
@@ -109,6 +136,8 @@ _templates.env.globals["url_with"] = _url_with
 _templates.env.globals["url_without"] = _url_without
 _templates.env.globals["data_updated"] = _data_updated
 _templates.env.globals["site_url"] = SITE_URL
+_templates.env.globals["site_name"] = SITE_NAME
+_templates.env.globals["google_verification"] = GOOGLE_VERIFICATION
 
 try:
     from importlib.metadata import version as _pkg_version
@@ -353,8 +382,23 @@ def search(
         chips.append({"label": "Voor e-reader", "icon": "ereader",
                       "url": _url_with(state, ereader="", page=1)})
 
+    # WebSite structured data belongs on the home page only, and only on the bare
+    # browse: the filtered/paged variants are noindex, so marking them up as "the
+    # site" would just hand Search conflicting copies.
+    is_home = not (q or chips) and page == 1
     return _templates.TemplateResponse(request, "search.html", {
         "books": rows, "total": total, "total_indexed": total_indexed, "q": q,
+        "total_rounded": _rounded(total_indexed),
+        "meta_description": (
+            f"Doorzoek {_rounded(total_indexed)} e-books en luisterboeken van de online "
+            "Bibliotheek. Filter op genre, auteur, taal en jaar, en zie meteen of een "
+            "titel op je e-reader past."),
+        "jsonld": ({"@context": "https://schema.org", "@type": "WebSite",
+                    "name": SITE_NAME,
+                    "alternateName": ["Online Bibliotheek Zoekgids",
+                                      "Catalogus online Bibliotheek"],
+                    "url": _origin(request) + "/",
+                    "inLanguage": "nl-NL"} if is_home else None),
         "format": format_, "language": language, "genre": genre,
         "publisher": publisher, "author": author, "list": lists_, "ereader": ereader,
         "year_from": state["year_from"], "year_to": state["year_to"], "sort": sort,
@@ -378,19 +422,24 @@ def series_page(request: Request, name: str, conn: sqlite3.Connection = Depends(
         return HTMLResponse("<h1>Reeks niet gevonden</h1>", status_code=404)
     formats_map = queries.formats_map(conn, rows)
     return _templates.TemplateResponse(request, "series.html", {
-        "name": name, "books": rows, "total": len(rows), "formats_map": formats_map})
+        "name": name, "books": rows, "total": len(rows), "formats_map": formats_map,
+        "breadcrumbs": _breadcrumbs(request, (f"Reeks {name}", "")),
+        "meta_description": f"Alle {len(rows)} delen van de reeks {name} in de online "
+                            f"Bibliotheek — op volgorde, met e-book en luisterboek."})
 
 
 @app.get("/stats", response_class=HTMLResponse)
 def stats_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     data = queries.web_stats(conn)
-    return _templates.TemplateResponse(request, "stats.html", {"s": data})
+    return _templates.TemplateResponse(request, "stats.html", {
+        "s": data, "breadcrumbs": _breadcrumbs(request, ("Statistieken", ""))})
 
 
 @app.get("/over", response_class=HTMLResponse)
 def about(request: Request):
     """Static 'about' page — independent of the catalog DB so it always renders."""
-    return _templates.TemplateResponse(request, "over.html", {})
+    return _templates.TemplateResponse(request, "over.html", {
+        "breadcrumbs": _breadcrumbs(request, ("Over deze catalogus", ""))})
 
 
 # --------------------------------------------------------------------------- #
@@ -402,6 +451,24 @@ def _xml_escape(s: str) -> str:
 
 def _origin(request: Request) -> str:
     return SITE_URL or str(request.base_url).rstrip("/")
+
+
+def _breadcrumbs(request: Request, *trail: tuple[str, str]) -> dict:
+    """schema.org BreadcrumbList from ``(label, path)`` pairs, Home prepended.
+
+    Lets Search print a readable trail ("Home › Auteur › Titel") in place of the
+    raw URL. The final crumb is the page you're on, so it gets no ``item`` link
+    — pass an empty path for it.
+    """
+    base = _origin(request)
+    items = [{"@type": "ListItem", "position": 1, "name": "Home", "item": base + "/"}]
+    for pos, (label, path) in enumerate(trail, start=2):
+        crumb = {"@type": "ListItem", "position": pos, "name": label}
+        if path:
+            crumb["item"] = base + path
+        items.append(crumb)
+    return {"@context": "https://schema.org", "@type": "BreadcrumbList",
+            "itemListElement": items}
 
 
 def _sitemap(base: str, paths: list[str]) -> Response:
@@ -469,6 +536,7 @@ def author_page(request: Request, name: str, conn: sqlite3.Connection = Depends(
         "name": name, "books": rows, "total": len(rows),
         "formats_map": formats_map, "lists_map": lists_map,
         "author_lists": author_lists, "bio": author_bio(name),
+        "breadcrumbs": _breadcrumbs(request, (name, "")),
         "meta_description": f"Alle {len(rows)} titels van {name} in de online "
                             f"Bibliotheek — e-books en luisterboeken."})
 
@@ -479,7 +547,9 @@ def lists_overview(request: Request, sort: str = "name",
     if sort not in queries.LIST_SORTS:
         sort = "name"
     rows = queries.lists_overview(conn, sort)
-    return _templates.TemplateResponse(request, "lists.html", {"lists": rows, "sort": sort})
+    return _templates.TemplateResponse(request, "lists.html", {
+        "lists": rows, "sort": sort,
+        "breadcrumbs": _breadcrumbs(request, ("Lijsten", ""))})
 
 
 @app.get("/list/{slug}", response_class=HTMLResponse)
@@ -499,6 +569,7 @@ def list_detail(request: Request, slug: str, show: str = "",
         show, items = "", rows
     return _templates.TemplateResponse(request, "list_detail.html", {
         "lst": lst, "items": items, "available": available, "total": total, "show": show,
+        "breadcrumbs": _breadcrumbs(request, ("Lijsten", "/lists"), (lst["name"], "")),
         "meta_description": (lst["description"] or f"De lijst {lst['name']}")
                             + f" — {available} van {total} titels in de bibliotheek."})
 
@@ -528,8 +599,13 @@ def book(request: Request, ppn: str, conn: sqlite3.Connection = Depends(get_conn
         "b": b, "genres": detail["genres"], "editions": detail["editions"],
         "authors": detail["authors"], "book_lists": detail["book_lists"],
         "similar": similar,
-        "meta_description": summary[:300] or f"{b['title']} in de online Bibliotheek.",
-        "og_image": cover, "jsonld": jsonld})
+        "meta_description": _snippet(summary) or f"{b['title']} in de online Bibliotheek.",
+        "og_image": cover, "jsonld": jsonld,
+        "breadcrumbs": _breadcrumbs(
+            request,
+            *([(detail["authors"][0], f"/author/{quote(detail['authors'][0], safe='')}")]
+              if detail["authors"] else []),
+            (b["title"], ""))})
 
 
 # --------------------------------------------------------------------------- #

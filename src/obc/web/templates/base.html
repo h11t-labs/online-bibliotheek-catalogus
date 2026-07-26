@@ -16,8 +16,14 @@
   <meta property="og:description" content="{{ _desc }}">
   <meta property="og:url" content="{{ _canon }}">
   <meta property="og:locale" content="nl_NL">
+  <meta property="og:site_name" content="{{ site_name }}">
   {% if og_image %}<meta property="og:image" content="{{ og_image }}">
   <meta name="twitter:card" content="summary_large_image">{% else %}<meta name="twitter:card" content="summary">{% endif %}
+  {% if google_verification %}<meta name="google-site-verification" content="{{ google_verification }}">{% endif %}
+  {# Structured data. `jsonld` is the page's own entity (Book, WebSite, …); the
+     breadcrumb trail is emitted separately so pages can set either or both. #}
+  {% if jsonld %}<script type="application/ld+json">{{ jsonld | tojson }}</script>{% endif %}
+  {% if breadcrumbs %}<script type="application/ld+json">{{ breadcrumbs | tojson }}</script>{% endif %}
   <script>
     // Apply the saved theme before first paint (avoids a flash). 'system' or
     // unset leaves the prefers-color-scheme media query in charge.

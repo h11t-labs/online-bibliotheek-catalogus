@@ -39,6 +39,10 @@ The `obc` CLI auto-loads a `.env` file (copy from `.env.example`). Keys:
 - `OBC_DB` — optional path to the SQLite catalog file specifically. Defaults to
   `$OBC_DATA/catalog.db`; set it only if you want the DB somewhere other than the
   data root.
+- `OBC_GOOGLE_VERIFICATION` — optional Google Search Console token. Add the
+  site as a **URL-prefix** property, pick the "HTML tag" method and paste only the
+  `content="…"` value; the app then renders the verification `<meta>` tag on every
+  page. Unset → no tag. (A DNS TXT record works just as well and needs no deploy.)
 
 `.env` is gitignored; never commit your key.
 

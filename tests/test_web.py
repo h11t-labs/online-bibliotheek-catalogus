@@ -1,5 +1,8 @@
 """End-to-end route tests over the hermetic fixture catalog (see conftest)."""
 
+import json
+import re
+
 
 def test_home_and_filters(client):
     for path in ["/", "/?q=ontdekking", "/?format=ebook", "/?format=audiobook",
@@ -123,6 +126,75 @@ def test_seo_meta_and_jsonld(client):
     book = client.get("/book/001").text
     assert "application/ld+json" in book and "Book" in book
     assert 'property="og:image"' in book             # cover as OG image
+
+
+def _jsonld(body: str) -> list[dict]:
+    """Every ld+json block on a page, parsed."""
+    return [json.loads(m) for m in
+            re.findall(r'<script type="application/ld\+json">(.*?)</script>', body, re.S)]
+
+
+def test_site_name_signals_on_home(client):
+    # Google prints the site name above the result off WebSite structured data
+    # first and og:site_name second — without them it falls back to the domain.
+    home = client.get("/").text
+    assert 'property="og:site_name" content="Online Bibliotheek Catalogus"' in home
+    site = [d for d in _jsonld(home) if d.get("@type") == "WebSite"]
+    assert len(site) == 1
+    assert site[0]["name"] == "Online Bibliotheek Catalogus"
+    assert site[0]["url"].endswith("/")
+
+
+def test_website_jsonld_only_on_bare_home(client):
+    # the filtered/paged variants are noindex; marking them up as "the site" too
+    # would hand Search competing copies of the same entity
+    for path in ("/?q=de", "/?format=ebook", "/?page=2", "/over", "/book/001"):
+        assert not [d for d in _jsonld(client.get(path).text)
+                    if d.get("@type") == "WebSite"], path
+
+
+def test_home_title_and_description_quote_the_catalog_size(client):
+    home = client.get("/").text
+    assert "<title>Online Bibliotheek Catalogus — " in home   # brand first
+    assert "e-books en luisterboeken van de online Bibliotheek" in home
+
+
+def test_breadcrumbs_jsonld(client):
+    crumbs = [d for d in _jsonld(client.get("/book/001").text)
+              if d.get("@type") == "BreadcrumbList"]
+    assert len(crumbs) == 1
+    items = crumbs[0]["itemListElement"]
+    assert [i["position"] for i in items] == list(range(1, len(items) + 1))
+    assert items[0]["name"] == "Home" and items[0]["item"].endswith("/")
+    assert "item" not in items[-1]                   # the page you're on gets no link
+    # a book by a known author routes through that author's page
+    assert any(i.get("item", "").startswith(items[0]["item"] + "author/") for i in items)
+    # and the other detail pages carry a trail too
+    for path in ("/author/Anna Vrij", "/list/test-top", "/over", "/stats"):
+        body = client.get(path).text
+        assert any(d.get("@type") == "BreadcrumbList" for d in _jsonld(body)), path
+
+
+def test_book_meta_description_is_snippet_clean(client):
+    from obc.web.app import _snippet
+    # publisher blurbs arrive quote-wrapped and line-broken; a snippet must not
+    assert _snippet('  "Een\n  mooi   boek."  ') == "Een mooi boek."
+    assert _snippet("a" * 40 + " " + "b" * 200, limit=50).endswith("…")
+    assert len(_snippet("woord " * 100)) <= 156
+    assert not _snippet('"geciteerd"').startswith('"')
+    body = client.get("/book/001").text
+    desc = re.search(r'<meta name="description" content="(.*?)">', body).group(1)
+    assert desc and "\n" not in desc and not desc.startswith("&#34;")
+
+
+def test_google_verification_tag_opt_in(client, monkeypatch):
+    assert "google-site-verification" not in client.get("/").text
+    from obc.web import app as appmod
+    appmod._templates.env.globals["google_verification"] = "tok123"
+    try:
+        assert 'name="google-site-verification" content="tok123"' in client.get("/").text
+    finally:
+        appmod._templates.env.globals["google_verification"] = appmod.GOOGLE_VERIFICATION
 
 
 def test_goatcounter_snippet_present(client):
