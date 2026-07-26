@@ -331,7 +331,9 @@
     .pagehead .sub{color:var(--ink-soft)}
 
     footer{width:100%;max-width:1240px;margin:auto auto 0;padding:30px 24px;
-      color:var(--ink-soft);font-size:13px;border-top:1px solid var(--line)}
+      color:var(--ink-soft);font-size:13px;border-top:1px solid var(--line);
+      display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 24px}
+    footer .foot-meta{margin-left:auto;opacity:.6}
     {% block style %}{% endblock %}
   </style>
 </head>
@@ -482,10 +484,15 @@
   </div>
   {% block body %}{% endblock %}
   <footer>
-    Een zelfgemaakte zoekgids voor de collectie van de online Bibliotheek — om makkelijk je volgende boek te vinden.
+    <span>Een zelfgemaakte zoekgids voor de collectie van de online Bibliotheek — om makkelijk je volgende boek te vinden.</span>
     {% set _updated = data_updated() %}
-    {% if _updated %}<span style="opacity:.6"> · catalogus bijgewerkt op {{ _updated | nldate }}</span>{% endif %}
-    {% if app_version %}<span style="opacity:.6"> · v{{ app_version }}</span>{% endif %}
+    {% if _updated or app_version %}
+    <span class="foot-meta">
+      {%- if _updated %}catalogus bijgewerkt op {{ _updated | nldate }}{% endif -%}
+      {%- if _updated and app_version %} · {% endif -%}
+      {%- if app_version %}v{{ app_version }}{% endif -%}
+    </span>
+    {% endif %}
   </footer>
   <script>
   // Theme switcher: the icon button (desktop) cycles System -> Light -> Dark; the
