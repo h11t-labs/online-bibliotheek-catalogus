@@ -184,10 +184,11 @@ def test_hub_can_alphabetise_on_first_name_too(client, ro_conn):
     from obc.web import app as appmod
     by_surname = appmod._author_index(ro_conn, appmod.BY_SURNAME)
     by_first = appmod._author_index(ro_conn, appmod.BY_FIRST)
-    assert list(by_surname) == ["W"]        # Bob de Wit
-    assert list(by_first) == ["B"]          # ...same author, other letter
-    assert client.get("/authors/b").status_code == 404
-    assert client.get("/authors/b?sort=voornaam").status_code == 200
+    assert sorted(by_surname) == ["K", "L", "S", "V", "W"]   # Kok, Licht, Sol, Vrij, de Wit
+    assert sorted(by_first) == ["A", "B", "C", "D", "E"]     # ...same five, by first name
+    hub = client.get("/authors/w").text
+    assert 'href="/author/bob-de-wit"' in hub
+    assert 'href="/author/bob-de-wit"' in client.get("/authors/b?sort=voornaam").text
     hub = client.get("/authors?sort=voornaam").text
     assert 'href="/authors/b?sort=voornaam"' in hub     # letter links keep the order
     assert 'class="on"' in hub
@@ -208,7 +209,6 @@ def test_hub_counts_match_the_page_they_link_to(client, ro_conn):
             fold_key = slugify(entry["name"]).replace("-", " ")
             shelf = queries.author_books_by_fold(ro_conn, fold_key)
             assert entry["titles"] == len(shelf), entry["name"]
-            assert entry["titles"] >= queries.MIN_INDEXABLE_TITLES
 
 
 def test_unsluggable_authors_are_not_merged_into_one_entry(client, ro_conn):

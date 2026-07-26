@@ -471,9 +471,11 @@ def series_books(conn: sqlite3.Connection, names: tuple[str, ...]) -> list[sqlit
         "ORDER BY b.series_no, b.year LIMIT 300", vals).fetchall()
 
 
-# An author or series page only earns a place in the sitemap / A-Z index once it
-# actually aggregates something. With a single title it is a weaker copy of that
-# title's own page, and 12k of those would dilute the pages that do add value.
+# An author or series page only earns a place in the *sitemap* once it actually
+# aggregates something: with a single title it is a weaker copy of that title's
+# own page, and 13k of those would dilute the pages that do add value. It stays
+# reachable and listed in the A-Z hub — this rule is about what gets nominated to
+# search engines, not about what a reader can browse to.
 MIN_INDEXABLE_TITLES = 2
 
 

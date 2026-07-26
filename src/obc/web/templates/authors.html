@@ -34,7 +34,7 @@
         {{ total|nlnum }} auteurs waarvan de {{ "voornaam" if sort == "voornaam" else "achternaam" }} met {{ label }} begint. Elke naam opent al
         hun e-books en luisterboeken in de collectie.
       {%- else -%}
-        {{ total|nlnum }} auteurs met meer dan één titel in de collectie. Kies een letter om
+        Alle {{ total|nlnum }} auteurs in de collectie, alfabetisch. Kies een letter om
         door hun namen te bladeren.
       {%- endif -%}
     </p>

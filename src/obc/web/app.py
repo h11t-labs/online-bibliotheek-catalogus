@@ -380,12 +380,16 @@ def _author_letter(name: str, by: str = BY_SURNAME) -> str:
 
 def _author_index(conn: sqlite3.Connection,
                   by: str = BY_SURNAME) -> dict[str, list[dict]]:
-    """``{"A": [{name, titles}…], …, "overig": […]}`` — authors with their own page.
+    """``{"A": [{name, titles}…], …, "overig": […]}`` — every author, bucketed.
 
     Spelling variants are folded together first, because that is what the slug URL
     does: listing "Ad Van Schaik" and "Ad van Schaik" as two entries pointing at
-    the same page would be a lie the hub tells about itself. Merging also decides
-    who qualifies — two rows of one title each are one author with two.
+    the same page would be a lie the hub tells about itself.
+
+    Every author is listed, including the 13k with a single title. The
+    MIN_INDEXABLE_TITLES rule is about what the *sitemap* promotes, not about what
+    a reader is allowed to find — a browsable index that silently omits more than
+    half the authors is simply broken.
     """
     try:
         key = DB_PATH.stat().st_mtime_ns
@@ -411,8 +415,7 @@ def _author_index(conn: sqlite3.Connection,
     sort_key = surname_key if by == BY_SURNAME else slugify
     buckets: dict[str, list[dict]] = {}
     for entry in merged.values():
-        if entry["titles"] >= queries.MIN_INDEXABLE_TITLES:
-            buckets.setdefault(_author_letter(entry["name"], by), []).append(entry)
+        buckets.setdefault(_author_letter(entry["name"], by), []).append(entry)
     # the chosen key first, then the whole name, so a letter page reads as an index
     for rows in buckets.values():
         rows.sort(key=lambda e: (sort_key(e["name"]), slugify(e["name"])))
@@ -721,8 +724,12 @@ def sitemap_browse(request: Request, conn: sqlite3.Connection = Depends(get_conn
     index = _author_index(conn)
     paths = ["/authors"]
     paths += [f"/authors/{letter.lower()}" for letter in _letter_order(index)]
+    # The hub lists every author; the sitemap only nominates the ones that
+    # aggregate something, so single-title pages stay reachable without being
+    # advertised as destinations.
     paths += [_author_path(row["name"])
-              for letter in _letter_order(index) for row in index[letter]]
+              for letter in _letter_order(index) for row in index[letter]
+              if row["titles"] >= queries.MIN_INDEXABLE_TITLES]
     # Slugs, not encoded names: a sitemap full of URLs that immediately 301 wastes
     # the crawl budget this PR exists to spend well.
     paths += [f"/series/{slug}" for slug, entry in sorted(_series_index(conn).items())
@@ -753,9 +760,8 @@ def authors_index(request: Request, sort: str = BY_SURNAME,
     return _templates.TemplateResponse(request, "authors.html", {
         "letters": letters, "letter": "", "authors": [], "total": total, "sort": sort,
         "counts": {ltr: len(index[ltr]) for ltr in letters},
-        "meta_description": f"Blader alfabetisch door {_nlnum(total)} auteurs met "
-                            f"meerdere titels in de online Bibliotheek — e-books en "
-                            f"luisterboeken."})
+        "meta_description": f"Blader alfabetisch door alle {_nlnum(total)} auteurs "
+                            f"in de online Bibliotheek — e-books en luisterboeken."})
 
 
 @app.get("/authors/{letter}", response_class=HTMLResponse)
