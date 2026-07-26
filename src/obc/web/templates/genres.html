@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Genres · Online Bibliotheek Catalogus{% endblock %}
+{% block style %}
+  main{width:100%;max-width:1040px}
+  .page-h{font-family:var(--serif);font-size:clamp(26px,4vw,40px);margin:8px 0 6px}
+  .page-sub{color:var(--ink-soft);margin:0 0 30px;max-width:62ch}
+
+  /* A taxonomy reads as an index, not as a wall of boxes: the hierarchy is carried
+     by type and indentation, and one hairline per row does the separating that 42
+     bordered cards were doing badly. Two columns balance by count, not by order,
+     so a genre with twelve children doesn't leave a hole beside it. */
+  .audbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 26px;font-size:13px}
+  .audbar .lbl{color:var(--ink-soft)}
+  .audbar > a{display:inline-flex;align-items:baseline;gap:7px;padding:6px 14px;
+    border-radius:999px;border:1px solid var(--line);background:var(--card);
+    color:var(--ink-soft)}
+  .audbar > a span{font-size:11.5px;opacity:.75;font-variant-numeric:tabular-nums}
+  .audbar > a.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);
+    font-weight:700}
+  .gtax{columns:2;column-gap:44px}
+  .gtop{break-inside:avoid;padding:0 0 15px;margin:0 0 15px;
+    border-bottom:1px solid var(--line)}
+  .gtop:last-child{border-bottom:0}
+  .gtop .head{display:flex;align-items:baseline;gap:12px}
+  .gtop h2{font-family:var(--serif);font-size:19px;font-weight:600;margin:0;
+    line-height:1.25;flex:1;min-width:0}
+  .gtop h2 a:hover{color:var(--accent)}
+  .gtop .n{flex:none;font-size:12.5px;color:var(--ink-soft);
+    font-variant-numeric:tabular-nums}
+  /* Subgenres read as their own list of destinations, not as a grey sentence:
+     indented under the parent, each with its own count, spaced by a gap instead of
+     punctuation so the eye lands on names rather than separators. */
+  .gtop .kids{display:flex;flex-wrap:wrap;gap:4px 16px;margin:9px 0 0;padding-left:13px;
+    border-left:1px solid var(--line)}
+  .gtop .kids a{display:inline-flex;align-items:baseline;gap:5px;font-size:14px;
+    color:var(--ink)}
+  .gtop .kids a:hover{color:var(--accent)}
+  .gtop .kids a .cn{font-size:11.5px;color:var(--ink-soft);
+    font-variant-numeric:tabular-nums}
+  @media (max-width:720px){ .gtax{columns:1} }
+{% endblock %}
+{% block body %}
+<main>
+  <div class="pagehead">
+    <div class="crumb"><a href="/">‹ Terug naar zoeken</a></div>
+    <h1 class="page-h">Genres</h1>
+    {# a catalog rebuilt without the detail pass has no subgenres at all, and
+       "42 genres in 42 hoofdgenres" reads like a bug #}
+    <p class="page-sub">{{ total|nlnum }} genres in de collectie. Jeugd en volwassenen
+      hebben elk hun eigen indeling — hetzelfde subgenre kan onder een ander
+      hoofdgenre vallen. Elk genre opent alle e-books en luisterboeken die eronder
+      vallen, voor beide publieken.</p>
+  </div>
+
+  {% if audiences|length > 1 %}
+  <div class="audbar">
+    <span class="lbl">Voor:</span>
+    {% for a in audiences %}
+    <a href="/genres{{ '' if loop.first else '?publiek=' ~ a.key }}"
+       class="{{ 'on' if a.key == publiek }}">{{ a.label }} <span>{{ a.total|nlnum }}</span></a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="gtax">
+    {% for g in genres %}
+    <section class="gtop">
+      <div class="head">
+        <h2><a href="/genre/{{ g.slug }}">{{ g.name }}</a></h2>
+        <span class="n">{{ g.titles|nlnum }}</span>
+      </div>
+      {% if g.children %}
+      <div class="kids">
+        {% for c in g.children %}
+        <a href="/genre/{{ c.slug }}">{{ c.name }}<span class="cn">{{ c.titles|nlnum }}</span></a>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </section>
+    {% endfor %}
+  </div>
+</main>
+{% endblock %}

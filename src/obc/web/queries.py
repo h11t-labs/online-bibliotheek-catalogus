@@ -523,6 +523,106 @@ def series_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         "GROUP BY series ORDER BY titles DESC, series COLLATE NOCASE").fetchall()
 
 
+def genre_books(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """``(genre, parent, ppn, audience)`` per genre link, editions collapsed.
+
+    The web layer groups these by slug and counts *distinct* ppns: two spellings
+    of one genre routinely share books, so summing their separate counts
+    advertised more titles than the page delivers.
+
+    The parent lives on the link, not on the genre, because jeugd and volwassenen
+    reuse the same genre names under different parents (see
+    :func:`obc.db.set_book_genre_parents`): 67 of 213 subgenres sit under a
+    different parent per audience — "Avontuur" under "Spanning & Avontuur" for
+    jeugd and under "Spanning & Thrillers" for volwassenen. The audience comes
+    along so the web layer can build one tree per audience instead of flattening
+    the two into a single wrong one.
+    """
+    sql = ("SELECT g.name AS name, p.name AS parent, bg.book_ppn AS ppn, "
+           "       lower(COALESCE(b.audience, '')) AS audience "
+           "FROM genres g JOIN book_genres bg ON bg.genre_id = g.id "
+           "LEFT JOIN genres p ON p.id = bg.parent_id "
+           f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)}")
+    try:
+        return conn.execute(sql).fetchall()
+    except sqlite3.OperationalError as exc:  # catalog built before bg.parent_id
+        if "parent_id" not in str(exc):
+            raise
+        return conn.execute(
+            "SELECT g.name AS name, NULL AS parent, bg.book_ppn AS ppn, "
+            "       lower(COALESCE(b.audience, '')) AS audience FROM genres g "
+            "JOIN book_genres bg ON bg.genre_id = g.id "
+            f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)}"
+        ).fetchall()
+
+
+def genre_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every genre with its work count, largest first.
+
+    Counted with editions collapsed, like the shelves: an e-book and its
+    audiobook are one title in the genre, not two. Unfiltered for the same reason
+    as :func:`author_index` — the hub lists every genre, the sitemap decides
+    separately which ones it nominates.
+    """
+    return conn.execute(
+        "SELECT g.name AS name, COUNT(DISTINCT bg.book_ppn) AS titles FROM genres g "
+        "JOIN book_genres bg ON bg.genre_id = g.id "
+        f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)} "
+        "GROUP BY g.id ORDER BY titles DESC, g.name COLLATE NOCASE").fetchall()
+
+
+def browse_summary(conn: sqlite3.Connection, f: SearchFilters,
+                   top_authors: int = 8) -> dict:
+    """Aggregate facts about a filtered slice: format split, year span, top authors.
+
+    This is what keeps a browse landing page from being a bare wall of covers —
+    every genre gets a different, factual paragraph, and the author names double
+    as internal links into the author pages. The format split deliberately counts
+    *editions*: it exists to say how many of these titles you can listen to.
+
+    Authors with an empty fold are excluded: several unrelated non-Latin names
+    fold to "" and would otherwise be grouped into one person with a summed count.
+    """
+    where, params = _build_where(f)
+    # Mirror search(): a format filter turns the collapse off there, so applying
+    # it here regardless made the summary describe a different set than the shelf
+    # below it — A.C. Baantjer vanished from /luisterboeken because his primary
+    # edition is an e-book.
+    if not f.format:
+        where.append("b.primary_edition = 1" if _has_primary_edition(conn) else "1=1")
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    # Availability, not representation. With editions collapsed each work is
+    # counted through whichever edition happens to represent it, so a genre whose
+    # works are all primarily e-books reported zero audiobooks while its own shelf
+    # badged 91 of them as also available to listen to. EXISTS over the work key —
+    # the same (title, author) pairing formats_map uses, and the one
+    # idx_books_title_author_lower covers.
+    def has_edition(cond: str) -> str:
+        return ("EXISTS (SELECT 1 FROM books e "
+                "        WHERE lower(e.title) = lower(b.title) "
+                "          AND lower(COALESCE(e.author, '')) = lower(COALESCE(b.author, '')) "
+                f"          AND {cond})")
+
+    as_ebook = has_edition("e.format = 'ebook'")
+    as_audio = has_edition("e.format = 'audiobook'")
+    on_ereader = has_edition("e.ereader = 1")
+    row = conn.execute(
+        f"SELECT SUM({as_ebook}) AS ebooks, SUM({as_audio}) AS audiobooks, "
+        f"       SUM({on_ereader}) AS ereader, "
+        "       MIN(NULLIF(b.year, 0)) AS year_min, MAX(b.year) AS year_max "
+        f"FROM books b {where_sql}", params).fetchone()
+    authors = conn.execute(
+        "SELECT a.name AS name, COUNT(DISTINCT ba.book_ppn) AS titles FROM books b "
+        "JOIN book_authors ba ON ba.book_ppn = b.ppn "
+        "JOIN authors a ON a.id = ba.author_id "
+        f"{where_sql}{' AND' if where_sql else 'WHERE'} a.name_fold <> '' "
+        "GROUP BY a.name_fold ORDER BY titles DESC, a.name_fold LIMIT ?",
+        [*params, top_authors]).fetchall()
+    return {"ebooks": row["ebooks"] or 0, "audiobooks": row["audiobooks"] or 0,
+            "ereader": row["ereader"] or 0, "year_min": row["year_min"],
+            "year_max": row["year_max"], "authors": authors}
+
+
 def similar_books(conn: sqlite3.Connection, ppn: str, method: str = "lsa",
                   limit: int = 20) -> list[sqlite3.Row]:
     """"Meer zoals dit": precomputed LSA neighbours for a book (see obc.similar).

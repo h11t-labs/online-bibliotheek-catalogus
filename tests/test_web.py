@@ -153,6 +153,17 @@ def test_hub_lists_one_entry_per_slug(client, ro_conn):
     assert hub.count('href="/author/bob-de-wit"') == 1
 
 
+def test_stats_links_to_the_real_pages(client):
+    # genres and authors have their own pages now, so the stats bars point there
+    # instead of into the ?-space, which is noindex and robots-disallowed
+    body = client.get("/stats").text
+    links = re.findall(r'href="(/[^"]+)"', body)
+    assert not [x for x in links if x.startswith("/?genre=")]
+    assert not [x for x in links if x.startswith("/author/") and "%" in x]
+    # languages and publishers have no landing page, so those stay query links
+    assert [x for x in links if x.startswith(("/?language=", "/?publisher="))]
+
+
 def test_about_page_moved_but_the_old_url_still_resolves(client):
     # /over shipped in v1.1.2 and sits in the live sitemap, so it owes a redirect
     for old in ("/over", "/over/"):
@@ -329,6 +340,71 @@ def test_lastmod_only_where_it_is_truthful(client):
     assert "<lastmod>" in client.get("/sitemap.xml").text
     assert "<lastmod>" in client.get("/sitemap-static.xml").text
     assert "<lastmod>" not in client.get("/sitemap-books-1.xml").text
+
+
+def test_genre_and_format_pages(client):
+    # the genre/format slices only existed as ?genre= URLs, which are noindex AND
+    # robots-disallowed — so this whole class of query had no landing page at all
+    hub = client.get("/genres")
+    assert hub.status_code == 200
+    assert 'href="/genre/spanning-thrillers"' in hub.text
+
+    genre = client.get("/genre/spanning-thrillers")
+    assert genre.status_code == 200
+    assert "<h1>Spanning &amp; Thrillers</h1>" in genre.text
+    assert "/book/003" in genre.text                     # a thriller from the fixture
+    assert 'href="/?genre=Spanning%20%26%20Thrillers"' in genre.text
+    assert client.get("/genre/bestaat-niet").status_code == 404
+    # one canonical spelling, as with the author letters
+    r = client.get("/genre/Spanning-Thrillers", follow_redirects=False)
+    assert r.status_code == 301 and r.headers["location"] == "/genre/spanning-thrillers"
+
+    # and they're linked from the shared header, not just the sitemap
+    assert 'href="/genres"' in client.get("/").text
+
+
+def test_browse_pages_carry_more_than_a_wall_of_covers(client):
+    # a genre page that is only a cover grid is thin content wearing a new URL
+    body = client.get("/genre/spanning-thrillers").text
+    assert "e-book beschikbaar" in body or "luisterboek" in body
+    assert 'href="/author/bob-de-wit"' in body           # top authors link out
+    assert "%20" not in body.split('class="lead"')[1][:600]   # slugs, not encoded
+    desc = body.split('<meta name="description" content="', 1)[1].split('">', 1)[0]
+    assert "titels" in desc and len(desc) <= 300
+
+
+
+
+def test_colliding_genre_spellings_share_one_page(client, ro_conn):
+    # the catalog holds "Biografieën" twice — combining diaeresis and precomposed —
+    # and both fold to `biografieen`. Keyed on the slug, a plain dict dropped one
+    # spelling and its books with it.
+    from obc.textnorm import slugify
+    from obc.web import app as appmod
+    from obc.web import queries
+    rows = queries.genre_index(ro_conn)
+    merged = appmod._genres(ro_conn)
+    assert sum(len(e["names"]) for e in merged.values()) == len(rows), "a genre vanished"
+    for slug, entry in merged.items():
+        assert slugify(entry["name"]) == slug
+        assert entry["titles"] == sum(
+            r["titles"] for r in rows if slugify(r["name"]) == slug)
+
+
+def test_genre_slugs_are_unique_and_stable(client, ro_conn):
+    from obc.textnorm import slugify
+    from obc.web import queries
+    assert slugify("Spanning & Thrillers") == "spanning-thrillers"
+    assert slugify("Poëzie & Theater") == "poezie-theater"
+    rows = queries.genre_index(ro_conn)
+    slugs = [slugify(r["name"]) for r in rows]
+    assert all(slugs) and len(set(slugs)) == len(slugs)   # no blanks, no collisions
+    browse = client.get("/sitemap-browse.xml").text
+    # the hub lists every genre; the sitemap nominates the ones that aggregate
+    for r in rows:
+        promoted = f"/genre/{slugify(r['name'])}<" in browse
+        assert promoted == (r["titles"] >= queries.MIN_INDEXABLE_TITLES), r["name"]
+    assert "/genres<" in browse
 
 
 def test_authors_hub(client):
@@ -683,7 +759,8 @@ def test_404_serves_the_branded_page_for_every_kind_of_miss(client):
              ("/author/zzz-niemand", "Auteur niet gevonden"),
              ("/series/zzz-geen-reeks", "Reeks niet gevonden"),
              ("/list/zzznope", "Lijst niet gevonden"),
-             ("/authors/zzz", "Geen auteurs onder deze letter"))
+             ("/authors/zzz", "Geen auteurs onder deze letter"),
+             ("/genre/bestaat-niet", "Genre niet gevonden"))
     for path, head in cases:
         r = client.get(path)
         assert r.status_code == 404, path
@@ -722,3 +799,99 @@ def test_404_offers_matching_genres(client, monkeypatch):
     body = client.get("/list/thriller").text
     assert 'href="/?genre=Spanning%20%26%20Thrillers"' in body
     assert "Spanning &amp; Thrillers" in body
+def _catalog_with_genre_parents(tmp_path):
+    """A fixture catalog where book_genres.parent_id is actually populated.
+
+    The live enrichment that fills it needs the detail pages, which the hermetic
+    fixture has no way to fetch — so the hierarchy is stamped directly here.
+    Without this the parent/child code would ship untested: every local catalog
+    has parent_id NULL throughout.
+    """
+    import sampledata
+
+    from obc import db
+    path = tmp_path / "hier.db"
+    conn = db.connect(path)
+    db.bulk_load(conn, sampledata.records(), sampledata.lists())
+    ids = {r["name"]: r["id"] for r in conn.execute("SELECT id, name FROM genres")}
+    top, sub = "Spanning & Thrillers", "Thrillers"
+    if sub not in ids:
+        conn.execute("INSERT INTO genres(name) VALUES (?)", (sub,))
+        ids[sub] = conn.execute("SELECT id FROM genres WHERE name = ?", (sub,)).fetchone()[0]
+        ppn = conn.execute(
+            "SELECT book_ppn FROM book_genres WHERE genre_id = ? LIMIT 1",
+            (ids[top],)).fetchone()[0]
+        conn.execute("INSERT INTO book_genres(book_ppn, genre_id) VALUES (?, ?)",
+                     (ppn, ids[sub]))
+    conn.execute("UPDATE book_genres SET parent_id = ? WHERE genre_id = ?",
+                 (ids[top], ids[sub]))
+    # one jeugd title, so the hub has two audiences to switch between — the live
+    # catalog files 5.762 books that way and gives them their own taxonomy
+    conn.execute("UPDATE books SET audience = 'Jeugd' WHERE ppn = '005'")
+    conn.commit()
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")   # so mode=ro readers see it
+    conn.close()
+    return path
+
+
+def test_genre_hierarchy(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from obc.web import app as appmod
+    from obc.web import queries
+    path = _catalog_with_genre_parents(tmp_path)
+    monkeypatch.setattr(appmod, "DB_PATH", path)
+    monkeypatch.setattr(appmod, "author_bio", lambda name: None)
+    appmod._genres_cache.update(key=None, data=None)
+    conn = queries.connect_ro(path)
+    index = appmod._genres(conn)
+
+    assert index["thrillers"]["parent"] == "spanning-thrillers"
+    assert "thrillers" in index["spanning-thrillers"]["children"]
+    assert index["spanning-thrillers"]["parent"] == ""      # a top genre has none
+
+    client = TestClient(appmod.app)
+    hub = client.get("/genres").text
+    # the hub is headed by top genres, with their children beneath them
+    assert 'href="/genre/spanning-thrillers"' in hub
+    assert hub.index("/genre/spanning-thrillers") < hub.index("/genre/thrillers")
+    # jeugd and volwassenen are separate taxonomies, switched rather than stacked
+    # A tree may only state what its own audience files: every parent it shows
+    # must be one this audience's own rows actually name.
+    data = appmod._genre_data(conn)
+    for aud, tops in data["trees"].items():
+        for top in tops:
+            for kid in top["children"]:
+                # books with an unknown audience land on the default shelf, so the
+                # check has to resolve the audience the way the app does
+                known = [a for a, _ in appmod.AUDIENCES]
+                marks = ",".join("?" * len(known))
+                named = conn.execute(
+                    "SELECT COUNT(*) FROM book_genres bg "
+                    "JOIN genres g ON g.id = bg.genre_id "
+                    "JOIN genres p ON p.id = bg.parent_id "
+                    "JOIN books b ON b.ppn = bg.book_ppn "
+                    "WHERE g.name = ? AND p.name = ? AND ? = (CASE WHEN "
+                    f"  lower(COALESCE(b.audience, '')) IN ({marks}) "
+                    "  THEN lower(COALESCE(b.audience, '')) ELSE ? END)",
+                    (kid["name"], top["name"], aud, *known,
+                     appmod.AUDIENCES[0][0])).fetchone()[0]
+                assert named, f"{aud}: {kid['name']} under {top['name']}"
+    assert 'class="audbar"' in hub
+    assert 'href="/genres?publiek=jeugd"' in hub
+    jeugd = client.get("/genres?publiek=jeugd").text
+    assert jeugd != hub and 'class="on"' in jeugd
+    # an unknown audience falls back instead of 404ing, and the canonical stays clean
+    assert client.get("/genres?publiek=onzin").status_code == 200
+    assert '<link rel="canonical" href="http://testserver/genres">' in jeugd
+
+    child = client.get("/genre/thrillers").text
+    assert 'href="/genre/spanning-thrillers"' in child       # a way back up
+    crumbs = [d for d in _jsonld(child) if d.get("@type") == "BreadcrumbList"][0]
+    assert [i["name"] for i in crumbs["itemListElement"]] == [
+        "Home", "Genres", "Spanning & Thrillers", "Thrillers"]
+
+    parent = client.get("/genre/spanning-thrillers").text
+    assert 'class="subgenres"' in parent and 'href="/genre/thrillers"' in parent
+    conn.close()
+    appmod._genres_cache.update(key=None, data=None)

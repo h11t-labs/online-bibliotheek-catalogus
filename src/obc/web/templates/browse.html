@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% from "_macros.html" import fmt_icons %}
+{% block title %}{{ heading }} · Online Bibliotheek Catalogus{% endblock %}
+{% block style %}
+  /* Prose, not a panel: an accent bar and a drop shadow around three factual
+     sentences is chrome doing the work whitespace already does. */
+  .lead{margin:0 0 26px;line-height:1.7;max-width:74ch}
+  .lead p{margin:0 0 8px;color:var(--ink)}
+  .lead p:last-child{margin-bottom:0}
+  .lead .who{color:var(--ink-soft);font-size:14.5px}
+  .lead .who a{color:var(--ink-soft);border-bottom:1px solid var(--line-strong)}
+  .lead .who a:hover{color:var(--accent);border-bottom-color:var(--accent)}
+  .subgenres{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 26px;
+    padding-top:20px;border-top:1px solid var(--line)}
+  .subgenres a{display:inline-flex;align-items:baseline;gap:7px;font-size:13.5px;
+    padding:6px 13px;border-radius:999px;border:1px solid var(--line-strong);
+    background:var(--bg-soft);color:var(--ink)}
+  .subgenres a:hover{border-color:var(--accent);color:var(--accent)}
+  .subgenres a span{color:var(--ink-soft);font-size:12px;font-variant-numeric:tabular-nums}
+  .more{margin:26px 0 0;text-align:center;color:var(--ink-soft);font-size:14.5px}
+  .more a{color:var(--accent);font-weight:600}
+  .list-ribbon{position:absolute;left:0;bottom:0;right:0;display:flex;align-items:center;
+    gap:5px;padding:6px 9px;font-size:11.5px;font-weight:700;color:#fff;z-index:2;
+    background:linear-gradient(0deg,rgba(154,59,46,.96),rgba(154,59,46,.7));}
+  .list-ribbon svg{width:12px;height:12px;flex:none}
+{% endblock %}
+{% block body %}
+<main>
+  <div class="pagehead">
+    <div class="crumb"><a href="/">‹ Terug naar zoeken</a> · <a href="/genres">Alle genres</a>{% if parent %} · <a href="/genre/{{ parent.slug }}">{{ parent.name }}</a>{% endif %}</div>
+    <h1>{{ heading }}</h1>
+    <div class="sub">{{ total|nlnum }} {{ 'titel' if total == 1 else 'titels' }}
+      · <a class="flink" style="text-decoration:underline dotted" href="{{ search_url }}">filter in zoeken ›</a></div>
+  </div>
+
+  {# Facts, not filler: every genre gets a different paragraph, and the author
+     names double as internal links into the author pages. #}
+  <div class="lead">
+    <p>{{ lead }}
+      {%- if summary.ebooks and summary.audiobooks %}
+      Daarvan zijn er {{ summary.ebooks|nlnum }} als e-book beschikbaar en
+      {{ summary.audiobooks|nlnum }} als luisterboek.
+      {%- endif %}
+      {%- if summary.ereader %} {{ summary.ereader|nlnum }} titels zijn ook op een
+      e-reader te lezen.{% endif %}
+      {%- if summary.year_min and summary.year_max and summary.year_min != summary.year_max %}
+      De uitgaven lopen van {{ summary.year_min }} tot {{ summary.year_max }}.
+      {%- endif %}
+    </p>
+    {% if summary.authors %}
+    <p class="who">Meest vertegenwoordigde auteurs:
+      {% for a in summary.authors %}<a href="{{ a['name']|author_path }}">{{ a['name'] }}</a>{{ ', ' if not loop.last else '.' }}{% endfor %}
+    </p>
+    {% endif %}
+  </div>
+
+  {% if children %}
+  <nav class="subgenres" aria-label="Subgenres">
+    {% for c in children %}<a href="/genre/{{ c.slug }}">{{ c.name }} <span>{{ c.titles|nlnum }}</span></a>{% endfor %}
+  </nav>
+  {% endif %}
+
+  <div class="grid">
+    {% for b in books %}
+    <a class="book" href="/book/{{ b['ppn'] }}">
+      <div class="cover">
+        {{ fmt_icons(b['format'], formats_map.get(b['ppn'], [b['format']])) }}
+        {% set bl = lists_map.get(b['ppn']) %}
+        {% if bl %}<span class="list-ribbon"><svg><use href="#ic-award"/></svg>{{ bl[0].name }}{% if bl[0].year %} {{ bl[0].year }}{% elif bl[0].position %} #{{ bl[0].position }}{% endif %}</span>{% endif %}
+        <img loading="lazy" src="{{ b['cover_url']|coverw(400) }}" alt="">
+      </div>
+      <span class="t">{{ b['title'] or '—' }}</span>
+      <span class="a">{{ b['author'] or '' }}</span>
+    </a>
+    {% endfor %}
+  </div>
+
+  {% if total > shown %}
+  <p class="more">De {{ shown }} nieuwste titels staan hierboven.
+    <a href="{{ search_url }}">Bekijk alle {{ total|nlnum }} in zoeken ›</a></p>
+  {% endif %}
+</main>
+{% endblock %}

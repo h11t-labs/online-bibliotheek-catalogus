@@ -13,10 +13,12 @@ plain browse ordered by the chosen sort.
 
 from __future__ import annotations
 
+import collections
 import datetime
 import os
 import re
 import sqlite3
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote, unquote, urlencode
@@ -137,6 +139,11 @@ def _series_path(name: str) -> str:
     return f"/series/{slugify(name) or quote(name, safe='')}"
 
 
+def _genre_path(name: str) -> str:
+    """Canonical URL path for a genre, mirroring :func:`_author_path`."""
+    return f"/genre/{slugify(name) or quote(name, safe='')}"
+
+
 def _nlnum(n: int) -> str:
     """9803 -> '9.803' (Dutch thousands separator)."""
     return f"{n:,}".replace(",", ".")
@@ -154,6 +161,7 @@ _templates.env.filters["coverw"] = _coverw
 _templates.env.filters["nldate"] = _nldate
 _templates.env.filters["author_path"] = _author_path
 _templates.env.filters["series_path"] = _series_path
+_templates.env.filters["genre_path"] = _genre_path
 _templates.env.filters["nlnum"] = _nlnum
 _templates.env.globals["url_with"] = _url_with
 _templates.env.globals["url_without"] = _url_without
@@ -192,7 +200,8 @@ app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan
 # Pages with no per-user state and a catalog that only changes on the daily rebuild,
 # so they're safe to cache publicly — this offloads repeat hits and crawler traffic
 # from the single small VM. Detail pages cache an hour; the browse home a few minutes.
-_CACHE_PREFIXES = ("/book/", "/author", "/series/", "/list", "/stats", "/about")
+_CACHE_PREFIXES = ("/book/", "/author", "/series/", "/list", "/stats", "/about",
+                   "/genre")
 
 
 # Templates use inline <script>/<style> blocks (base.html), GoatCounter loads its
@@ -319,6 +328,9 @@ _NOT_FOUND_COPY = {
     "author": ("Auteur niet gevonden",
                "Deze auteur staat niet in de catalogus — of de naam wordt net iets "
                "anders geschreven."),
+    "genre": ("Genre niet gevonden",
+              "Dit genre staat niet in de catalogus — kijk in het overzicht welke er "
+              "wel zijn."),
     "series": ("Reeks niet gevonden",
                "Deze reeks staat niet in de catalogus, of de delen staan er onder een "
                "andere reeksnaam."),
@@ -452,7 +464,13 @@ def favicon_ico():
 
 # Facet values are identical for every request, so cache them and only recompute
 # when the database file changes (i.e. after a normalize).
+# Each of these is rebuilt from scratch when the catalog file changes, and the
+# genre one walks 157k rows. Without a lock every concurrent cold request builds
+# its own copy: eight simultaneous hits on /genres took 23s each and pushed the
+# process to 606 MB — on a 512 MB machine. The lock makes one thread build while
+# the others wait for its result.
 _facets_cache: dict = {"key": None, "data": None}
+_facets_cache_lock = threading.Lock()
 
 
 def _facets(conn: sqlite3.Connection) -> dict:
@@ -462,14 +480,18 @@ def _facets(conn: sqlite3.Connection) -> dict:
         key = None
     if _facets_cache["key"] == key and _facets_cache["data"] is not None:
         return _facets_cache["data"]
-    data = queries.compute_facets(conn)
-    _facets_cache.update(key=key, data=data)
-    return data
+    with _facets_cache_lock:
+        if _facets_cache["key"] == key and _facets_cache["data"] is not None:
+            return _facets_cache["data"]
+        data = queries.compute_facets(conn)
+        _facets_cache.update(key=key, data=data)
+        return data
 
 
 # The A-Z author index is ~10k rows and identical for every visitor, so it is built
 # once per catalog rebuild — same DB-mtime trick as the facet cache above.
 _authors_cache: dict = {"key": None, "data": None}
+_authors_cache_lock = threading.Lock()
 _OTHER_LETTER = "overig"  # names that don't start with a plain A-Z letter
 
 
@@ -503,32 +525,36 @@ def _author_index(conn: sqlite3.Connection,
         key = DB_PATH.stat().st_mtime_ns
     except OSError:
         key = None
-    if _authors_cache["key"] != key or _authors_cache["data"] is None:
-        _authors_cache.update(key=key, data={})
     cached = _authors_cache["data"]
-    if by in cached:
+    if _authors_cache["key"] == key and cached is not None and by in cached:
         return cached[by]
-    counts = queries.author_title_counts(conn)
-    merged: dict[str, dict] = {}
-    for row in queries.author_index(conn):
-        # A name with no Latin characters at all folds to "" and has no slug, so it
-        # cannot be a hub or sitemap entry — and merging on that empty key would
-        # fuse unrelated authors into one. Those keep their own encoded-name page.
-        if not row["fold"]:
-            continue
-        # rows arrive title-count descending within a fold, so the first spelling
-        # seen for a key is the one that carries the most titles
-        merged.setdefault(row["fold"],
-                          {"name": row["name"], "titles": counts.get(row["fold"], 0)})
-    sort_key = surname_key if by == BY_SURNAME else slugify
-    buckets: dict[str, list[dict]] = {}
-    for entry in merged.values():
-        buckets.setdefault(_author_letter(entry["name"], by), []).append(entry)
-    # the chosen key first, then the whole name, so a letter page reads as an index
-    for rows in buckets.values():
-        rows.sort(key=lambda e: (sort_key(e["name"]), slugify(e["name"])))
-    cached[by] = buckets
-    return buckets
+    with _authors_cache_lock:
+        if _authors_cache["key"] != key or _authors_cache["data"] is None:
+            _authors_cache.update(key=key, data={})
+        cached = _authors_cache["data"]
+        if by in cached:
+            return cached[by]
+        counts = queries.author_title_counts(conn)
+        merged: dict[str, dict] = {}
+        for row in queries.author_index(conn):
+            # A name with no Latin characters at all folds to "" and has no slug, so it
+            # cannot be a hub or sitemap entry — and merging on that empty key would
+            # fuse unrelated authors into one. Those keep their own encoded-name page.
+            if not row["fold"]:
+                continue
+            # rows arrive title-count descending within a fold, so the first spelling
+            # seen for a key is the one that carries the most titles
+            merged.setdefault(row["fold"],
+                              {"name": row["name"], "titles": counts.get(row["fold"], 0)})
+        sort_key = surname_key if by == BY_SURNAME else slugify
+        buckets: dict[str, list[dict]] = {}
+        for entry in merged.values():
+            buckets.setdefault(_author_letter(entry["name"], by), []).append(entry)
+        # the chosen key first, then the whole name, so a letter page reads as an index
+        for rows in buckets.values():
+            rows.sort(key=lambda e: (sort_key(e["name"]), slugify(e["name"])))
+        cached[by] = buckets
+        return buckets
 
 
 # Series get the same slug treatment as authors, but `books.series` is free text
@@ -536,6 +562,7 @@ def _author_index(conn: sqlite3.Connection,
 # catalog rebuild. 18 slugs cover more than one spelling ("De Stad" / "De stad");
 # those share a page rather than splitting the shelf in two.
 _series_cache: dict = {"key": None, "data": None}
+_series_cache_lock = threading.Lock()
 
 
 def _series_index(conn: sqlite3.Connection) -> dict[str, dict]:
@@ -546,23 +573,156 @@ def _series_index(conn: sqlite3.Connection) -> dict[str, dict]:
         key = None
     if _series_cache["key"] == key and _series_cache["data"] is not None:
         return _series_cache["data"]
-    merged: dict[str, dict] = {}
-    for row in queries.series_index(conn):
-        slug = slugify(row["name"])
-        if not slug:
-            continue
-        # rows arrive part-count descending, so the first spelling wins the heading
-        entry = merged.setdefault(slug, {"name": row["name"], "names": [], "titles": 0})
-        entry["names"].append(row["name"])
-        entry["titles"] += row["titles"]
-    _series_cache.update(key=key, data=merged)
-    return merged
+    with _series_cache_lock:
+        if _series_cache["key"] == key and _series_cache["data"] is not None:
+            return _series_cache["data"]
+        merged: dict[str, dict] = {}
+        for row in queries.series_index(conn):
+            slug = slugify(row["name"])
+            if not slug:
+                continue
+            # rows arrive part-count descending, so the first spelling wins the heading
+            entry = merged.setdefault(slug, {"name": row["name"], "names": [], "titles": 0})
+            entry["names"].append(row["name"])
+            entry["titles"] += row["titles"]
+        _series_cache.update(key=key, data=merged)
+        return merged
 
 
 def _letter_order(index: dict) -> list[str]:
     """A-Z first, the catch-all last."""
     return sorted(k for k in index if k != _OTHER_LETTER) + \
         ([_OTHER_LETTER] if _OTHER_LETTER in index else [])
+
+
+# The catalog carries two taxonomies, not one: jeugd and volwassenen reuse genre
+# names under different parents, and 67 of 213 subgenres sit somewhere different
+# depending on which shelf you are standing at. Flattening them picked a winner
+# and misfiled the loser, so the hub renders a tree per audience while the genre
+# page itself stays a single URL covering both.
+AUDIENCES = (("volwassenen", "Volwassenen"), ("jeugd", "Jeugd"))
+_genres_cache: dict = {"key": None, "data": None}
+_genres_cache_lock = threading.Lock()
+
+
+def _genre_data(conn: sqlite3.Connection) -> dict:
+    """``{"flat": {slug: entry}, "trees": {audience: [top entries]}}``, cached.
+
+    ``flat`` backs the genre page and the sitemap — one entry per slug, counted
+    over distinct books because spelling variants share them (the catalog holds
+    "Biografieën" twice, precomposed and with a combining diaeresis). ``trees`` is
+    the hub's view: per audience, top genres carrying their own children.
+    """
+    try:
+        key = DB_PATH.stat().st_mtime_ns
+    except OSError:
+        key = None
+    if _genres_cache["key"] == key and _genres_cache["data"] is not None:
+        return _genres_cache["data"]
+    with _genres_cache_lock:
+        if _genres_cache["key"] == key and _genres_cache["data"] is not None:
+            return _genres_cache["data"]
+
+        flat: dict[str, dict] = {}
+        per_aud: dict[str, dict[str, dict]] = {a: {} for a, _ in AUDIENCES}
+        for row in queries.genre_books(conn):
+            slug = slugify(row["name"])
+            if not slug:
+                continue
+            entry = flat.setdefault(slug, {"name": row["name"], "names": [], "books": set(),
+                                           "parents": collections.Counter()})
+            if row["name"] not in entry["names"]:
+                entry["names"].append(row["name"])
+            entry["books"].add(row["ppn"])
+            pslug = slugify(row["parent"] or "")
+            entry["parents"][pslug] += 1
+            # 2.567 books carry no audience, and a catalog built without the detail
+            # pass has none at all — those land on the default shelf rather than
+            # falling out of the hub entirely. No genre in the live catalog is
+            # reachable *only* that way, so this shifts counts, never visibility.
+            aud = per_aud[row["audience"] if row["audience"] in per_aud else AUDIENCES[0][0]]
+            a = aud.setdefault(slug, {"books": set(), "parents": collections.Counter()})
+            a["books"].add(row["ppn"])
+            a["parents"][pslug] += 1
+
+        for entry in flat.values():
+            parent = entry["parents"].most_common(1)[0][0]
+            entry["parent"] = parent if parent and parent != slugify(entry["name"]) else ""
+            entry["titles"] = len(entry.pop("books"))
+            entry["name"] = max(entry["names"], key=len)
+            del entry["parents"]
+        for slug, entry in flat.items():
+            entry["children"] = sorted(
+                (c for c, o in flat.items() if o["parent"] == slug),
+                key=lambda c: (-flat[c]["titles"], c))
+
+        trees: dict[str, list[dict]] = {}
+        for aud, _label in AUDIENCES:
+            rows = per_aud[aud]
+            parent_of, titles_of = {}, {}
+            for slug, a in rows.items():
+                # A tree may only state what its own audience files. Borrowing the
+                # catalog-wide parent when this audience names none put "Film" under
+                # Kunst & Cultuur for adults, where all three adult records carry no
+                # parent at all — a relationship the data never asserts. An explicit
+                # parent still outranks a bare "top level" *within* the audience.
+                named = [(pslug, n) for pslug, n in a["parents"].items()
+                         if pslug and pslug != slug and pslug in rows]
+                parent_of[slug] = max(named, key=lambda kv: kv[1])[0] if named else ""
+                titles_of[slug] = len(a["books"])
+            tops = []
+            for slug in rows:
+                if parent_of[slug]:
+                    continue
+                kids = sorted((c for c in rows if parent_of[c] == slug),
+                              key=lambda c: -titles_of[c])
+                tops.append({"name": flat[slug]["name"], "slug": slug,
+                             "titles": titles_of[slug],
+                             "children": [{"name": flat[c]["name"], "slug": c,
+                                           "titles": titles_of[c]} for c in kids]})
+            trees[aud] = sorted(tops, key=lambda g: (-g["titles"], g["name"].lower()))
+
+        data = {"flat": flat, "trees": trees}
+        _genres_cache.update(key=key, data=data)
+        return data
+
+
+def _genres(conn: sqlite3.Connection) -> dict[str, dict]:
+    """``{slug: {name, names, titles, parent, children}}`` across both audiences."""
+    return _genre_data(conn)["flat"]
+
+
+# How many covers a browse landing page shows. It is an entry point, not a
+# replacement for the search UI — the "filter in zoeken" link opens the rest.
+BROWSE_PREVIEW = 120
+
+
+def _browse_page(request: Request, conn: sqlite3.Connection, *, heading: str,
+                 lead: str, filters: queries.SearchFilters, search_url: str,
+                 crumb: tuple[str, str] | None = None,
+                 parent: dict | None = None,
+                 children: list[dict] | None = None) -> Response:
+    """Render a browse landing page (a genre or a format) from ``filters``."""
+    result = queries.search(conn, filters, page=1, page_size=BROWSE_PREVIEW)
+    summary = queries.browse_summary(conn, filters)
+    # Only mention the split when there is one — a format page would otherwise
+    # advertise "50.398 e-books en 0 luisterboeken".
+    split = (f" {_nlnum(summary['ebooks'])} e-books en "
+             f"{_nlnum(summary['audiobooks'])} luisterboeken."
+             if summary["ebooks"] and summary["audiobooks"] else "")
+    return _templates.TemplateResponse(request, "browse.html", {
+        "heading": heading, "lead": lead, "books": result.rows,
+        "total": result.total, "summary": summary, "search_url": search_url,
+        "shown": len(result.rows),
+        "formats_map": queries.formats_map(conn, result.rows),
+        "lists_map": queries.lists_map(conn, result.rows),
+        "parent": parent, "children": children or [],
+        "breadcrumbs": _breadcrumbs(
+            request, *([crumb] if crumb else []),
+            *([(parent["name"], f"/genre/{parent['slug']}")] if parent else []),
+            (heading, "")),
+        "meta_description": f"{_nlnum(result.total)} titels — {lead}{split}"[:300],
+    })
 
 
 # --------------------------------------------------------------------------- #
@@ -833,17 +993,18 @@ def sitemap_browse(request: Request, conn: sqlite3.Connection = Depends(get_conn
     aggregate two or more titles are listed — see queries.MIN_INDEXABLE_TITLES.
     """
     index = _author_index(conn)
-    paths = ["/authors"]
+    paths = ["/authors", "/genres"]
     paths += [f"/authors/{letter.lower()}" for letter in _letter_order(index)]
-    # The hub lists every author; the sitemap only nominates the ones that
-    # aggregate something, so single-title pages stay reachable without being
-    # advertised as destinations.
+    # The hubs list everything; the sitemap only nominates pages that aggregate
+    # something, so single-title pages stay reachable without being advertised as
+    # destinations. Slugs, never encoded names: a sitemap full of URLs that
+    # immediately 301 wastes the crawl budget it exists to spend well.
     paths += [_author_path(row["name"])
               for letter in _letter_order(index) for row in index[letter]
               if row["titles"] >= queries.MIN_INDEXABLE_TITLES]
-    # Slugs, not encoded names: a sitemap full of URLs that immediately 301 wastes
-    # the crawl budget this PR exists to spend well.
     paths += [f"/series/{slug}" for slug, entry in sorted(_series_index(conn).items())
+              if entry["titles"] >= queries.MIN_INDEXABLE_TITLES]
+    paths += [f"/genre/{slug}" for slug, entry in sorted(_genres(conn).items())
               if entry["titles"] >= queries.MIN_INDEXABLE_TITLES]
     return _sitemap(_origin(request), paths)
 
@@ -853,6 +1014,61 @@ def sitemap_books(request: Request, n: int, conn: sqlite3.Connection = Depends(g
     rows = conn.execute("SELECT ppn FROM books ORDER BY ppn LIMIT ? OFFSET ?",
                         (SITEMAP_PAGE, (max(n, 1) - 1) * SITEMAP_PAGE)).fetchall()
     return _sitemap(_origin(request), [f"/book/{r['ppn']}" for r in rows])
+
+
+@app.get("/genres", response_class=HTMLResponse)
+def genres_index(request: Request, publiek: str = AUDIENCES[0][0],
+                 conn: sqlite3.Connection = Depends(get_conn)):
+    """Hub over the genre pages, one audience at a time.
+
+    Jeugd and volwassenen are separate taxonomies, and stacking both made a page
+    of 364 genres — a toggle shows the one you are actually browsing. Same shape
+    as the author hub's sort toggle: the clean path stays canonical, and the
+    ?-variant is robots-disallowed, so it adds no crawlable duplicate.
+    """
+    data = _genre_data(conn)
+    index, trees = data["flat"], data["trees"]
+    # One section per audience: a subgenre sits under the parent that is right for
+    # *that* shelf, so "Avontuur" appears under Spanning & Avontuur for jeugd and
+    # under Spanning & Thrillers for volwassenen — as the catalog actually files it.
+    audiences = [{"key": key, "label": label, "tops": len(trees[key]),
+                  "total": sum(1 + len(g["children"]) for g in trees[key])}
+                 for key, label in AUDIENCES if trees[key]]
+    keys = [a["key"] for a in audiences]
+    publiek = publiek if publiek in keys else (keys[0] if keys else "")
+    shown = next((a for a in audiences if a["key"] == publiek), None)
+    return _templates.TemplateResponse(request, "genres.html", {
+        "audiences": audiences, "publiek": publiek, "shown": shown,
+        "genres": trees.get(publiek, []), "total": len(index),
+        "breadcrumbs": _breadcrumbs(request, ("Genres", "")),
+        "meta_description": f"Alle {_nlnum(len(index))} genres in de online "
+                            f"Bibliotheek, apart voor volwassenen en jeugd — met "
+                            f"het aantal e-books en luisterboeken per genre."})
+
+
+@app.get("/genre/{slug}", response_class=HTMLResponse)
+def genre_page(request: Request, slug: str,
+               conn: sqlite3.Connection = Depends(get_conn)):
+    entry = _genres(conn).get(slugify(slug))
+    if entry is None:
+        return _not_found(request, "genre", _slug_words(slug))
+    if slug != slugify(slug):   # one canonical spelling per genre
+        return RedirectResponse(f"/genre/{slugify(slug)}", status_code=301)
+    index = _genres(conn)
+    name = entry["name"]
+    parent = index.get(entry["parent"]) if entry["parent"] else None
+    return _browse_page(
+        request, conn, heading=name,
+        lead=f"Alle titels in het genre {name} uit de collectie van de online "
+             f"Bibliotheek.",
+        filters=queries.SearchFilters(genres=tuple(entry["names"]), sort="year_desc"),
+        search_url=f"/?genre={quote(name, safe='')}",
+        crumb=("Genres", "/genres"),
+        parent=({"name": parent["name"], "slug": entry["parent"]} if parent else None),
+        children=[{"name": index[c]["name"], "slug": c, "titles": index[c]["titles"]}
+                  for c in entry["children"]])
+
+
 
 
 @app.get("/authors", response_class=HTMLResponse)
