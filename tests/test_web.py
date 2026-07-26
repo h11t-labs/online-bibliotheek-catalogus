@@ -155,8 +155,10 @@ def test_hub_lists_one_entry_per_slug(client, ro_conn):
 
 def test_about_page_moved_but_the_old_url_still_resolves(client):
     # /over shipped in v1.1.2 and sits in the live sitemap, so it owes a redirect
-    r = client.get("/over", follow_redirects=False)
-    assert r.status_code == 301 and r.headers["location"] == "/about"
+    for old in ("/over", "/over/"):
+        r = client.get(old, follow_redirects=False)
+        assert r.status_code == 301, old          # one hop, not a 307 then a 301
+        assert r.headers["location"] == "/about", old
     assert "Over deze catalogus" in client.get("/about").text
     # and the sitemap advertises the destination, not the redirect
     assert "/about<" in client.get("/sitemap-static.xml").text
@@ -202,6 +204,8 @@ def test_authors_are_alphabetised_on_surname(client):
     # two authors are websites; the TLD is not their surname
     assert surname_key("Vakantietaal.nl") == "vakantietaal"
     assert surname_key("Onno van Gelder jr.") == "gelder"   # suffix and particle
+    # ...but a suffix rule must leave a name behind: "SR" is this author's name
+    assert surname_key("Mariela SR") == "sr"
     # a single letter can genuinely be the surname, so it is left alone
     assert surname_key("Christiane F") == "f"
     assert surname_key("Drs. P") == "p"

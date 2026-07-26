@@ -132,7 +132,10 @@ def surname_key(name: str | None) -> str:
         trimmed = False
         for suffix in _NAME_SUFFIXES:
             n = len(suffix)
-            if len(parts) > n and tuple(parts[-n:]) == suffix:
+            # Leave at least a first name and a surname behind. "Mariela SR" is a
+            # two-token author name where SR is the name, not a generation marker;
+            # "James Burn sr." has a first name to spare, so it loses the suffix.
+            if len(parts) - n >= 2 and tuple(parts[-n:]) == suffix:
                 del parts[-n:]
                 trimmed = True
                 break

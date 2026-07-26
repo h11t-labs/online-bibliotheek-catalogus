@@ -616,7 +616,10 @@ def about(request: Request):
 
 # /over shipped in v1.1.2 and is in the live sitemap, so unlike the other URLs
 # renamed alongside it this one owes a permanent redirect.
+# Both spellings, so /over/ lands on /about in one hop instead of taking
+# Starlette's trailing-slash 307 first.
 @app.get("/over", include_in_schema=False)
+@app.get("/over/", include_in_schema=False)
 def about_legacy():
     return RedirectResponse("/about", status_code=301)
 
