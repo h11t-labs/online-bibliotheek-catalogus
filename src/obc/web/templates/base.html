@@ -73,16 +73,13 @@
     .site-header::before{content:"";position:absolute;inset:0;z-index:-1;
       backdrop-filter:saturate(1.4) blur(10px);
       background:color-mix(in oklab,var(--bg) 82%,transparent)}
-    /* equal outer columns (minmax(0,1fr) both) keep the search box centred on the
-       page — a plain 1fr/1fr splits leftover space equally but bases differ, so the
-       wider nav would shove the box left of centre */
     .site-header .row{max-width:1240px;margin:0 auto;padding:14px 24px;display:grid;
-      grid-template-columns:minmax(0,1fr) minmax(0,480px) minmax(0,1fr);gap:22px;align-items:center}
-    /* below ~1240px a centred 480px box would collide with the wider nav, so fill the
-       middle column instead (box stays ≤480, brand/nav never overlap it) */
-    @media (min-width:721px) and (max-width:1239px){
-      .site-header .row{grid-template-columns:1fr minmax(0,480px) 1fr}
-    }
+      grid-template-columns:1fr minmax(0,480px) 1fr;gap:22px;align-items:center}
+    /* `1fr`, not `minmax(0,1fr)`: the side tracks keep a min-content floor, so the
+       brand and the nav can never be squeezed narrower than they render and the
+       search box gives way instead. Centring the box exactly would need both side
+       tracks as wide as the nav (446px since it gained Authors) — a ~1460px header,
+       wider than the content sitting under it. */
     .brand{justify-self:start;display:flex;align-items:center;gap:11px;font-family:var(--serif);
       font-weight:700;letter-spacing:.2px;white-space:nowrap}
     /* long site name reads as a compact two-line logo lockup beside the icon */
@@ -99,7 +96,11 @@
     /* giant search "button" in the header centre — looks like a field, opens the
        full-screen search overlay (real form kept in <noscript> for no-JS) */
     .searchslot{width:100%;max-width:600px;display:flex;justify-content:center}
+    /* overflow:hidden because the middle grid track may shrink to almost nothing
+       between the widest nav and the mobile breakpoint — without it the magnifier
+       and the / hint spill out of the pill and across the nav links. */
     .search-trigger{width:100%;display:flex;align-items:center;gap:11px;background:var(--card);
+      overflow:hidden;
       border:1px solid var(--line-strong);border-radius:999px;padding:11px 14px 11px 18px;
       cursor:pointer;color:var(--ink-soft);font:inherit;font-size:15px;text-align:left;
       box-shadow:0 1px 0 rgba(255,255,255,.4) inset,6px 12px 34px -22px rgba(60,40,20,.5);
@@ -138,7 +139,11 @@
     .theme-row-label svg{color:var(--accent)}
     /* phones/tablets: search shrinks to an icon (full-page search), nav -> hamburger
        (full-page menu). Both open as fixed full-screen overlays. */
-    @media (max-width:720px){
+    /* The compact header (hamburger + full-width search) starts at 1000px, not
+       720px: with the nav at 446px the desktop row runs out of room for a usable
+       search box well before the old breakpoint, leaving a clipped stub of a
+       pill between the two. Below this the search box is full width again. */
+    @media (max-width:1000px){
       .site-header .row{grid-template-columns:auto minmax(0,1fr) auto;gap:10px;padding:12px 14px}
       .nav-toggle{display:inline-flex}
 
@@ -432,6 +437,10 @@
                 onclick="this.closest('.topnav').classList.remove('open');this.closest('.navwrap').querySelector('.nav-toggle').setAttribute('aria-expanded','false');document.documentElement.classList.remove('ov-lock')">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
         </button>
+        <a class="navlink" href="/authors">
+          <svg width="16" height="16"><use href="#ic-author"/></svg>
+          <span class="navlink-text"><span class="navlink-title">Auteurs</span><span class="navlink-desc">Blader op naam door alle schrijvers</span></span>
+        </a>
         <a class="navlink" href="/lists">
           <svg width="16" height="16"><use href="#ic-award"/></svg>
           <span class="navlink-text"><span class="navlink-title">Lijsten</span><span class="navlink-desc">Bestsellers, prijzen &amp; nominaties</span></span>
@@ -440,7 +449,7 @@
           <svg width="16" height="16"><use href="#ic-chart"/></svg>
           <span class="navlink-text"><span class="navlink-title">Statistieken</span><span class="navlink-desc">Cijfers over de hele catalogus</span></span>
         </a>
-        <a class="navlink" href="/over">
+        <a class="navlink" href="/about">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
           <span class="navlink-text"><span class="navlink-title">Over</span><span class="navlink-desc">Wat dit is en hoe het werkt</span></span>
         </a>

@@ -76,6 +76,75 @@ def slugify(value: str | None) -> str:
     return fold(value).replace(" ", "-")
 
 
+# Dutch/Flemish name particles. The catalog stores names first-name-first, so the
+# surname is the last token — unless the name is already inverted ("Buren, van"),
+# where the trailing token is a particle and the real surname sits before it.
+_NAME_PARTICLES = {
+    "van", "de", "der", "den", "het", "ten", "ter", "te", "op", "aan", "in", "'t",
+    "du", "des", "del", "della", "la", "le", "di", "da", "dos", "von", "zu", "af",
+}
+
+
+# fold() strips diacritics by decomposing them, which silently *deletes* the Latin
+# letters that have no combining form: "Strøm" folds to "str m", "Þórarinsdóttir"
+# to "orarinsdottir". Harmless for matching, wrong for alphabetising — it filed 33
+# Nordic and Icelandic authors under a letter from the middle of their name (Røyne
+# under Y, Bøe under E). Spelled out here rather than inside fold(), because
+# authors.name_fold is written at normalize time and every slug URL round-trips
+# through it: changing fold() would 404 those pages until the next full rebuild.
+_TRANSLITERATE = str.maketrans({
+    "ø": "o", "Ø": "O", "æ": "ae", "Æ": "Ae", "œ": "oe", "Œ": "Oe",
+    "ł": "l", "Ł": "L", "đ": "d", "Đ": "D", "ð": "d", "Ð": "D",
+    "þ": "th", "Þ": "Th", "ß": "ss", "ı": "i",
+})
+
+
+# Editorial roles only ever appear bracketed — "Wim Kloppenburg (red.)", "Adam
+# J.B. Lane (ill.)" — so they are stripped as brackets rather than as words. A
+# word rule would misfile the real surname in "Ludique le Vert" under L.
+_ROLE_BRACKET = re.compile(r"\([^)]*\)")
+# Two authors are websites; their TLD is not a surname.
+_DOMAIN_TAIL = re.compile(r"\.(?:nl|com|be|org|net|eu|de)\s*$", re.I)
+# fold() treats an apostrophe as a separator, which cuts "O'Brien" into "o brien"
+# and files 123 authors under the tail of their own surname (O'Brien under B).
+# Dropping it binds the name back together; the standalone Dutch "'t" in
+# "van 't Spijker" becomes a bare "t" token, which is not the last one anyway.
+_APOSTROPHE = re.compile(r"[’'`]")
+# Generation markers and "and others". Matched as token *sequences* against the
+# folded name, which has already dropped the dots: "e" alone is a plausible
+# surname, ("e", "a") is not.
+_NAME_SUFFIXES = (
+    ("e", "v", "a"), ("e", "a"), ("c", "s"), ("et", "al"), ("jr",), ("sr",),
+)
+
+
+def surname_key(name: str | None) -> str:
+    """Folded surname for alphabetising: 'Alexander Klöpping' -> 'klopping'.
+
+    A reader looking for Klöpping looks under K, not under A of Alexander — so the
+    A-Z index has to sort on this rather than on the first character of the full
+    name. "Bob de Wit" lands on 'wit', "Buren, van" on 'buren'.
+    """
+    raw = _DOMAIN_TAIL.sub("", _ROLE_BRACKET.sub(" ", name or ""))
+    parts = fold(_APOSTROPHE.sub("", raw).translate(_TRANSLITERATE)).split()
+    trimmed = True
+    while trimmed and len(parts) > 1:
+        trimmed = False
+        for suffix in _NAME_SUFFIXES:
+            n = len(suffix)
+            # Leave at least a first name and a surname behind. "Mariela SR" is a
+            # two-token author name where SR is the name, not a generation marker;
+            # "James Burn sr." has a first name to spare, so it loses the suffix.
+            if len(parts) - n >= 2 and tuple(parts[-n:]) == suffix:
+                del parts[-n:]
+                trimmed = True
+                break
+        if not trimmed and parts[-1] in _NAME_PARTICLES:
+            parts.pop()
+            trimmed = True
+    return parts[-1] if parts else ""
+
+
 # Author aliases: fold(variant) -> canonical display name. The catalog sometimes
 # lists the same person under shortened/variant names; collapse them here. Extend
 # as you spot more (left side is the folded form of any spelling that should map).

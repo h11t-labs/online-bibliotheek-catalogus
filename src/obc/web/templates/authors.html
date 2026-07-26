@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}{% if letter %}Auteurs — {{ label }} · Online Bibliotheek Catalogus{% else %}Auteurs · Online Bibliotheek Catalogus{% endif %}{% endblock %}
+{% block style %}
+  main{width:100%;max-width:1000px}
+  .page-h{font-family:var(--serif);font-size:clamp(26px,4vw,40px);margin:8px 0 6px}
+  .page-sub{color:var(--ink-soft);margin:0 0 24px}
+  .sortbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 18px;font-size:13px}
+  .sortbar .lbl{color:var(--ink-soft)}
+  .sortbar a{padding:5px 12px;border-radius:999px;border:1px solid var(--line);
+    background:var(--card);color:var(--ink-soft);text-decoration:none}
+  .sortbar a.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
+  .alpha{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 28px}
+  .alpha a{min-width:38px;padding:7px 11px;text-align:center;border-radius:10px;
+    border:1px solid var(--line);background:var(--card);color:var(--ink);
+    font-weight:700;font-size:14px;text-decoration:none}
+  .alpha a:hover{border-color:var(--accent);color:var(--accent)}
+  .alpha a.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .alpha a .n{display:block;font-weight:500;font-size:11px;opacity:.65}
+  .names{columns:3 220px;column-gap:26px}
+  .names a{display:block;break-inside:avoid;padding:5px 0;color:var(--ink);
+    text-decoration:none;font-size:15px}
+  .names a:hover{color:var(--accent)}
+  .names a .n{color:var(--ink-soft);font-size:12.5px}
+  .empty{color:var(--ink-soft);padding:40px 0}
+{% endblock %}
+{% block body %}
+{% set q = '?sort=voornaam' if sort == 'voornaam' else '' %}
+<main>
+  <div class="pagehead">
+    <div class="crumb"><a href="/">‹ Terug naar zoeken</a>{% if letter %} · <a href="/authors{{ q }}">Alle auteurs</a>{% endif %}</div>
+    <h1 class="page-h">{% if letter %}Auteurs met {{ label }}{% else %}Auteurs{% endif %}</h1>
+    <p class="page-sub">
+      {%- if letter -%}
+        {{ total|nlnum }} auteurs waarvan de {{ "voornaam" if sort == "voornaam" else "achternaam" }} met {{ label }} begint. Elke naam opent al
+        hun e-books en luisterboeken in de collectie.
+      {%- else -%}
+        Alle {{ total|nlnum }} auteurs in de collectie, alfabetisch. Kies een letter om
+        door hun namen te bladeren.
+      {%- endif -%}
+    </p>
+  </div>
+
+  <div class="sortbar">
+    <span class="lbl">Alfabetisch op:</span>
+    <a href="{{ ('/authors/' ~ letter|lower) if letter else '/authors' }}"
+       class="{{ 'on' if sort != 'voornaam' }}">Achternaam</a>
+    <a href="{{ ('/authors/' ~ letter|lower) if letter else '/authors' }}?sort=voornaam"
+       class="{{ 'on' if sort == 'voornaam' }}">Voornaam</a>
+  </div>
+
+  <nav class="alpha" aria-label="Auteurs per letter">
+    {% for l in letters %}
+    <a href="/authors/{{ l|lower }}{{ q }}" class="{{ 'on' if l == letter }}">
+      {{ 'Overig' if l == 'overig' else l }}<span class="n">{{ counts[l] }}</span>
+    </a>
+    {% endfor %}
+  </nav>
+
+  {% if authors %}
+  <div class="names">
+    {% for a in authors %}
+    <a href="{{ a.name|author_path }}">{{ a.name }}
+      <span class="n">{{ a.titles }}</span></a>
+    {% endfor %}
+  </div>
+  {% elif letter %}
+  <p class="empty">Geen auteurs onder deze letter.</p>
+  {% endif %}
+</main>
+{% endblock %}

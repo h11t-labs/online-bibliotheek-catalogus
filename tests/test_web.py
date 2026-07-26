@@ -126,8 +126,134 @@ def test_author_masthead_without_a_bio(client):
 
 
 def test_series_page(client):
-    assert client.get("/series/Het Mysterie").status_code == 200
+    assert client.get("/series/het-mysterie").status_code == 200
     assert client.get("/series/Zzz Geen Reeks").status_code == 404
+
+
+def test_series_urls_are_slugs(client):
+    # the encoded form keeps working and moves to the slug, as with authors
+    r = client.get("/series/Het Mysterie", follow_redirects=False)
+    assert r.status_code == 301 and r.headers["location"] == "/series/het-mysterie"
+    book = client.get("/book/004").text
+    assert 'href="/series/het-mysterie"' in book
+    assert "/series/Het%20Mysterie" not in book
+
+
+def test_hub_lists_one_entry_per_slug(client, ro_conn):
+    # the hub must not show "Ad Van Schaik" and "Ad van Schaik" as two entries
+    # that lead to the same page — folding decides both the entry and who
+    # qualifies, since two rows of one title each are one author with two
+    from obc.textnorm import slugify
+    from obc.web import app as appmod
+    index = appmod._author_index(ro_conn)
+    entries = [e for rows in index.values() for e in rows]
+    slugs = [slugify(e["name"]) for e in entries]
+    assert len(set(slugs)) == len(slugs), "two hub entries share a slug"
+    hub = client.get("/authors/w").text
+    assert hub.count('href="/author/bob-de-wit"') == 1
+
+
+def test_about_page_moved_but_the_old_url_still_resolves(client):
+    # /over shipped in v1.1.2 and sits in the live sitemap, so it owes a redirect
+    for old in ("/over", "/over/"):
+        r = client.get(old, follow_redirects=False)
+        assert r.status_code == 301, old          # one hop, not a 307 then a 301
+        assert r.headers["location"] == "/about", old
+    assert "Over deze catalogus" in client.get("/about").text
+    # and the sitemap advertises the destination, not the redirect
+    assert "/about<" in client.get("/sitemap-static.xml").text
+    assert "/over<" not in client.get("/sitemap-static.xml").text
+    assert 'href="/about"' in client.get("/").text          # header points there too
+
+
+def test_authors_are_alphabetised_on_surname(client):
+    # "Alexander Klöpping" belongs under K; bucketing on the first character of
+    # the full name filed every author under their first name instead
+    from obc.textnorm import surname_key
+    assert surname_key("Alexander Klöpping") == "klopping"
+    assert surname_key("Bob de Wit") == "wit"              # particle skipped
+    assert surname_key("Gerda van Wageningen") == "wageningen"
+    assert surname_key("Buren, van") == "buren"            # already inverted
+    assert surname_key("Bernlef") == "bernlef"             # single token
+    assert surname_key("") == "" and surname_key(None) == ""
+    # fold() decomposes diacritics, which deletes the Latin letters that have no
+    # combining form — "Strøm" folds to "str m" and would file under M
+    assert surname_key("Anita Strøm") == "strom"
+    assert surname_key("Anja Røyne") == "royne"
+    assert surname_key("Arndís Þórarinsdóttir") == "thorarinsdottir"
+    assert surname_key("Arnaldur Indriðason") == "indridason"
+    assert surname_key("Andrzej Sapkowski Ł") == "l"       # a bare particle-less token
+    # generation markers, editorial roles and "and others" are not the surname,
+    # but they are the last token — all of these exist in the live catalog
+    assert surname_key("A.H. Huussen jr.") == "huussen"
+    assert surname_key("Jan Blokker Jr.") == "blokker"
+    assert surname_key("R.R. Hopkinson Sr.") == "hopkinson"
+    assert surname_key("Ferdinand Bordewijk e.a.") == "bordewijk"
+    assert surname_key("Klaartje Gras e.v.a.") == "gras"
+    assert surname_key("Daniël Mok c.s.") == "mok"
+    # editorial roles are stripped as brackets, not as words — a word rule filed
+    # the real surname in "Ludique le Vert" under L
+    assert surname_key("Wim Kloppenburg (red.)") == "kloppenburg"
+    assert surname_key("Simon Dikker Hupkes (samensteller)") == "hupkes"
+    assert surname_key("Adam J.B. Lane (ill.)") == "lane"
+    assert surname_key("Ludique le Vert") == "vert"
+    # an apostrophe is a separator to fold(), which cut "O'Brien" down to "brien"
+    assert surname_key("Ally O'Brien") == "obrien"
+    assert surname_key("Jean-Michel Caradec'h") == "caradech"
+    assert surname_key("Adriaan van 't Spijker") == "spijker"   # 't stays a particle
+    # two authors are websites; the TLD is not their surname
+    assert surname_key("Vakantietaal.nl") == "vakantietaal"
+    assert surname_key("Onno van Gelder jr.") == "gelder"   # suffix and particle
+    # ...but a suffix rule must leave a name behind: "SR" is this author's name
+    assert surname_key("Mariela SR") == "sr"
+    # a single letter can genuinely be the surname, so it is left alone
+    assert surname_key("Christiane F") == "f"
+    assert surname_key("Drs. P") == "p"
+    assert client.get("/authors/w").status_code == 200     # Bob de Wit lives here
+    assert client.get("/authors/b").status_code == 404     # ...and not here
+
+
+def test_hub_can_alphabetise_on_first_name_too(client, ro_conn):
+    # both orders are defensible — hunting a known writer you look under the
+    # surname, browsing you recognise the whole name — so the hub offers both
+    from obc.web import app as appmod
+    by_surname = appmod._author_index(ro_conn, appmod.BY_SURNAME)
+    by_first = appmod._author_index(ro_conn, appmod.BY_FIRST)
+    assert sorted(by_surname) == ["K", "L", "S", "V", "W"]   # Kok, Licht, Sol, Vrij, de Wit
+    assert sorted(by_first) == ["A", "B", "C", "D", "E"]     # ...same five, by first name
+    hub = client.get("/authors/w").text
+    assert 'href="/author/bob-de-wit"' in hub
+    assert 'href="/author/bob-de-wit"' in client.get("/authors/b?sort=voornaam").text
+    hub = client.get("/authors?sort=voornaam").text
+    assert 'href="/authors/b?sort=voornaam"' in hub     # letter links keep the order
+    assert 'class="on"' in hub
+    # an unknown value falls back rather than 404s, and the canonical stays clean
+    assert client.get("/authors?sort=onzin").status_code == 200
+    assert '<link rel="canonical" href="http://testserver/authors">' in \
+        client.get("/authors?sort=voornaam").text
+
+
+def test_hub_counts_match_the_page_they_link_to(client, ro_conn):
+    # the threshold decides what goes in the sitemap, so a count that disagrees
+    # with its own page would publish a "2 titles" author whose page shows one
+    from obc.textnorm import slugify
+    from obc.web import app as appmod
+    from obc.web import queries
+    for rows in appmod._author_index(ro_conn).values():
+        for entry in rows:
+            fold_key = slugify(entry["name"]).replace("-", " ")
+            shelf = queries.author_books_by_fold(ro_conn, fold_key)
+            assert entry["titles"] == len(shelf), entry["name"]
+
+
+def test_unsluggable_authors_are_not_merged_into_one_entry(client, ro_conn):
+    # fold() returns "" for a name with no Latin characters; using that as a merge
+    # key would fuse every such author into a single hub entry with a summed count
+    from obc.web import app as appmod
+    entries = [e for rows in appmod._author_index(ro_conn).values() for e in rows]
+    assert not [e for e in entries if not e["name"].strip()]
+    from obc.textnorm import slugify
+    assert all(slugify(e["name"]) for e in entries), "an entry has no slug to link to"
 
 
 def test_lists_pages(client):
@@ -145,7 +271,7 @@ def test_stats_health_static(client):
 
 
 def test_about_page(client):
-    r = client.get("/over")
+    r = client.get("/about")
     assert r.status_code == 200
     assert "Over deze catalogus" in r.text
 
@@ -164,9 +290,62 @@ def test_robots_and_sitemaps(client):
     idx = client.get("/sitemap.xml")
     assert idx.status_code == 200 and "<sitemapindex" in idx.text
     stat = client.get("/sitemap-static.xml")
-    assert stat.status_code == 200 and "/over" in stat.text
+    assert stat.status_code == 200 and "/about" in stat.text
     books = client.get("/sitemap-books-1.xml")
     assert books.status_code == 200 and "/book/001" in books.text
+
+
+def test_sitemap_lists_the_aggregation_pages(client):
+    # author + series pages answer the queries the catalog gets searched with,
+    # and used to be in no sitemap at all — reachable only from a book page
+    idx = client.get("/sitemap.xml").text
+    assert "/sitemap-browse.xml" in idx
+    browse = client.get("/sitemap-browse.xml")
+    assert browse.status_code == 200
+    assert "/authors<" in browse.text and "/authors/w<" in browse.text
+    assert "/author/bob-de-wit<" in browse.text     # 2 works -> its own page
+    # Anna Vrij has one work in two formats: one card, so not its own page
+    assert "/author/anna-vrij<" not in browse.text
+    # slugs, never encoded names: a sitemap of URLs that immediately 301 wastes
+    # exactly the crawl budget this sitemap exists to spend well
+    assert "%20" not in browse.text and "%2F" not in browse.text
+
+
+def test_sitemap_skips_single_title_aggregations(client, ro_conn):
+    # a page for an author (or a "series") with one title is a weaker copy of that
+    # title's own page; thousands of them dilute the ones that do add something
+    from obc.web import queries
+    browse = client.get("/sitemap-browse.xml").text
+    assert "/author/dirk-kok" not in browse         # 1 title
+    assert client.get("/author/dirk-kok").status_code == 200   # still reachable
+    # the fixture's only series has a single part, so it's held back as well
+    assert "/series/" not in browse
+    assert [r["name"] for r in queries.series_index(ro_conn)] == ["Het Mysterie"]
+
+
+def test_lastmod_only_where_it_is_truthful(client):
+    # the catalog tracks no per-record change date, so stamping every book URL
+    # with the rebuild time would be a hint search engines learn to distrust
+    assert "<lastmod>" in client.get("/sitemap.xml").text
+    assert "<lastmod>" in client.get("/sitemap-static.xml").text
+    assert "<lastmod>" not in client.get("/sitemap-books-1.xml").text
+
+
+def test_authors_hub(client):
+    hub = client.get("/authors")
+    assert hub.status_code == 200
+    # bucketed on surname: a reader looks for "Bob de Wit" under W, not under B
+    assert 'href="/authors/w"' in hub.text
+    letter = client.get("/authors/w")
+    assert letter.status_code == 200
+    assert 'href="/author/bob-de-wit"' in letter.text
+    assert "/author/dirk-kok" not in letter.text            # wrong letter
+    # one spelling per letter, so /authors/A doesn't become a second URL
+    r = client.get("/authors/W", follow_redirects=False)
+    assert r.status_code == 301 and r.headers["location"] == "/authors/w"
+    assert client.get("/authors/zzz").status_code == 404
+    # and it's linked from the shared header, not just the sitemap
+    assert 'href="/authors"' in client.get("/").text
 
 
 def test_seo_meta_and_jsonld(client):
@@ -203,7 +382,7 @@ def test_website_jsonld_only_on_bare_home(client):
     # ?sort= and ?view= carry no chips and no query text, so they'd slip through a
     # filters-only check — the rule keys off the query string itself.
     for path in ("/?q=de", "/?format=ebook", "/?page=2", "/?sort=title",
-                 "/?view=list", "/?per_page=48", "/over", "/book/001"):
+                 "/?view=list", "/?per_page=48", "/about", "/book/001"):
         assert not [d for d in _jsonld(client.get(path).text)
                     if d.get("@type") == "WebSite"], path
 
@@ -260,7 +439,7 @@ def test_breadcrumbs_jsonld(client):
     # a book by a known author routes through that author's page
     assert any(i.get("item", "").startswith(items[0]["item"] + "author/") for i in items)
     # and the other detail pages carry a trail too
-    for path in ("/author/Anna Vrij", "/list/test-top", "/over", "/stats"):
+    for path in ("/author/Anna Vrij", "/list/test-top", "/about", "/stats"):
         body = client.get(path).text
         assert any(d.get("@type") == "BreadcrumbList" for d in _jsonld(body)), path
 
@@ -306,7 +485,7 @@ def test_crawl_delay_lets_bing_finish_a_pass(client):
 def test_head_is_answered_like_get(client):
     # FastAPI's APIRoute doesn't add HEAD to GET routes, so every page used to
     # answer 405 — link checkers and monitors read that as a broken URL.
-    for path in ("/", "/book/001", "/over", "/robots.txt", "/sitemap.xml", "/healthz"):
+    for path in ("/", "/book/001", "/about", "/robots.txt", "/sitemap.xml", "/healthz"):
         head, get = client.head(path), client.get(path)
         assert head.status_code == 200, path
         assert head.status_code == get.status_code
