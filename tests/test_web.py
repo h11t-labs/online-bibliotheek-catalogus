@@ -295,9 +295,67 @@ def test_per_page_and_toolbar(client):
     assert client.get("/?per_page=999").status_code == 200   # invalid -> clamped, no error
 
 
-def test_cache_control_and_crawl_delay(client):
-    # bots are throttled so one small VM can serve 68k pages
-    assert "Crawl-delay" in client.get("/robots.txt").text
+def test_crawl_delay_lets_bing_finish_a_pass(client):
+    # Google ignores Crawl-delay but Bing takes it literally: at 10s a full pass
+    # over 64k+ URLs took over a week, so most of the catalog was never crawled.
+    delay = [ln for ln in client.get("/robots.txt").text.splitlines()
+             if ln.startswith("Crawl-delay:")]
+    assert delay == ["Crawl-delay: 1"]
+
+
+def test_head_is_answered_like_get(client):
+    # FastAPI's APIRoute doesn't add HEAD to GET routes, so every page used to
+    # answer 405 — link checkers and monitors read that as a broken URL.
+    for path in ("/", "/book/001", "/over", "/robots.txt", "/sitemap.xml", "/healthz"):
+        head, get = client.head(path), client.get(path)
+        assert head.status_code == 200, path
+        assert head.status_code == get.status_code
+        # a HEAD probe must report what a GET would, cache policy included
+        assert head.headers.get("cache-control") == get.headers.get("cache-control"), path
+
+
+def test_alternate_hosts_redirect_to_the_canonical_one(client, monkeypatch):
+    from obc.web import app as appmod
+    monkeypatch.setattr(appmod, "SITE_URL", "https://example.nl")
+    monkeypatch.setattr(appmod, "_CANONICAL_HOST", "example.nl")
+
+    r = client.get("/book/001", headers={"host": "www.example.nl"},
+                   follow_redirects=False)
+    assert r.status_code == 301
+    assert r.headers["location"] == "https://example.nl/book/001"
+    # the query string survives the bounce
+    r = client.get("/?q=de", headers={"host": "app.fly.dev"}, follow_redirects=False)
+    assert r.headers["location"] == "https://example.nl/?q=de"
+    # the canonical host itself is served, not bounced (port and case ignored)
+    assert client.get("/", headers={"host": "example.nl"}).status_code == 200
+    assert client.get("/", headers={"host": "Example.NL:443"}).status_code == 200
+    # internal callers (Fly health check, cron machine) reach the app under the
+    # machine's own host and must never be redirected
+    assert client.get("/healthz", headers={"host": "1.2.3.4:8000"}).status_code == 200
+    assert client.post("/admin/refresh",
+                       headers={"host": "1.2.3.4:8000"}).status_code == 401
+
+
+def test_only_known_aliases_are_redirected(client, monkeypatch):
+    # OBC_SITE_URL lives in a Fly secret that shadows the fly.toml default. If the
+    # two ever disagree, "301 anything that isn't SITE_URL" would bounce the live
+    # domain onto a stale one and deindex the site — so unknown hosts are served.
+    from obc.web import app as appmod
+    monkeypatch.setattr(appmod, "SITE_URL", "https://example.nl")
+    monkeypatch.setattr(appmod, "_CANONICAL_HOST", "example.nl")
+    for host in ("onlinebibliotheekcatalogus.nl", "localhost:8000", "1.2.3.4:8000",
+                 "www.something-else.nl"):
+        assert client.get("/", headers={"host": host},
+                          follow_redirects=False).status_code == 200, host
+
+
+def test_no_host_redirect_without_a_configured_site_url(client):
+    # local dev / tests have OBC_SITE_URL unset — everything must still serve
+    assert client.get("/", headers={"host": "localhost:8000"}).status_code == 200
+    assert client.get("/", headers={"host": "app.fly.dev"}).status_code == 200
+
+
+def test_cache_control(client):
     # stable detail pages are publicly cacheable, offloading repeat/crawler hits
     assert "public" in client.get("/book/001").headers.get("cache-control", "")
     # volatile / non-content endpoints stay uncached

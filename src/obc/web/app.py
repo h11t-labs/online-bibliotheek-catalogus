@@ -23,6 +23,7 @@ from urllib.parse import quote, urlencode
 
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.routing import APIRoute
 from fastapi.templating import Jinja2Templates
 
 from .. import db
@@ -193,6 +194,38 @@ _CSP = (
 )
 
 
+# The site answers on three hostnames: the apex, its www., and the fly.dev origin.
+# All three served 200, so crawlers spent budget fetching the same 64k pages up to
+# three times over. Canonical tags already named the apex; a 301 makes that cheap
+# as well as unambiguous.
+#
+# Only the two *known* aliases are bounced, never "any host that isn't SITE_URL".
+# OBC_SITE_URL is set as a Fly secret and only shadows the [env] default, so a
+# blanket rule would silently 301 the live domain onto whatever a stale config
+# said — deindexing the site. An alias that no longer matches just serves the page.
+_CANONICAL_HOST = SITE_URL.split("//", 1)[-1] if SITE_URL else ""
+# Health checks and the cron machine reach the app over the private network under
+# the machine's own Host; those paths are never redirected.
+_NO_REDIRECT = ("/healthz", "/admin/")
+
+
+def _is_alias(host: str) -> bool:
+    """Is ``host`` a known alias of the canonical one (so safe to 301 away)?"""
+    host = host.split(":", 1)[0].lower()
+    if not _CANONICAL_HOST or not host or host == _CANONICAL_HOST:
+        return False
+    return host == f"www.{_CANONICAL_HOST}" or host.endswith(".fly.dev")
+
+
+@app.middleware("http")
+async def _canonical_host(request: Request, call_next):
+    if (_is_alias(request.headers.get("host", ""))
+            and not request.url.path.startswith(_NO_REDIRECT)):
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(SITE_URL + request.url.path + query, status_code=301)
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def _response_headers(request: Request, call_next):
     response = await call_next(request)
@@ -200,7 +233,7 @@ async def _response_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Content-Security-Policy"] = _CSP
-    if (request.method == "GET" and response.status_code == 200
+    if (request.method in ("GET", "HEAD") and response.status_code == 200
             and "cache-control" not in response.headers):
         path = request.url.path
         if path == "/" and not request.url.query:
@@ -492,7 +525,11 @@ def _sitemap(base: str, paths: list[str]) -> Response:
 @app.get("/robots.txt", include_in_schema=False)
 def robots_txt(request: Request):
     lines = ["User-agent: *",
-             "Crawl-delay: 10",  # throttle bots — one small VM serving 68k pages
+             # Throttle bots — one small VM serving 68k pages. Google ignores
+             # Crawl-delay, but Bing honours it literally: at 10s a full pass over
+             # the catalog took more than a week, so most of it was never seen.
+             # Detail pages are public-cacheable for an hour, so 1s is affordable.
+             "Crawl-delay: 1",
              "Disallow: /suggest", "Disallow: /facet", "Disallow: /admin/",
              "Disallow: /*?",  # the infinite filtered-search URL space
              f"Sitemap: {_origin(request)}/sitemap.xml"]
@@ -672,3 +709,16 @@ def facet(kind: str = Query("", alias="type"), q: str = "",
     """Searchable facet values (for large facets like author/publisher)."""
     values = queries.facet_values(conn, kind, q, limit)
     return {"values": values}
+
+
+# --------------------------------------------------------------------------- #
+# HEAD
+# --------------------------------------------------------------------------- #
+# Starlette's plain Route adds HEAD alongside GET; FastAPI's APIRoute does not, so
+# every page answered `HEAD` with 405. Link checkers, uptime monitors and some
+# crawlers probe with HEAD first and read that as a broken URL. Registering HEAD on
+# the existing GET routes is enough: the handler runs, and the server drops the
+# body off the response.
+for _route in app.routes:
+    if isinstance(_route, APIRoute) and "GET" in (_route.methods or ()):
+        _route.methods = set(_route.methods or ()) | {"HEAD"}
