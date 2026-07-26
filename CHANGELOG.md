@@ -5,6 +5,26 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v1.1.2...v1.2.0) (2026-07-26)
+
+
+### Features
+
+* **seo:** an /authors hub, author+series pages in a sitemap, consistent URLs ([#26](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/26)) ([d15735f](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/d15735f22673f967d17d63827d335f4d926e0859))
+* **seo:** claim the site name, add structured data, rework the author page ([#24](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/24)) ([9829c01](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/9829c014d1079cd0b66578afc3dc1e1503601f5f))
+* **seo:** genre landing pages, an audience-aware hub, and a taxonomy that reads ([#27](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/27)) ([70d5ac3](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/70d5ac325e79b613971daea488b4d2ffae7303f3))
+* **web:** a real 404 page that helps you find the book anyway ([#31](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/31)) ([a0805ac](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/a0805ac6f05883d0fd1426b2ccec23301d9cf036))
+
+
+### Bug Fixes
+
+* **seo:** answer HEAD, 301 the host aliases, and let Bing finish a crawl ([#25](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/25)) ([d0b8504](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/d0b850451f0b0b55763a0d3c42a0e2145afa3086))
+
+
+### Performance Improvements
+
+* **db:** index browse sorts and collect query statistics ([#29](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/29)) ([9248453](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/9248453ca787873f3d526b7e470dfb9387cb0937))
+
 ## [1.1.2](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v1.1.1...v1.1.2) (2026-07-19)
 
 
