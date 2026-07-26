@@ -386,12 +386,18 @@ def _author_index(conn: sqlite3.Connection) -> dict[str, list[dict]]:
         key = None
     if _authors_cache["key"] == key and _authors_cache["data"] is not None:
         return _authors_cache["data"]
+    counts = queries.author_title_counts(conn)
     merged: dict[str, dict] = {}
     for row in queries.author_index(conn):
+        # A name with no Latin characters at all folds to "" and has no slug, so it
+        # cannot be a hub or sitemap entry — and merging on that empty key would
+        # fuse unrelated authors into one. Those keep their own encoded-name page.
+        if not row["fold"]:
+            continue
         # rows arrive title-count descending within a fold, so the first spelling
         # seen for a key is the one that carries the most titles
-        entry = merged.setdefault(row["fold"], {"name": row["name"], "titles": 0})
-        entry["titles"] += row["titles"]
+        merged.setdefault(row["fold"],
+                          {"name": row["name"], "titles": counts.get(row["fold"], 0)})
     buckets: dict[str, list[dict]] = {}
     for fold_key, entry in merged.items():
         if entry["titles"] >= queries.MIN_INDEXABLE_TITLES:

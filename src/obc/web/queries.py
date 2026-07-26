@@ -480,6 +480,20 @@ def author_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def author_title_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    """``{name_fold: distinct books}``.
+
+    Counted per folded key rather than summed per spelling: a book credited to
+    both "Ad Van Schaik" and "Ad van Schaik" is one title on the merged page (see
+    :func:`author_books_by_fold`), so summing the variants would let an author
+    into the sitemap claiming two titles for a page that shows one.
+    """
+    return {r["fold"]: r["titles"] for r in conn.execute(
+        "SELECT a.name_fold AS fold, COUNT(DISTINCT ba.book_ppn) AS titles "
+        "FROM authors a JOIN book_authors ba ON ba.author_id = a.id "
+        "GROUP BY a.name_fold")}
+
+
 def series_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Every series spelling with its part count, most parts first.
 

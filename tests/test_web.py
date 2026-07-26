@@ -153,6 +153,30 @@ def test_hub_lists_one_entry_per_slug(client, ro_conn):
     assert hub.count('href="/author/anna-vrij"') == 1
 
 
+def test_hub_counts_match_the_page_they_link_to(client, ro_conn):
+    # the threshold decides what goes in the sitemap, so a count that disagrees
+    # with its own page would publish a "2 titles" author whose page shows one
+    from obc.textnorm import slugify
+    from obc.web import app as appmod
+    from obc.web import queries
+    for rows in appmod._author_index(ro_conn).values():
+        for entry in rows:
+            fold_key = slugify(entry["name"]).replace("-", " ")
+            shelf = queries.author_books_by_fold(ro_conn, fold_key)
+            assert entry["titles"] == len(shelf), entry["name"]
+            assert entry["titles"] >= queries.MIN_INDEXABLE_TITLES
+
+
+def test_unsluggable_authors_are_not_merged_into_one_entry(client, ro_conn):
+    # fold() returns "" for a name with no Latin characters; using that as a merge
+    # key would fuse every such author into a single hub entry with a summed count
+    from obc.web import app as appmod
+    entries = [e for rows in appmod._author_index(ro_conn).values() for e in rows]
+    assert not [e for e in entries if not e["name"].strip()]
+    from obc.textnorm import slugify
+    assert all(slugify(e["name"]) for e in entries), "an entry has no slug to link to"
+
+
 def test_lists_pages(client):
     assert client.get("/lists").status_code == 200
     assert client.get("/list/test-top").status_code == 200
