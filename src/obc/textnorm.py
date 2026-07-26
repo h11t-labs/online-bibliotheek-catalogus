@@ -99,6 +99,19 @@ _TRANSLITERATE = str.maketrans({
 })
 
 
+# Trailing generation markers, editorial roles and "and others" abbreviations —
+# they are not the surname, but they are the last token, so alphabetising put
+# "A.H. Huussen jr." under J, "Ferdinand Bordewijk e.a." under A and "Wim
+# Kloppenburg (red.)" under R. Matched as *token sequences* against the folded
+# name, which has already dropped the dots and brackets: "e" alone is a plausible
+# surname, ("e", "a") is not.
+_NAME_SUFFIXES = (
+    ("e", "v", "a"), ("e", "a"), ("c", "s"), ("et", "al"),
+    ("jr",), ("sr",), ("red",), ("ill",), ("ed",), ("eds",),
+    ("vert",), ("bew",), ("samensteller",), ("samenstelling",),
+)
+
+
 def surname_key(name: str | None) -> str:
     """Folded surname for alphabetising: 'Alexander Klöpping' -> 'klopping'.
 
@@ -107,8 +120,18 @@ def surname_key(name: str | None) -> str:
     name. "Bob de Wit" lands on 'wit', "Buren, van" on 'buren'.
     """
     parts = fold((name or "").translate(_TRANSLITERATE)).split()
-    while len(parts) > 1 and parts[-1] in _NAME_PARTICLES:
-        parts.pop()
+    trimmed = True
+    while trimmed and len(parts) > 1:
+        trimmed = False
+        for suffix in _NAME_SUFFIXES:
+            n = len(suffix)
+            if len(parts) > n and tuple(parts[-n:]) == suffix:
+                del parts[-n:]
+                trimmed = True
+                break
+        if not trimmed and parts[-1] in _NAME_PARTICLES:
+            parts.pop()
+            trimmed = True
     return parts[-1] if parts else ""
 
 

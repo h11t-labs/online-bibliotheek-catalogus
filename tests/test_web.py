@@ -181,6 +181,21 @@ def test_authors_are_alphabetised_on_surname(client):
     assert surname_key("Arndís Þórarinsdóttir") == "thorarinsdottir"
     assert surname_key("Arnaldur Indriðason") == "indridason"
     assert surname_key("Andrzej Sapkowski Ł") == "l"       # a bare particle-less token
+    # generation markers, editorial roles and "and others" are not the surname,
+    # but they are the last token — all of these exist in the live catalog
+    assert surname_key("A.H. Huussen jr.") == "huussen"
+    assert surname_key("Jan Blokker Jr.") == "blokker"
+    assert surname_key("R.R. Hopkinson Sr.") == "hopkinson"
+    assert surname_key("Ferdinand Bordewijk e.a.") == "bordewijk"
+    assert surname_key("Klaartje Gras e.v.a.") == "gras"
+    assert surname_key("Daniël Mok c.s.") == "mok"
+    assert surname_key("Wim Kloppenburg (red.)") == "kloppenburg"
+    assert surname_key("Simon Dikker Hupkes (samensteller)") == "hupkes"
+    assert surname_key("Adam J.B. Lane (ill.)") == "lane"
+    assert surname_key("Onno van Gelder jr.") == "gelder"   # suffix and particle
+    # a single letter can genuinely be the surname, so it is left alone
+    assert surname_key("Christiane F") == "f"
+    assert surname_key("Drs. P") == "p"
     assert client.get("/authors/w").status_code == 200     # Bob de Wit lives here
     assert client.get("/authors/b").status_code == 404     # ...and not here
 
