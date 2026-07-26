@@ -149,8 +149,22 @@ def test_hub_lists_one_entry_per_slug(client, ro_conn):
     entries = [e for rows in index.values() for e in rows]
     slugs = [slugify(e["name"]) for e in entries]
     assert len(set(slugs)) == len(slugs), "two hub entries share a slug"
-    hub = client.get("/auteurs/b").text
+    hub = client.get("/authors/w").text
     assert hub.count('href="/author/bob-de-wit"') == 1
+
+
+def test_authors_are_alphabetised_on_surname(client):
+    # "Alexander Klöpping" belongs under K; bucketing on the first character of
+    # the full name filed every author under their first name instead
+    from obc.textnorm import surname_key
+    assert surname_key("Alexander Klöpping") == "klopping"
+    assert surname_key("Bob de Wit") == "wit"              # particle skipped
+    assert surname_key("Gerda van Wageningen") == "wageningen"
+    assert surname_key("Buren, van") == "buren"            # already inverted
+    assert surname_key("Bernlef") == "bernlef"             # single token
+    assert surname_key("") == ""
+    assert client.get("/authors/w").status_code == 200     # Bob de Wit lives here
+    assert client.get("/authors/b").status_code == 404     # ...and not here
 
 
 def test_hub_counts_match_the_page_they_link_to(client, ro_conn):
@@ -223,7 +237,7 @@ def test_sitemap_lists_the_aggregation_pages(client):
     assert "/sitemap-browse.xml" in idx
     browse = client.get("/sitemap-browse.xml")
     assert browse.status_code == 200
-    assert "/auteurs<" in browse.text and "/auteurs/b<" in browse.text
+    assert "/authors<" in browse.text and "/authors/w<" in browse.text
     assert "/author/bob-de-wit<" in browse.text     # 2 works -> its own page
     # Anna Vrij has one work in two formats: one card, so not its own page
     assert "/author/anna-vrij<" not in browse.text
@@ -253,19 +267,20 @@ def test_lastmod_only_where_it_is_truthful(client):
 
 
 def test_authors_hub(client):
-    hub = client.get("/auteurs")
+    hub = client.get("/authors")
     assert hub.status_code == 200
-    assert 'href="/auteurs/b"' in hub.text
-    letter = client.get("/auteurs/b")
+    # bucketed on surname: a reader looks for "Bob de Wit" under W, not under B
+    assert 'href="/authors/w"' in hub.text
+    letter = client.get("/authors/w")
     assert letter.status_code == 200
     assert 'href="/author/bob-de-wit"' in letter.text
     assert "/author/dirk-kok" not in letter.text            # wrong letter
-    # one spelling per letter, so /auteurs/A doesn't become a second URL
-    r = client.get("/auteurs/B", follow_redirects=False)
-    assert r.status_code == 301 and r.headers["location"] == "/auteurs/b"
-    assert client.get("/auteurs/zzz").status_code == 404
+    # one spelling per letter, so /authors/A doesn't become a second URL
+    r = client.get("/authors/W", follow_redirects=False)
+    assert r.status_code == 301 and r.headers["location"] == "/authors/w"
+    assert client.get("/authors/zzz").status_code == 404
     # and it's linked from the shared header, not just the sitemap
-    assert 'href="/auteurs"' in client.get("/").text
+    assert 'href="/authors"' in client.get("/").text
 
 
 def test_seo_meta_and_jsonld(client):

@@ -27,7 +27,7 @@ from fastapi.routing import APIRoute
 from fastapi.templating import Jinja2Templates
 
 from .. import db
-from ..textnorm import language_code, slugify
+from ..textnorm import language_code, slugify, surname_key
 from . import queries
 from .bio import author_bio
 
@@ -192,8 +192,7 @@ app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan
 # Pages with no per-user state and a catalog that only changes on the daily rebuild,
 # so they're safe to cache publicly — this offloads repeat hits and crawler traffic
 # from the single small VM. Detail pages cache an hour; the browse home a few minutes.
-_CACHE_PREFIXES = ("/book/", "/author/", "/auteurs", "/series/", "/list", "/stats",
-                   "/over")
+_CACHE_PREFIXES = ("/book/", "/author", "/series/", "/list", "/stats", "/over")
 
 
 # Templates use inline <script>/<style> blocks (base.html), GoatCounter loads its
@@ -366,9 +365,9 @@ _authors_cache: dict = {"key": None, "data": None}
 _OTHER_LETTER = "overig"  # names that don't start with a plain A-Z letter
 
 
-def _author_letter(fold: str) -> str:
-    """Bucket a folded author name into an A-Z tab, or the catch-all."""
-    first = (fold or "").strip()[:1].upper()
+def _author_letter(name: str) -> str:
+    """Bucket an author under the first letter of their surname, or the catch-all."""
+    first = surname_key(name)[:1].upper()
     return first if "A" <= first <= "Z" else _OTHER_LETTER
 
 
@@ -399,11 +398,12 @@ def _author_index(conn: sqlite3.Connection) -> dict[str, list[dict]]:
         merged.setdefault(row["fold"],
                           {"name": row["name"], "titles": counts.get(row["fold"], 0)})
     buckets: dict[str, list[dict]] = {}
-    for fold_key, entry in merged.items():
+    for entry in merged.values():
         if entry["titles"] >= queries.MIN_INDEXABLE_TITLES:
-            buckets.setdefault(_author_letter(fold_key), []).append(entry)
+            buckets.setdefault(_author_letter(entry["name"]), []).append(entry)
+    # surname first, then the full name, so a letter page reads as a name index
     for rows in buckets.values():
-        rows.sort(key=lambda e: slugify(e["name"]))
+        rows.sort(key=lambda e: (surname_key(e["name"]), slugify(e["name"])))
     _authors_cache.update(key=key, data=buckets)
     return buckets
 
@@ -700,8 +700,8 @@ def sitemap_browse(request: Request, conn: sqlite3.Connection = Depends(get_conn
     aggregate two or more titles are listed — see queries.MIN_INDEXABLE_TITLES.
     """
     index = _author_index(conn)
-    paths = ["/auteurs"]
-    paths += [f"/auteurs/{letter.lower()}" for letter in _letter_order(index)]
+    paths = ["/authors"]
+    paths += [f"/authors/{letter.lower()}" for letter in _letter_order(index)]
     paths += [_author_path(row["name"])
               for letter in _letter_order(index) for row in index[letter]]
     # Slugs, not encoded names: a sitemap full of URLs that immediately 301 wastes
@@ -718,7 +718,7 @@ def sitemap_books(request: Request, n: int, conn: sqlite3.Connection = Depends(g
     return _sitemap(_origin(request), [f"/book/{r['ppn']}" for r in rows])
 
 
-@app.get("/auteurs", response_class=HTMLResponse)
+@app.get("/authors", response_class=HTMLResponse)
 def authors_index(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """A-Z hub over the author pages.
 
@@ -737,18 +737,18 @@ def authors_index(request: Request, conn: sqlite3.Connection = Depends(get_conn)
                             f"luisterboeken."})
 
 
-@app.get("/auteurs/{letter}", response_class=HTMLResponse)
+@app.get("/authors/{letter}", response_class=HTMLResponse)
 def authors_letter(request: Request, letter: str,
                    conn: sqlite3.Connection = Depends(get_conn)):
     index = _author_index(conn)
     key = letter.upper() if len(letter) == 1 else letter.lower()
     if key not in index:
         return HTMLResponse("<h1>Geen auteurs onder deze letter</h1>", status_code=404)
-    # One canonical spelling per letter, so /auteurs/A and /auteurs/a don't become
+    # One canonical spelling per letter, so /authors/A and /authors/a don't become
     # two URLs with the same content.
     canonical = key.lower()
     if letter != canonical:
-        return RedirectResponse(f"/auteurs/{canonical}", status_code=301)
+        return RedirectResponse(f"/authors/{canonical}", status_code=301)
     rows = index[key]
     label = key.upper() if key != _OTHER_LETTER else "Overig"
     return _templates.TemplateResponse(request, "authors.html", {

@@ -76,6 +76,28 @@ def slugify(value: str | None) -> str:
     return fold(value).replace(" ", "-")
 
 
+# Dutch/Flemish name particles. The catalog stores names first-name-first, so the
+# surname is the last token — unless the name is already inverted ("Buren, van"),
+# where the trailing token is a particle and the real surname sits before it.
+_NAME_PARTICLES = {
+    "van", "de", "der", "den", "het", "ten", "ter", "te", "op", "aan", "in", "'t",
+    "du", "des", "del", "della", "la", "le", "di", "da", "dos", "von", "zu", "af",
+}
+
+
+def surname_key(name: str | None) -> str:
+    """Folded surname for alphabetising: 'Alexander Klöpping' -> 'klopping'.
+
+    A reader looking for Klöpping looks under K, not under A of Alexander — so the
+    A-Z index has to sort on this rather than on the first character of the full
+    name. "Bob de Wit" lands on 'wit', "Buren, van" on 'buren'.
+    """
+    parts = fold(name).split()
+    while len(parts) > 1 and parts[-1] in _NAME_PARTICLES:
+        parts.pop()
+    return parts[-1] if parts else ""
+
+
 # Author aliases: fold(variant) -> canonical display name. The catalog sometimes
 # lists the same person under shortened/variant names; collapse them here. Extend
 # as you spot more (left side is the folded form of any spelling that should map).

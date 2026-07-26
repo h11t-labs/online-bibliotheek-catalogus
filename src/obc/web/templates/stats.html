@@ -56,7 +56,7 @@
   <div class="panel"><h2>{{ title }}</h2><div class="bars">
     {% for it in items %}
     <div class="bar">
-      <span class="lbl">{% if link %}<a class="flink" style="text-decoration:underline dotted" href="{{ link }}{{ it[0]|urlencode }}">{{ it[0] }}</a>{% else %}{{ it[0] }}{% endif %}</span>
+      <span class="lbl">{% if link %}<a class="flink" style="text-decoration:underline dotted" href="{% if link == 'author' %}{{ it[0]|author_path }}{% else %}{{ link }}{{ it[0]|urlencode }}{% endif %}">{{ it[0] }}</a>{% else %}{{ it[0] }}{% endif %}</span>
       <div class="track"><div class="fill" style="width:{{ (it[1]*100//m) }}%"></div></div>
       <span class="num">{{ "{:,}".format(it[1]).replace(",", ".") }}</span>
     </div>
@@ -79,7 +79,7 @@
 
   {{ genrelist(s.genres, '/?genre=') }}
   {{ barlist('Talen', s.languages, '/?language=') }}
-  {{ barlist('Topauteurs', s.top_authors, '/author/') }}
+  {{ barlist('Topauteurs', s.top_authors, 'author') }}
   {{ barlist('Topuitgevers', s.top_publishers, '/?publisher=') }}
 </main>
 {% endblock %}

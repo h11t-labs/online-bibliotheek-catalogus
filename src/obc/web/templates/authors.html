@@ -21,7 +21,7 @@
 {% block body %}
 <main>
   <div class="pagehead">
-    <div class="crumb"><a href="/">‹ Terug naar zoeken</a>{% if letter %} · <a href="/auteurs">Alle auteurs</a>{% endif %}</div>
+    <div class="crumb"><a href="/">‹ Terug naar zoeken</a>{% if letter %} · <a href="/authors">Alle auteurs</a>{% endif %}</div>
     <h1 class="page-h">{% if letter %}Auteurs met {{ label }}{% else %}Auteurs{% endif %}</h1>
     <p class="page-sub">
       {%- if letter -%}
@@ -36,7 +36,7 @@
 
   <nav class="alpha" aria-label="Auteurs per letter">
     {% for l in letters %}
-    <a href="/auteurs/{{ l|lower }}" class="{{ 'on' if l == letter }}">
+    <a href="/authors/{{ l|lower }}" class="{{ 'on' if l == letter }}">
       {{ 'Overig' if l == 'overig' else l }}<span class="n">{{ counts[l] }}</span>
     </a>
     {% endfor %}
