@@ -192,7 +192,8 @@ app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan
 # Pages with no per-user state and a catalog that only changes on the daily rebuild,
 # so they're safe to cache publicly — this offloads repeat hits and crawler traffic
 # from the single small VM. Detail pages cache an hour; the browse home a few minutes.
-_CACHE_PREFIXES = ("/book/", "/author", "/series/", "/list", "/stats", "/about")
+_CACHE_PREFIXES = ("/book/", "/author", "/series/", "/list", "/stats", "/about",
+                   "/genre", "/e-books", "/luisterboeken")
 
 
 # Templates use inline <script>/<style> blocks (base.html), GoatCounter loads its
@@ -565,6 +566,58 @@ def _letter_order(index: dict) -> list[str]:
         ([_OTHER_LETTER] if _OTHER_LETTER in index else [])
 
 
+# Genre pages live at a real path (/genre/spanning-thrillers) rather than the
+# ?genre= query space, which is noindex + robots-disallowed. The slug -> name map
+# is the reverse lookup for that, cached per catalog rebuild.
+_genres_cache: dict = {"key": None, "data": None}
+# How many covers a browse landing page shows. It is an entry point, not a
+# replacement for the search UI — the "filter in zoeken" link opens the rest.
+BROWSE_PREVIEW = 120
+# The two format landing pages, as {path: (format, heading, lead-in)}.
+FORMAT_PAGES = {
+    "e-books": ("ebook", "E-books",
+                "Alle e-books uit de collectie van de online Bibliotheek."),
+    "luisterboeken": ("audiobook", "Luisterboeken",
+                      "Alle luisterboeken uit de collectie van de online Bibliotheek."),
+}
+
+
+def _genres(conn: sqlite3.Connection) -> dict[str, sqlite3.Row]:
+    """``{slug: row(name, titles)}`` for every genre with its own page."""
+    try:
+        key = DB_PATH.stat().st_mtime_ns
+    except OSError:
+        key = None
+    if _genres_cache["key"] == key and _genres_cache["data"] is not None:
+        return _genres_cache["data"]
+    data = {slugify(row["name"]): row for row in queries.genre_index(conn)}
+    _genres_cache.update(key=key, data=data)
+    return data
+
+
+def _browse_page(request: Request, conn: sqlite3.Connection, *, heading: str,
+                 lead: str, filters: queries.SearchFilters, search_url: str,
+                 crumb: tuple[str, str] | None = None) -> Response:
+    """Render a browse landing page (a genre or a format) from ``filters``."""
+    result = queries.search(conn, filters, page=1, page_size=BROWSE_PREVIEW)
+    summary = queries.browse_summary(conn, filters)
+    # Only mention the split when there is one — a format page would otherwise
+    # advertise "50.398 e-books en 0 luisterboeken".
+    split = (f" {_nlnum(summary['ebooks'])} e-books en "
+             f"{_nlnum(summary['audiobooks'])} luisterboeken."
+             if summary["ebooks"] and summary["audiobooks"] else "")
+    return _templates.TemplateResponse(request, "browse.html", {
+        "heading": heading, "lead": lead, "books": result.rows,
+        "total": result.total, "summary": summary, "search_url": search_url,
+        "shown": len(result.rows),
+        "formats_map": queries.formats_map(conn, result.rows),
+        "lists_map": queries.lists_map(conn, result.rows),
+        "breadcrumbs": _breadcrumbs(request, *([crumb] if crumb else []),
+                                    (heading, "")),
+        "meta_description": f"{_nlnum(result.total)} titels — {lead}{split}"[:300],
+    })
+
+
 # --------------------------------------------------------------------------- #
 # search
 # --------------------------------------------------------------------------- #
@@ -833,17 +886,18 @@ def sitemap_browse(request: Request, conn: sqlite3.Connection = Depends(get_conn
     aggregate two or more titles are listed — see queries.MIN_INDEXABLE_TITLES.
     """
     index = _author_index(conn)
-    paths = ["/authors"]
+    paths = ["/authors", "/genres", *[f"/{p}" for p in FORMAT_PAGES]]
     paths += [f"/authors/{letter.lower()}" for letter in _letter_order(index)]
-    # The hub lists every author; the sitemap only nominates the ones that
-    # aggregate something, so single-title pages stay reachable without being
-    # advertised as destinations.
+    # The hubs list everything; the sitemap only nominates pages that aggregate
+    # something, so single-title pages stay reachable without being advertised as
+    # destinations. Slugs, never encoded names: a sitemap full of URLs that
+    # immediately 301 wastes the crawl budget it exists to spend well.
     paths += [_author_path(row["name"])
               for letter in _letter_order(index) for row in index[letter]
               if row["titles"] >= queries.MIN_INDEXABLE_TITLES]
-    # Slugs, not encoded names: a sitemap full of URLs that immediately 301 wastes
-    # the crawl budget this PR exists to spend well.
     paths += [f"/series/{slug}" for slug, entry in sorted(_series_index(conn).items())
+              if entry["titles"] >= queries.MIN_INDEXABLE_TITLES]
+    paths += [f"/genre/{slug}" for slug, entry in sorted(_genres(conn).items())
               if entry["titles"] >= queries.MIN_INDEXABLE_TITLES]
     return _sitemap(_origin(request), paths)
 
@@ -853,6 +907,57 @@ def sitemap_books(request: Request, n: int, conn: sqlite3.Connection = Depends(g
     rows = conn.execute("SELECT ppn FROM books ORDER BY ppn LIMIT ? OFFSET ?",
                         (SITEMAP_PAGE, (max(n, 1) - 1) * SITEMAP_PAGE)).fetchall()
     return _sitemap(_origin(request), [f"/book/{r['ppn']}" for r in rows])
+
+
+@app.get("/genres", response_class=HTMLResponse)
+def genres_index(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """Hub over the genre pages, largest genre first."""
+    rows = queries.genre_index(conn)
+    genres = [{"name": r["name"], "slug": slugify(r["name"]), "titles": r["titles"]}
+              for r in rows]
+    return _templates.TemplateResponse(request, "genres.html", {
+        "genres": genres, "total": len(genres),
+        "breadcrumbs": _breadcrumbs(request, ("Genres", "")),
+        "meta_description": f"Alle {_nlnum(len(genres))} genres in de online "
+                            f"Bibliotheek — van thrillers tot filosofie, met het "
+                            f"aantal e-books en luisterboeken per genre."})
+
+
+@app.get("/genre/{slug}", response_class=HTMLResponse)
+def genre_page(request: Request, slug: str,
+               conn: sqlite3.Connection = Depends(get_conn)):
+    row = _genres(conn).get(slug.lower())
+    if row is None:
+        return HTMLResponse("<h1>Genre niet gevonden</h1>", status_code=404)
+    if slug != slug.lower():   # one canonical spelling per genre
+        return RedirectResponse(f"/genre/{slug.lower()}", status_code=301)
+    name = row["name"]
+    return _browse_page(
+        request, conn, heading=name,
+        lead=f"Alle titels in het genre {name} uit de collectie van de online "
+             f"Bibliotheek.",
+        filters=queries.SearchFilters(genres=(name,), sort="year_desc"),
+        search_url=f"/?genre={quote(name, safe='')}", crumb=("Genres", "/genres"))
+
+
+def _format_page(request: Request, conn: sqlite3.Connection, path: str) -> Response:
+    fmt, heading, lead = FORMAT_PAGES[path]
+    return _browse_page(
+        request, conn, heading=heading, lead=lead,
+        filters=queries.SearchFilters(format=fmt, sort="year_desc"),
+        search_url=f"/?format={fmt}")
+
+
+# Spelled out rather than routed through a single "/{slug}" catch-all: that would
+# shadow every one-segment route registered after it (/auteurs, /lists, /suggest…).
+@app.get("/e-books", response_class=HTMLResponse)
+def ebooks_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    return _format_page(request, conn, "e-books")
+
+
+@app.get("/luisterboeken", response_class=HTMLResponse)
+def audiobooks_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    return _format_page(request, conn, "luisterboeken")
 
 
 @app.get("/authors", response_class=HTMLResponse)

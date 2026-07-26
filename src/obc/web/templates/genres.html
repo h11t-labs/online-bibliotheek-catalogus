@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Genres · Online Bibliotheek Catalogus{% endblock %}
+{% block style %}
+  main{width:100%;max-width:1000px}
+  .page-h{font-family:var(--serif);font-size:clamp(26px,4vw,40px);margin:8px 0 6px}
+  .page-sub{color:var(--ink-soft);margin:0 0 26px}
+  .fmtrow{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 28px}
+  .fmtrow a{display:inline-flex;align-items:center;gap:8px;padding:11px 17px;border-radius:999px;
+    border:1px solid var(--line-strong);background:var(--card);color:var(--ink);
+    font-weight:600;font-size:14.5px;text-decoration:none}
+  .fmtrow a:hover{border-color:var(--accent);color:var(--accent)}
+  .fmtrow svg{width:16px;height:16px;color:var(--accent)}
+  .gcloud{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+  .gcloud a{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+    padding:12px 15px;border-radius:var(--radius-sm);border:1px solid var(--line);
+    background:var(--card);color:var(--ink);text-decoration:none;font-size:15px}
+  .gcloud a:hover{border-color:var(--accent);color:var(--accent)}
+  .gcloud .n{color:var(--ink-soft);font-size:12.5px;font-variant-numeric:tabular-nums;flex:none}
+{% endblock %}
+{% block body %}
+<main>
+  <div class="pagehead">
+    <div class="crumb"><a href="/">‹ Terug naar zoeken</a></div>
+    <h1 class="page-h">Genres</h1>
+    <p class="page-sub">{{ total|nlnum }} genres in de collectie, grootste eerst. Elk genre
+      opent alle e-books en luisterboeken die eronder vallen.</p>
+  </div>
+
+  <div class="fmtrow">
+    <a href="/e-books"><svg><use href="#ic-book"/></svg> Alle e-books</a>
+    <a href="/luisterboeken"><svg><use href="#ic-audio"/></svg> Alle luisterboeken</a>
+    <a href="/authors"><svg><use href="#ic-author"/></svg> Alle auteurs</a>
+  </div>
+
+  <div class="gcloud">
+    {% for g in genres %}
+    <a href="/genre/{{ g.slug }}">{{ g.name }}<span class="n">{{ g.titles|nlnum }}</span></a>
+    {% endfor %}
+  </div>
+</main>
+{% endblock %}

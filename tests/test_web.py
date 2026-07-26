@@ -331,6 +331,73 @@ def test_lastmod_only_where_it_is_truthful(client):
     assert "<lastmod>" not in client.get("/sitemap-books-1.xml").text
 
 
+def test_genre_and_format_pages(client):
+    # the genre/format slices only existed as ?genre= URLs, which are noindex AND
+    # robots-disallowed — so this whole class of query had no landing page at all
+    hub = client.get("/genres")
+    assert hub.status_code == 200
+    assert 'href="/genre/spanning-thrillers"' in hub.text
+    assert 'href="/e-books"' in hub.text and 'href="/luisterboeken"' in hub.text
+
+    genre = client.get("/genre/spanning-thrillers")
+    assert genre.status_code == 200
+    assert "<h1>Spanning &amp; Thrillers</h1>" in genre.text
+    assert "/book/003" in genre.text                     # a thriller from the fixture
+    assert 'href="/?genre=Spanning%20%26%20Thrillers"' in genre.text
+    assert client.get("/genre/bestaat-niet").status_code == 404
+    # one canonical spelling, as with the author letters
+    r = client.get("/genre/Spanning-Thrillers", follow_redirects=False)
+    assert r.status_code == 301 and r.headers["location"] == "/genre/spanning-thrillers"
+
+    ebooks = client.get("/e-books")
+    assert ebooks.status_code == 200 and "<h1>E-books</h1>" in ebooks.text
+    assert "/book/002" not in ebooks.text                # the audiobook edition
+    assert "<h1>Luisterboeken</h1>" in client.get("/luisterboeken").text
+    # and they're linked from the shared header, not just the sitemap
+    assert 'href="/genres"' in client.get("/").text
+
+
+def test_browse_pages_carry_more_than_a_wall_of_covers(client):
+    # a genre page that is only a cover grid is thin content wearing a new URL
+    body = client.get("/genre/spanning-thrillers").text
+    assert "e-book beschikbaar" in body or "luisterboek" in body
+    assert 'href="/author/bob-de-wit"' in body           # top authors link out
+    assert "%20" not in body.split('class="lead"')[1][:600]   # slugs, not encoded
+    desc = body.split('<meta name="description" content="', 1)[1].split('">', 1)[0]
+    assert "titels" in desc and len(desc) <= 300
+    # a format page has nothing to split, so it must not claim "en 0 luisterboeken"
+    fmt = client.get("/e-books").text
+    fmt_desc = fmt.split('<meta name="description" content="', 1)[1].split('">', 1)[0]
+    assert "0 luisterboeken" not in fmt_desc and "luisterboek" not in fmt_desc
+    assert "0 luisterboek" not in fmt
+
+
+def test_format_pages_are_not_a_catch_all_route(client):
+    # /e-books and /luisterboeken are spelled out; a "/{slug}" catch-all would
+    # shadow every one-segment route registered after it
+    for path in ("/lists", "/authors", "/stats", "/about"):
+        assert client.get(path).status_code == 200, path
+    assert client.get("/suggest?q=ontdek").headers["content-type"].startswith(
+        "application/json")
+    assert client.get("/zomaar-iets").status_code == 404
+
+
+def test_genre_slugs_are_unique_and_stable(client, ro_conn):
+    from obc.textnorm import slugify
+    from obc.web import queries
+    assert slugify("Spanning & Thrillers") == "spanning-thrillers"
+    assert slugify("Poëzie & Theater") == "poezie-theater"
+    rows = queries.genre_index(ro_conn)
+    slugs = [slugify(r["name"]) for r in rows]
+    assert all(slugs) and len(set(slugs)) == len(slugs)   # no blanks, no collisions
+    browse = client.get("/sitemap-browse.xml").text
+    # the hub lists every genre; the sitemap nominates the ones that aggregate
+    for r in rows:
+        promoted = f"/genre/{slugify(r['name'])}<" in browse
+        assert promoted == (r["titles"] >= queries.MIN_INDEXABLE_TITLES), r["name"]
+    assert "/genres<" in browse and "/e-books<" in browse
+
+
 def test_authors_hub(client):
     hub = client.get("/authors")
     assert hub.status_code == 200

@@ -523,6 +523,50 @@ def series_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         "GROUP BY series ORDER BY titles DESC, series COLLATE NOCASE").fetchall()
 
 
+def genre_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every genre with its work count, largest first.
+
+    Counted with editions collapsed, like the shelves: an e-book and its
+    audiobook are one title in the genre, not two. Unfiltered for the same reason
+    as :func:`author_index` — the hub lists every genre, the sitemap decides
+    separately which ones it nominates.
+    """
+    return conn.execute(
+        "SELECT g.name AS name, COUNT(DISTINCT bg.book_ppn) AS titles FROM genres g "
+        "JOIN book_genres bg ON bg.genre_id = g.id "
+        f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)} "
+        "GROUP BY g.id ORDER BY titles DESC, g.name COLLATE NOCASE").fetchall()
+
+
+def browse_summary(conn: sqlite3.Connection, f: SearchFilters,
+                   top_authors: int = 8) -> dict:
+    """Aggregate facts about a filtered slice: format split, year span, top authors.
+
+    This is what keeps a browse landing page from being a bare wall of covers —
+    every genre gets a different, factual paragraph, and the author names double
+    as internal links into the author pages. The format split deliberately counts
+    *editions*: it exists to say how many of these titles you can listen to.
+    """
+    where, params = _build_where(f)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    row = conn.execute(
+        "SELECT SUM(b.format = 'ebook') AS ebooks, "
+        "       SUM(b.format = 'audiobook') AS audiobooks, "
+        "       SUM(b.ereader = 1) AS ereader, "
+        "       MIN(NULLIF(b.year, 0)) AS year_min, MAX(b.year) AS year_max "
+        f"FROM books b {where_sql}", params).fetchone()
+    authors = conn.execute(
+        "SELECT a.name AS name, COUNT(DISTINCT ba.book_ppn) AS titles FROM books b "
+        "JOIN book_authors ba ON ba.book_ppn = b.ppn "
+        "JOIN authors a ON a.id = ba.author_id "
+        f"{where_sql}{' AND' if where_sql else 'WHERE'} 1=1{_collapse_editions(conn)} "
+        "GROUP BY a.name_fold ORDER BY titles DESC, a.name_fold LIMIT ?",
+        [*params, top_authors]).fetchall()
+    return {"ebooks": row["ebooks"] or 0, "audiobooks": row["audiobooks"] or 0,
+            "ereader": row["ereader"] or 0, "year_min": row["year_min"],
+            "year_max": row["year_max"], "authors": authors}
+
+
 def similar_books(conn: sqlite3.Connection, ppn: str, method: str = "lsa",
                   limit: int = 20) -> list[sqlite3.Row]:
     """"Meer zoals dit": precomputed LSA neighbours for a book (see obc.similar).
