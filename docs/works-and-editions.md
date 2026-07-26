@@ -6,16 +6,18 @@ they are one book. Can this catalog present it that way — search a book, find
 links to *its* e-book and *its* audiobook — and if so, how?
 
 **Answer.** Yes, and most of the hard part is already built. What is missing is
-not a new capability but a single explicit identity: a `work_id`. Today "these
-two rows are the same book" is re-derived, slightly differently, in seven places
-from a string comparison on `(lower(title), lower(author))`. Making that identity
-a stored column, and then a real `works` table, turns a pile of local workarounds
-into one modelled fact — and unlocks the things currently declared impossible
-(honest format pages, one URL per book, format filters that don't change what a
-"result" means).
+not a capability but an entity. Today "these two rows are the same book" is
+re-derived, slightly differently, in seven places from a string comparison on
+`(lower(title), lower(author))`. The fix is to store the book itself: a `works`
+table that owns everything a reader searches on, with the per-PPN rows
+(`books`, renamed `editions`) attached to it. That turns a pile of local
+workarounds into one modelled fact, and unlocks the things currently written off
+as impossible — honest format pages, one URL per book, a format filter that
+doesn't change what a "result" means.
 
 This document is the plan: what it costs today, what to build, in what order,
-what can go wrong, and how to measure that it worked.
+what can go wrong, and how to measure that it worked. It lands as **one PR** —
+see §8 for why, and for the commit order that keeps it reviewable.
 
 ---
 
@@ -95,22 +97,48 @@ Not hypothetical — each of these is visible in the current code or its history
 
 ## 3. Target model
 
-Keep the two layers, make both explicit.
+Two tables, and the *work* is the primary one. Everything a reader searches,
+filters, sorts or links to hangs off `works`; `editions` holds only what describes
+the file you actually borrow.
 
 ```
-works        one row per book        <- what search, browse, shelves, lists, sitemap use
-  ^
+works        one row per book       <- the entity. search, browse, shelves, lists,
+  |                                    genres, authors, recommendations, sitemap, URLs
   | work_id
-  |
-books        one row per edition     <- unchanged: the faithful mirror, borrow links, per-format facts
+  v
+editions     one row per PPN        <- format, pages/duration, narrator, e-reader,
+                                       size, file type, ISBN, borrow link
 ```
+
+`books` is *renamed* to `editions` rather than kept alongside a derived `works`
+aggregate. Two reasons: a table called `books` whose rows are not books is the
+original confusion, and a work-level fact stored in two places (once on the work,
+once per edition) is a fact that can disagree with itself.
+
+The satellite tables move to the work, because that is the level they describe:
+
+| Today | Becomes | Why |
+| --- | --- | --- |
+| `book_genres` | `work_genres` | a genre describes the book, not the file format |
+| `book_authors` | `work_authors` | ditto |
+| `book_lists` | `work_lists` | a Bestseller-60 slot is a book, not an edition |
+| `book_similar` | `work_similar` | "meer zoals dit" recommends books |
+| `books_fts` | `works_fts` | one FTS row per book, over the pooled text of its editions |
+
+Nothing is stored twice at both levels: subjects, keywords, authors and lists are
+*unioned across editions at build time* and written once, on the work. The only
+deliberate overlaps are `year`, `publisher` and `cover_url`, where the work
+carries the book-level answer (oldest year, representative's publisher and cover)
+and each edition carries its own — because those genuinely differ per edition and
+the page shows both.
 
 **Non-goals.** The scrape stays per PPN: `data/raw/records/{ppn}.json` keeps
-mirroring the library one item at a time, because that is what the library is.
-The `books` table keeps every column it has. The format facet stays — readers
-genuinely search for "luisterboek" — it just changes meaning from *"this row is
-an audiobook"* to *"this book is available as an audiobook"*. And the borrow
-button stays per edition: you borrow an edition, never a work.
+mirroring the library one item at a time, because that is what the library is. No
+edition-level fact is dropped — `editions` keeps every column that describes an
+edition. The format facet stays, because readers genuinely search for
+"luisterboek"; it just changes meaning from *"this row is an audiobook"* to *"this
+book is available as an audiobook"*. And the borrow button stays per edition: you
+borrow an edition, never a work.
 
 ## 4. Work identity
 
@@ -184,47 +212,68 @@ temp DB and atomically swaps it in (`db.stream_rebuild`, `normalize.normalize`).
 Schema changes cost nothing but a rebuild.
 
 ```sql
-ALTER-free, since the schema is recreated each run:
-
-books.work_id      TEXT      -- representative PPN of this edition's work
-CREATE INDEX idx_books_work ON books(work_id);
-
+-- the entity: one row per book
 CREATE TABLE works (
-    work_id        TEXT PRIMARY KEY,   -- = the representative edition's ppn
-    title, author, cover_url, slug,    -- from the representative edition
+    work_id        TEXT PRIMARY KEY,   -- = the representative edition's PPN
+    title          TEXT,               -- representative edition's
+    author         TEXT,               -- display string; work_authors has the split
     summary        TEXT,               -- longest non-empty across editions
-    language       TEXT,               -- representative's, else any non-null
-    publisher      TEXT,
+    cover_url      TEXT,               -- representative's
+    language       TEXT,               -- part of the identity key, so shared by construction
+    publisher      TEXT,               -- representative's (editions keep their own)
     year           INTEGER,            -- MIN(NULLIF(year, 0)) across editions
-    series, series_no, category, audience, age, keywords,
+    series, series_no, category, audience, age, keywords,   -- first non-null / union
     has_ebook      INTEGER,            -- MAX(format = 'ebook')
     has_audiobook  INTEGER,
-    ereader        INTEGER,            -- MAX(ereader) over e-book editions
-    ebook_ppn      TEXT,               -- MIN(ppn) per format: replaces editions_map
+    ereader        INTEGER,            -- MAX(ereader) over its e-book editions
+    ebook_ppn      TEXT,               -- lowest PPN per format: replaces editions_map
     audiobook_ppn  TEXT,
     n_editions     INTEGER,
     added_rank     INTEGER             -- MIN(): a new audiobook resurfaces the book
 );
-CREATE TABLE work_genres  (work_id, genre_id, parent_id);   -- union over editions
-CREATE TABLE work_authors (work_id, author_id, position);   -- union over editions
+
+-- what you borrow: one row per PPN (today's `books`, renamed and narrowed)
+CREATE TABLE editions (
+    ppn        TEXT PRIMARY KEY,
+    work_id    TEXT NOT NULL REFERENCES works(work_id) ON DELETE CASCADE,
+    format     TEXT,                   -- 'ebook' | 'audiobook'
+    url, slug,                         -- the borrow link on onlinebibliotheek.nl
+    isbn, publisher, year,             -- per edition, and they do differ
+    pages, duration, narrator, size, features, ereader,
+    cover_url, also_available_as, note, raw_json, scraped_at
+);
+CREATE INDEX idx_editions_work ON editions(work_id);
+
+CREATE TABLE work_genres  (work_id, genre_id, parent_id);          -- union over editions
+CREATE TABLE work_authors (work_id, author_id, position);          -- union over editions
+CREATE TABLE work_lists   (work_id, list_id, position, year, won);
+CREATE TABLE work_similar (work_id, method, rank, other_work_id, score);
 CREATE VIRTUAL TABLE works_fts USING fts5(work_id UNINDEXED, title, author,
     subjects, summary, tokenize = 'unicode61 remove_diacritics 2');
 ```
+
+No migration to write: `normalize` drops and recreates every table into a temp DB
+and atomically swaps it over the live file (`db.stream_rebuild`,
+`normalize.normalize`), so a schema change costs one rebuild and nothing else.
+That is what makes a rename-and-restructure affordable here where it normally
+would not be.
 
 Cheap to build and cheap to run:
 
 - Grouping joins the existing `_prepass()` streaming pass — it already reads every
   record file — so no extra I/O. `iter_records()` stamps `work_id` per record;
   union-find over ~68k short strings is a few MB and well under a second.
-- `works`, `work_genres`, `work_authors` are `INSERT … SELECT … GROUP BY work_id`
-  *after* books are inserted: set-based, constant memory, runs on the small VM.
-- The browse indexes get simpler, not more numerous. Today every sort needs a
-  `(primary_edition, <sort key>)` composite because the hot query filters a
-  boolean over 68k rows (`db.py:146-157`); over `works` every row is a book, so a
+- `works` and every `work_*` table are `INSERT … SELECT … GROUP BY work_id`
+  *after* the editions are inserted: set-based, constant memory, fine on the small
+  VM. Ordering matters only in that editions land first.
+- The indexes get simpler, not more numerous. Today every browse sort needs a
+  `(primary_edition, <sort key>)` composite because the hot query filters a boolean
+  over 68k rows (`db.py:146-157`); over `works` every row is already a book, so a
   plain `(year DESC)` / `(title COLLATE NOCASE)` index serves it. `works_fts` is
-  smaller than `books_fts` by the number of collapsed editions, and the
-  `idx_books_title_author_lower` functional index — which exists solely to make
-  the `(title, author)` workaround fast — can go.
+  smaller than `books_fts` by the number of merged editions, and
+  `idx_books_title_author_lower` — which exists *only* to make the `(title, author)`
+  workaround fast — is deleted outright.
+- `db.stats()` and `/stats` gain the honest pair: works and editions, separately.
 
 ## 6. Query layer
 
@@ -234,9 +283,13 @@ Cheap to build and cheap to run:
   `w.has_audiobook = 1` and `ereader=1` to `w.ereader = 1`. **The
   collapse-unless-format-filter branch disappears**, and with it the class of bug
   in §2.1–2.2.
-- `formats_map()` / `editions_map()` / `book_detail()["editions"]` collapse into
-  reading `has_*`/`*_ppn` off the row already fetched — three queries per page
-  gone.
+- `formats_map()` and `editions_map()` are **deleted**, not rewritten: `has_ebook`,
+  `has_audiobook`, `ebook_ppn` and `audiobook_ppn` ride along on the work row the
+  page already fetched. That is two extra queries per result page gone, and the
+  templates keep the shape they render today.
+- `book_detail()` fetches the work plus its editions (one indexed lookup on
+  `editions.work_id`) instead of re-deriving the sibling set from
+  `lower(title)`/`lower(author)`.
 - `browse_summary()` replaces both `EXISTS` subqueries with
   `SUM(has_ebook)` / `SUM(has_audiobook)`, and needs no mirroring of `search()`'s
   collapse rule because there is no rule left to mirror.
@@ -248,7 +301,7 @@ Cheap to build and cheap to run:
 
 ## 7. Web / UI / SEO
 
-- **One URL per book.** `/book/{ppn}` resolves `books.work_id`; a non-representative
+- **One URL per book.** `/book/{ppn}` resolves `editions.work_id`; a non-representative
   PPN 301s to `/book/{work_id}`. Every shared or indexed audiobook URL keeps
   working. `sitemap-books-*.xml` lists work URLs only — at least ~12k fewer URLs to
   crawl (§2.4), all of them distinct pages.
@@ -272,29 +325,54 @@ Cheap to build and cheap to run:
   edition it was catalogued from, and the dedupe-per-slot rule in `match_lists()`
   becomes dedupe-per-work.
 - **`similar.py`** builds vectors per work from the pooled text (better signal,
-  fewer documents, faster build) and drops the `_norm_key` post-hoc de-duplication
-  loop entirely.
+  fewer documents, faster build) and writes `work_similar`, dropping the
+  `_norm_key` post-hoc de-duplication loop entirely.
 
-**Deploy window.** A deploy triggers a refresh but serves the old DB until the
-swap, so the web layer must tolerate a `works`-less catalog for a few minutes.
-Same guard pattern already used for `primary_edition` and `book_genres.parent_id`:
-one `_has_works(conn)` helper, falling back to today's path, removed one release
-later.
+## 8. Rollout: one PR
 
-## 8. Rollout
+The tables are renamed and the query layer is rewritten against them, so there is
+no half-state worth shipping: a `work_id` column bolted onto `books` would only be
+a second way to say the same thing, kept alive for a week. One PR it is.
 
-Five PRs, each shippable on its own and each leaving the site working.
+What that costs, honestly: a diff across `db.py`, `normalize.py`, `queries.py`,
+`app.py`, `similar.py`, five templates and the test suite — roughly 900–1000 lines,
+most of it mechanical (`books` → `editions`, `book_ppn` → `work_id`). It is a lot
+to read at once, so the PR should be **reviewable commit by commit**, in this
+order:
 
-| # | Scope | Rough size |
-| --- | --- | --- |
-| 1 | `obc/work.py` (key + union-find + overrides), `related_ppns` in `detail.py`, `books.work_id`, every existing grouping site switched to `work_id`. No visible change beyond consistency. | ~150 LOC + tests |
-| 2 | `works` / `work_genres` / `work_authors` / `works_fts`; search, browse, shelves, facets, summaries, stats move over; format filter becomes a work-level flag; `/e-books` + `/luisterboeken` return. | ~300 LOC |
-| 3 | One URL per book: 301s, merged book page with per-edition blocks, `workExample` JSON-LD, sitemap over works, `suggest` over `works_fts`. | ~250 LOC |
-| 4 | `similar.py` over works; curated lists match works. | ~100 LOC |
-| 5 | `obc works --report`, `obc scrape --relink`, README + this doc updated with measured numbers. | ~150 LOC |
+1. `obc/work.py` — key, union-find, overrides, `related_ppns` in `detail.py`. Pure
+   logic, unit-testable, no schema.
+2. `db.py` + `normalize.py` — the new schema and the build. `obc normalize` runs
+   green; nothing reads it yet.
+3. `queries.py` — every read moved onto `works`; deletions (`formats_map`,
+   `editions_map`, `_collapse_editions`, `_has_primary_edition`) land here.
+4. `app.py` + templates — 301s, the merged book page, sitemap, JSON-LD, stats.
+5. `similar.py` + curated-list matching.
+6. `obc works --report`, `obc scrape --relink`, README + this doc.
 
-Run PR5's report *before* merging PR3 — the 301s are the one irreversible-ish step
-(they teach crawlers a mapping), so the grouping should be measured first.
+**Do the measuring before the merge, not after.** The 301s are the one step that is
+awkward to walk back (they teach crawlers a mapping), and the grouping is the thing
+that could be wrong. So: build the DB from a copy of the production records, run
+`obc works --report`, and paste its numbers into the PR description — group-size
+histogram, false-split count, false-merge candidates, and the resulting works/
+editions totals. Same discipline #27 used when it verified against a production
+copy rather than the stripped local catalog.
+
+**Deploy window.** This is the one thing a single PR makes worse, and it needs
+handling *in* the PR. On deploy the new code expects `works` while the volume still
+holds the old DB until the refresh completes — and the startup refresh runs
+`scrape --sync → --recent → lists → normalize` (`scheduler._default_cmds`), so that
+is many minutes of 500s, not seconds. Two small additions fix it:
+
+- add `no such table: works` to the bootstrap-error list in `app._db_unavailable`,
+  so the window renders the existing "De catalogus wordt opgebouwd" 503 instead of
+  a stack trace;
+- when the DB lacks `works`, have the startup refresh run **`normalize` first**
+  (rebuilding from the records already on the volume) before the sync — the shape
+  is fixed in one normalize instead of waiting out a full pipeline.
+
+No `_has_works()` dual-path guard: that pattern exists for *additive* columns, and
+maintaining two query layouts through a rename is worse than a bounded 503.
 
 **Tests.** `tests/sampledata.py` grows three cases the current fixture cannot
 express: two audiobook editions of one work (the case that killed
@@ -303,42 +381,51 @@ carrying `related_ppns` so the authoritative path is covered. Then: `/book/002`
 301s to `/book/001`; `?format=audiobook` totals count works not editions;
 `work_genres` is the union of its editions'; a work whose only summary sits on the
 audiobook edition is findable by a word from that summary (§2.3, today a failing
-case).
+case); and the existing perf tests in `test_db.py` are re-pointed at the new
+indexes rather than deleted.
 
 ## 9. Decisions to make
 
-Each has a recommendation; none blocks starting on PR1.
+Each has a recommendation; none blocks starting on the first commit.
 
-1. **`works.year` = oldest edition or representative's?** Recommend `MIN`: it is
+1. **Table names: `works` + `editions`, or `books` + `editions`?** Recommend
+   `works` + `editions`. `books` would read best in the final state, but reusing
+   the existing table's name for a different grain makes every line of the diff —
+   and every query written before it — ambiguous about which `books` it means.
+2. **`works.year` = oldest edition or representative's?** Recommend `MIN`: it is
    the book's publication year, and per-edition years stay visible on the page.
    Note it shifts "Nieuwste eerst" slightly for works whose editions span years.
-2. **Merge same-format duplicates too?** Recommend yes — four audiobook editions
+3. **Merge same-format duplicates too?** Recommend yes — four audiobook editions
    of one book are four cards today. The risk is merging an abridged or
    re-translated version; the language guard plus the report's "year gap" flag
    should surface those.
-3. **Whose cover?** The representative's (the audiobook's own cover stops being
+4. **Whose cover?** The representative's (the audiobook's own cover stops being
    shown on shelves). Recommend accepting; optionally show it in its edition block.
-4. **Keep `primary_edition`?** Recommend dropping it in PR2 once `works` exists —
-   it is the same fact, less usefully expressed.
+5. **What does `?format=` mean now?** Recommend "available as", i.e. a work-level
+   flag — that is what makes `/luisterboeken` honest. A reader who wants *only*
+   listenable books gets exactly that; nobody loses a result they used to get.
 
 ## 10. Risks
 
 - **False merges hide a book** (worse than a false split, which merely duplicates
   it). Mitigated by the conservative key, the language guard, the pre-flight
   report, and the override file.
+- **One big diff.** Mitigated by the commit order in §8 and by the fact that most
+  of it is a mechanical rename; the logic that can actually be wrong is confined to
+  `obc/work.py` and the `works` aggregation, both unit-tested.
+- **A bounded 503 on deploy** instead of the usual seamless swap — accepted
+  deliberately (§8), shortened by running `normalize` first.
 - **301 churn** if a representative ever changes. Bounded by PPN monotonicity; the
   only real trigger is the representative edition being withdrawn, which today
   already turns that URL into a 404.
 - **Relink crawl cost** if run naively over the whole catalog. Hence the targeted
-  selector, and hence (b) being a complete fallback rather than a stopgap: the
+  selector, and hence the key being a complete fallback rather than a stopgap: the
   feature ships without a single new request.
-- **Two shapes in flight** during PR1→PR2. Kept short by merging them in one
-  release cycle, with the `_has_works` guard covering the deploy window.
 
 ## 11. Verdict
 
-Feasible, and cheaper than it looks: no migrations (the DB is rebuilt every run),
-no scrape redesign, no new URL space, and the query layer gets *smaller*. The work
-is mostly moving seven ad-hoc groupings onto one modelled identity — which is also
-what turns the format facet from a thing we work around into a thing we can
-answer.
+Feasible, and cheaper than it looks: no migration to write (the DB is rebuilt from
+`data/raw` every run), no scrape redesign, no new URL space, and a query layer that
+gets *smaller* — seven ad-hoc groupings replaced by one table you can join. The
+format facet stops being something to work around and becomes something the model
+can answer.
