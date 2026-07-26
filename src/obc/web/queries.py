@@ -524,17 +524,31 @@ def series_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def genre_books(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """``(genre name, book ppn)`` for every genre link, editions collapsed.
+    """``(genre name, parent name, book ppn)`` per genre link, editions collapsed.
 
     The web layer groups these by slug and counts *distinct* ppns: two spellings
     of one genre routinely share books, so summing their separate counts
     advertised more titles than the page delivers.
+
+    The parent lives on the link, not on the genre, because jeugd and volwassenen
+    reuse the same genre names under different parents (see
+    :func:`obc.db.set_book_genre_parents`) — so a genre's parent here is whichever
+    one most of its books resolve to.
     """
-    return conn.execute(
-        "SELECT g.name AS name, bg.book_ppn AS ppn FROM genres g "
-        "JOIN book_genres bg ON bg.genre_id = g.id "
-        f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)}"
-    ).fetchall()
+    sql = ("SELECT g.name AS name, p.name AS parent, bg.book_ppn AS ppn "
+           "FROM genres g JOIN book_genres bg ON bg.genre_id = g.id "
+           "LEFT JOIN genres p ON p.id = bg.parent_id "
+           f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)}")
+    try:
+        return conn.execute(sql).fetchall()
+    except sqlite3.OperationalError as exc:  # catalog built before bg.parent_id
+        if "parent_id" not in str(exc):
+            raise
+        return conn.execute(
+            "SELECT g.name AS name, NULL AS parent, bg.book_ppn AS ppn FROM genres g "
+            "JOIN book_genres bg ON bg.genre_id = g.id "
+            f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)}"
+        ).fetchall()
 
 
 def genre_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:

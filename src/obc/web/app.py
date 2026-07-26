@@ -13,6 +13,7 @@ plain browse ordered by the chosen sort.
 
 from __future__ import annotations
 
+import collections
 import datetime
 import os
 import re
@@ -193,7 +194,7 @@ app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan
 # so they're safe to cache publicly — this offloads repeat hits and crawler traffic
 # from the single small VM. Detail pages cache an hour; the browse home a few minutes.
 _CACHE_PREFIXES = ("/book/", "/author", "/series/", "/list", "/stats", "/about",
-                   "/genre", "/e-books", "/luisterboeken")
+                   "/genre")
 
 
 # Templates use inline <script>/<style> blocks (base.html), GoatCounter loads its
@@ -573,13 +574,6 @@ _genres_cache: dict = {"key": None, "data": None}
 # How many covers a browse landing page shows. It is an entry point, not a
 # replacement for the search UI — the "filter in zoeken" link opens the rest.
 BROWSE_PREVIEW = 120
-# The two format landing pages, as {path: (format, heading, lead-in)}.
-FORMAT_PAGES = {
-    "e-books": ("ebook", "E-books",
-                "Alle e-books uit de collectie van de online Bibliotheek."),
-    "luisterboeken": ("audiobook", "Luisterboeken",
-                      "Alle luisterboeken uit de collectie van de online Bibliotheek."),
-}
 
 
 def _genres(conn: sqlite3.Connection) -> dict[str, dict]:
@@ -601,6 +595,7 @@ def _genres(conn: sqlite3.Connection) -> dict[str, dict]:
     # titles for a page that shows two.
     books: dict[str, set] = {}
     names: dict[str, list[str]] = {}
+    parents: dict[str, collections.Counter] = {}
     for row in queries.genre_books(conn):
         slug = slugify(row["name"])
         if not slug:
@@ -608,16 +603,30 @@ def _genres(conn: sqlite3.Connection) -> dict[str, dict]:
         books.setdefault(slug, set()).add(row["ppn"])
         if row["name"] not in names.setdefault(slug, []):
             names[slug].append(row["name"])
-    merged = {slug: {"name": max(names[slug], key=len), "names": names[slug],
-                     "titles": len(ppns)}
-              for slug, ppns in books.items()}
+        # The parent sits on the link, not the genre, because jeugd and volwassenen
+        # reuse names under different parents — take the one most of its books agree
+        # on, and treat "no parent" as a vote for top-level.
+        parents.setdefault(slug, collections.Counter())[slugify(row["parent"] or "")] += 1
+    merged: dict[str, dict] = {}
+    for slug, ppns in books.items():
+        parent = parents[slug].most_common(1)[0][0]
+        merged[slug] = {"name": max(names[slug], key=len), "names": names[slug],
+                        "titles": len(ppns),
+                        "parent": parent if parent and parent != slug else ""}
+    # children hang off their parent, so a top genre can list what sits under it
+    for slug, entry in merged.items():
+        entry["children"] = sorted(
+            (c for c, e in merged.items() if e["parent"] == slug),
+            key=lambda c: (-merged[c]["titles"], c))
     _genres_cache.update(key=key, data=merged)
     return merged
 
 
 def _browse_page(request: Request, conn: sqlite3.Connection, *, heading: str,
                  lead: str, filters: queries.SearchFilters, search_url: str,
-                 crumb: tuple[str, str] | None = None) -> Response:
+                 crumb: tuple[str, str] | None = None,
+                 parent: dict | None = None,
+                 children: list[dict] | None = None) -> Response:
     """Render a browse landing page (a genre or a format) from ``filters``."""
     result = queries.search(conn, filters, page=1, page_size=BROWSE_PREVIEW)
     summary = queries.browse_summary(conn, filters)
@@ -632,8 +641,11 @@ def _browse_page(request: Request, conn: sqlite3.Connection, *, heading: str,
         "shown": len(result.rows),
         "formats_map": queries.formats_map(conn, result.rows),
         "lists_map": queries.lists_map(conn, result.rows),
-        "breadcrumbs": _breadcrumbs(request, *([crumb] if crumb else []),
-                                    (heading, "")),
+        "parent": parent, "children": children or [],
+        "breadcrumbs": _breadcrumbs(
+            request, *([crumb] if crumb else []),
+            *([(parent["name"], f"/genre/{parent['slug']}")] if parent else []),
+            (heading, "")),
         "meta_description": f"{_nlnum(result.total)} titels — {lead}{split}"[:300],
     })
 
@@ -906,7 +918,7 @@ def sitemap_browse(request: Request, conn: sqlite3.Connection = Depends(get_conn
     aggregate two or more titles are listed — see queries.MIN_INDEXABLE_TITLES.
     """
     index = _author_index(conn)
-    paths = ["/authors", "/genres", *[f"/{p}" for p in FORMAT_PAGES]]
+    paths = ["/authors", "/genres"]
     paths += [f"/authors/{letter.lower()}" for letter in _letter_order(index)]
     # The hubs list everything; the sitemap only nominates pages that aggregate
     # something, so single-title pages stay reachable without being advertised as
@@ -932,13 +944,19 @@ def sitemap_books(request: Request, n: int, conn: sqlite3.Connection = Depends(g
 @app.get("/genres", response_class=HTMLResponse)
 def genres_index(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """Hub over the genre pages, largest genre first."""
-    genres = sorted(({"name": e["name"], "slug": slug, "titles": e["titles"]}
-                     for slug, e in _genres(conn).items()),
-                    key=lambda g: (-g["titles"], g["name"].lower()))
+    index = _genres(conn)
+    # Only top genres head the hub; a subgenre is reached from its parent, so the
+    # list reads as a taxonomy instead of parents and children jumbled by size.
+    genres = sorted(
+        ({"name": e["name"], "slug": slug, "titles": e["titles"],
+          "children": [{"name": index[c]["name"], "slug": c,
+                        "titles": index[c]["titles"]} for c in e["children"]]}
+         for slug, e in index.items() if not e["parent"]),
+        key=lambda g: (-g["titles"], g["name"].lower()))
     return _templates.TemplateResponse(request, "genres.html", {
-        "genres": genres, "total": len(genres),
+        "genres": genres, "total": len(index), "tops": len(genres),
         "breadcrumbs": _breadcrumbs(request, ("Genres", "")),
-        "meta_description": f"Alle {_nlnum(len(genres))} genres in de online "
+        "meta_description": f"Alle {_nlnum(len(index))} genres in de online "
                             f"Bibliotheek — van thrillers tot filosofie, met het "
                             f"aantal e-books en luisterboeken per genre."})
 
@@ -951,33 +969,21 @@ def genre_page(request: Request, slug: str,
         return HTMLResponse("<h1>Genre niet gevonden</h1>", status_code=404)
     if slug != slugify(slug):   # one canonical spelling per genre
         return RedirectResponse(f"/genre/{slugify(slug)}", status_code=301)
+    index = _genres(conn)
     name = entry["name"]
+    parent = index.get(entry["parent"]) if entry["parent"] else None
     return _browse_page(
         request, conn, heading=name,
         lead=f"Alle titels in het genre {name} uit de collectie van de online "
              f"Bibliotheek.",
         filters=queries.SearchFilters(genres=tuple(entry["names"]), sort="year_desc"),
-        search_url=f"/?genre={quote(name, safe='')}", crumb=("Genres", "/genres"))
+        search_url=f"/?genre={quote(name, safe='')}",
+        crumb=("Genres", "/genres"),
+        parent=({"name": parent["name"], "slug": entry["parent"]} if parent else None),
+        children=[{"name": index[c]["name"], "slug": c, "titles": index[c]["titles"]}
+                  for c in entry["children"]])
 
 
-def _format_page(request: Request, conn: sqlite3.Connection, path: str) -> Response:
-    fmt, heading, lead = FORMAT_PAGES[path]
-    return _browse_page(
-        request, conn, heading=heading, lead=lead,
-        filters=queries.SearchFilters(format=fmt, sort="year_desc"),
-        search_url=f"/?format={fmt}")
-
-
-# Spelled out rather than routed through a single "/{slug}" catch-all: that would
-# shadow every one-segment route registered after it (/auteurs, /lists, /suggest…).
-@app.get("/e-books", response_class=HTMLResponse)
-def ebooks_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    return _format_page(request, conn, "e-books")
-
-
-@app.get("/luisterboeken", response_class=HTMLResponse)
-def audiobooks_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    return _format_page(request, conn, "luisterboeken")
 
 
 @app.get("/authors", response_class=HTMLResponse)

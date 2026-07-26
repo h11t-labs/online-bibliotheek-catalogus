@@ -22,19 +22,28 @@
   <div class="pagehead">
     <div class="crumb"><a href="/">‹ Terug naar zoeken</a></div>
     <h1 class="page-h">Genres</h1>
-    <p class="page-sub">{{ total|nlnum }} genres in de collectie, grootste eerst. Elk genre
-      opent alle e-books en luisterboeken die eronder vallen.</p>
+    <p class="page-sub">{{ total|nlnum }} genres in de collectie, ondergebracht in
+      {{ tops|nlnum }} hoofdgenres. Elk genre opent alle e-books en luisterboeken die
+      eronder vallen.</p>
   </div>
 
   <div class="fmtrow">
-    <a href="/e-books"><svg><use href="#ic-book"/></svg> Alle e-books</a>
-    <a href="/luisterboeken"><svg><use href="#ic-audio"/></svg> Alle luisterboeken</a>
     <a href="/authors"><svg><use href="#ic-author"/></svg> Alle auteurs</a>
   </div>
 
-  <div class="gcloud">
+  <div class="gtop">
     {% for g in genres %}
-    <a href="/genre/{{ g.slug }}">{{ g.name }}<span class="n">{{ g.titles|nlnum }}</span></a>
+    <section>
+      <h2><a href="/genre/{{ g.slug }}">{{ g.name }}</a></h2>
+      <div class="n">{{ g.titles|nlnum }} titels</div>
+      {% if g.children %}
+      <ul>
+        {% for c in g.children %}
+        <li><a href="/genre/{{ c.slug }}">{{ c.name }}</a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
     {% endfor %}
   </div>
 </main>

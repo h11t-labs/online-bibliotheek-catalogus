@@ -337,7 +337,6 @@ def test_genre_and_format_pages(client):
     hub = client.get("/genres")
     assert hub.status_code == 200
     assert 'href="/genre/spanning-thrillers"' in hub.text
-    assert 'href="/e-books"' in hub.text and 'href="/luisterboeken"' in hub.text
 
     genre = client.get("/genre/spanning-thrillers")
     assert genre.status_code == 200
@@ -349,10 +348,6 @@ def test_genre_and_format_pages(client):
     r = client.get("/genre/Spanning-Thrillers", follow_redirects=False)
     assert r.status_code == 301 and r.headers["location"] == "/genre/spanning-thrillers"
 
-    ebooks = client.get("/e-books")
-    assert ebooks.status_code == 200 and "<h1>E-books</h1>" in ebooks.text
-    assert "/book/002" not in ebooks.text                # the audiobook edition
-    assert "<h1>Luisterboeken</h1>" in client.get("/luisterboeken").text
     # and they're linked from the shared header, not just the sitemap
     assert 'href="/genres"' in client.get("/").text
 
@@ -365,21 +360,8 @@ def test_browse_pages_carry_more_than_a_wall_of_covers(client):
     assert "%20" not in body.split('class="lead"')[1][:600]   # slugs, not encoded
     desc = body.split('<meta name="description" content="', 1)[1].split('">', 1)[0]
     assert "titels" in desc and len(desc) <= 300
-    # a format page has nothing to split, so it must not claim "en 0 luisterboeken"
-    fmt = client.get("/e-books").text
-    fmt_desc = fmt.split('<meta name="description" content="', 1)[1].split('">', 1)[0]
-    assert "0 luisterboeken" not in fmt_desc and "luisterboek" not in fmt_desc
-    assert "0 luisterboek" not in fmt
 
 
-def test_format_pages_are_not_a_catch_all_route(client):
-    # /e-books and /luisterboeken are spelled out; a "/{slug}" catch-all would
-    # shadow every one-segment route registered after it
-    for path in ("/lists", "/authors", "/stats", "/about"):
-        assert client.get(path).status_code == 200, path
-    assert client.get("/suggest?q=ontdek").headers["content-type"].startswith(
-        "application/json")
-    assert client.get("/zomaar-iets").status_code == 404
 
 
 def test_colliding_genre_spellings_share_one_page(client, ro_conn):
@@ -411,7 +393,7 @@ def test_genre_slugs_are_unique_and_stable(client, ro_conn):
     for r in rows:
         promoted = f"/genre/{slugify(r['name'])}<" in browse
         assert promoted == (r["titles"] >= queries.MIN_INDEXABLE_TITLES), r["name"]
-    assert "/genres<" in browse and "/e-books<" in browse
+    assert "/genres<" in browse
 
 
 def test_authors_hub(client):
@@ -805,3 +787,68 @@ def test_404_offers_matching_genres(client, monkeypatch):
     body = client.get("/list/thriller").text
     assert 'href="/?genre=Spanning%20%26%20Thrillers"' in body
     assert "Spanning &amp; Thrillers" in body
+def _catalog_with_genre_parents(tmp_path):
+    """A fixture catalog where book_genres.parent_id is actually populated.
+
+    The live enrichment that fills it needs the detail pages, which the hermetic
+    fixture has no way to fetch — so the hierarchy is stamped directly here.
+    Without this the parent/child code would ship untested: every local catalog
+    has parent_id NULL throughout.
+    """
+    import sampledata
+
+    from obc import db
+    path = tmp_path / "hier.db"
+    conn = db.connect(path)
+    db.bulk_load(conn, sampledata.records(), sampledata.lists())
+    ids = {r["name"]: r["id"] for r in conn.execute("SELECT id, name FROM genres")}
+    top, sub = "Spanning & Thrillers", "Thrillers"
+    if sub not in ids:
+        conn.execute("INSERT INTO genres(name) VALUES (?)", (sub,))
+        ids[sub] = conn.execute("SELECT id FROM genres WHERE name = ?", (sub,)).fetchone()[0]
+        ppn = conn.execute(
+            "SELECT book_ppn FROM book_genres WHERE genre_id = ? LIMIT 1",
+            (ids[top],)).fetchone()[0]
+        conn.execute("INSERT INTO book_genres(book_ppn, genre_id) VALUES (?, ?)",
+                     (ppn, ids[sub]))
+    conn.execute("UPDATE book_genres SET parent_id = ? WHERE genre_id = ?",
+                 (ids[top], ids[sub]))
+    conn.commit()
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")   # so mode=ro readers see it
+    conn.close()
+    return path
+
+
+def test_genre_hierarchy(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from obc.web import app as appmod
+    from obc.web import queries
+    path = _catalog_with_genre_parents(tmp_path)
+    monkeypatch.setattr(appmod, "DB_PATH", path)
+    monkeypatch.setattr(appmod, "author_bio", lambda name: None)
+    appmod._genres_cache.update(key=None, data=None)
+    conn = queries.connect_ro(path)
+    index = appmod._genres(conn)
+
+    assert index["thrillers"]["parent"] == "spanning-thrillers"
+    assert "thrillers" in index["spanning-thrillers"]["children"]
+    assert index["spanning-thrillers"]["parent"] == ""      # a top genre has none
+
+    client = TestClient(appmod.app)
+    hub = client.get("/genres").text
+    # the hub is headed by top genres, with their children beneath them
+    assert 'href="/genre/spanning-thrillers"' in hub
+    assert hub.index("/genre/spanning-thrillers") < hub.index("/genre/thrillers")
+    assert "hoofdgenres" in hub
+
+    child = client.get("/genre/thrillers").text
+    assert 'href="/genre/spanning-thrillers"' in child       # a way back up
+    crumbs = [d for d in _jsonld(child) if d.get("@type") == "BreadcrumbList"][0]
+    assert [i["name"] for i in crumbs["itemListElement"]] == [
+        "Home", "Genres", "Spanning & Thrillers", "Thrillers"]
+
+    parent = client.get("/genre/spanning-thrillers").text
+    assert 'class="subgenres"' in parent and 'href="/genre/thrillers"' in parent
+    conn.close()
+    appmod._genres_cache.update(key=None, data=None)
