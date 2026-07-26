@@ -1,47 +1,56 @@
 {% extends "base.html" %}
 {% block title %}Genres · Online Bibliotheek Catalogus{% endblock %}
 {% block style %}
-  main{width:100%;max-width:1000px}
+  main{width:100%;max-width:1040px}
   .page-h{font-family:var(--serif);font-size:clamp(26px,4vw,40px);margin:8px 0 6px}
-  .page-sub{color:var(--ink-soft);margin:0 0 26px}
-  .fmtrow{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 28px}
-  .fmtrow a{display:inline-flex;align-items:center;gap:8px;padding:11px 17px;border-radius:999px;
-    border:1px solid var(--line-strong);background:var(--card);color:var(--ink);
-    font-weight:600;font-size:14.5px;text-decoration:none}
-  .fmtrow a:hover{border-color:var(--accent);color:var(--accent)}
-  .fmtrow svg{width:16px;height:16px;color:var(--accent)}
-  .gcloud{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
-  .gcloud a{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
-    padding:12px 15px;border-radius:var(--radius-sm);border:1px solid var(--line);
-    background:var(--card);color:var(--ink);text-decoration:none;font-size:15px}
-  .gcloud a:hover{border-color:var(--accent);color:var(--accent)}
-  .gcloud .n{color:var(--ink-soft);font-size:12.5px;font-variant-numeric:tabular-nums;flex:none}
+  .page-sub{color:var(--ink-soft);margin:0 0 30px;max-width:62ch}
+
+  /* A taxonomy reads as an index, not as a wall of boxes: the hierarchy is carried
+     by type and indentation, and one hairline per row does the separating that 42
+     bordered cards were doing badly. Two columns balance by count, not by order,
+     so a genre with twelve children doesn't leave a hole beside it. */
+  .gtax{columns:2;column-gap:44px}
+  .gtop{break-inside:avoid;padding:0 0 15px;margin:0 0 15px;
+    border-bottom:1px solid var(--line)}
+  .gtop:last-child{border-bottom:0}
+  .gtop .head{display:flex;align-items:baseline;gap:12px}
+  .gtop h2{font-family:var(--serif);font-size:19px;font-weight:600;margin:0;
+    line-height:1.25;flex:1;min-width:0}
+  .gtop h2 a:hover{color:var(--accent)}
+  .gtop .n{flex:none;font-size:12.5px;color:var(--ink-soft);
+    font-variant-numeric:tabular-nums}
+  .gtop .kids{margin:7px 0 0;font-size:13.5px;line-height:1.75;color:var(--ink-soft)}
+  .gtop .kids a{color:var(--ink-soft);border-bottom:1px solid transparent}
+  .gtop .kids a:hover{color:var(--accent);border-bottom-color:var(--accent)}
+  .gtop .kids .sep{opacity:.4;padding:0 2px}
+  @media (max-width:720px){ .gtax{columns:1} }
 {% endblock %}
 {% block body %}
 <main>
   <div class="pagehead">
     <div class="crumb"><a href="/">‹ Terug naar zoeken</a></div>
     <h1 class="page-h">Genres</h1>
-    <p class="page-sub">{{ total|nlnum }} genres in de collectie, ondergebracht in
-      {{ tops|nlnum }} hoofdgenres. Elk genre opent alle e-books en luisterboeken die
-      eronder vallen.</p>
+    {# a catalog rebuilt without the detail pass has no subgenres at all, and
+       "42 genres in 42 hoofdgenres" reads like a bug #}
+    <p class="page-sub">{{ total|nlnum }} genres in de collectie{% if tops < total %},
+      ondergebracht in {{ tops|nlnum }} hoofdgenres{% endif %}. Elk genre opent alle
+      e-books en luisterboeken die eronder vallen.</p>
   </div>
 
-  <div class="fmtrow">
-    <a href="/authors"><svg><use href="#ic-author"/></svg> Alle auteurs</a>
-  </div>
-
-  <div class="gtop">
+  <div class="gtax">
     {% for g in genres %}
-    <section>
-      <h2><a href="/genre/{{ g.slug }}">{{ g.name }}</a></h2>
-      <div class="n">{{ g.titles|nlnum }} titels</div>
+    <section class="gtop">
+      <div class="head">
+        <h2><a href="/genre/{{ g.slug }}">{{ g.name }}</a></h2>
+        <span class="n">{{ g.titles|nlnum }}</span>
+      </div>
       {% if g.children %}
-      <ul>
-        {% for c in g.children %}
-        <li><a href="/genre/{{ c.slug }}">{{ c.name }}</a></li>
-        {% endfor %}
-      </ul>
+      <p class="kids">
+        {%- for c in g.children -%}
+        <a href="/genre/{{ c.slug }}">{{ c.name }}</a>
+        {%- if not loop.last %}<span class="sep">·</span>{% endif -%}
+        {%- endfor -%}
+      </p>
       {% endif %}
     </section>
     {% endfor %}
