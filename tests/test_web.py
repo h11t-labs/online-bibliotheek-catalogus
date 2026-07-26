@@ -153,6 +153,17 @@ def test_hub_lists_one_entry_per_slug(client, ro_conn):
     assert hub.count('href="/author/bob-de-wit"') == 1
 
 
+def test_stats_links_to_the_real_pages(client):
+    # genres and authors have their own pages now, so the stats bars point there
+    # instead of into the ?-space, which is noindex and robots-disallowed
+    body = client.get("/stats").text
+    links = re.findall(r'href="(/[^"]+)"', body)
+    assert not [x for x in links if x.startswith("/?genre=")]
+    assert not [x for x in links if x.startswith("/author/") and "%" in x]
+    # languages and publishers have no landing page, so those stay query links
+    assert [x for x in links if x.startswith(("/?language=", "/?publisher="))]
+
+
 def test_about_page_moved_but_the_old_url_still_resolves(client):
     # /over shipped in v1.1.2 and sits in the live sitemap, so it owes a redirect
     for old in ("/over", "/over/"):

@@ -138,6 +138,11 @@ def _series_path(name: str) -> str:
     return f"/series/{slugify(name) or quote(name, safe='')}"
 
 
+def _genre_path(name: str) -> str:
+    """Canonical URL path for a genre, mirroring :func:`_author_path`."""
+    return f"/genre/{slugify(name) or quote(name, safe='')}"
+
+
 def _nlnum(n: int) -> str:
     """9803 -> '9.803' (Dutch thousands separator)."""
     return f"{n:,}".replace(",", ".")
@@ -155,6 +160,7 @@ _templates.env.filters["coverw"] = _coverw
 _templates.env.filters["nldate"] = _nldate
 _templates.env.filters["author_path"] = _author_path
 _templates.env.filters["series_path"] = _series_path
+_templates.env.filters["genre_path"] = _genre_path
 _templates.env.filters["nlnum"] = _nlnum
 _templates.env.globals["url_with"] = _url_with
 _templates.env.globals["url_without"] = _url_without
