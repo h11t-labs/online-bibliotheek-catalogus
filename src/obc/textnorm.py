@@ -64,6 +64,18 @@ def fold(value: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
 
+def slugify(value: str | None) -> str:
+    """URL slug from a display name: 'Lisbeth Imbo' -> 'lisbeth-imbo'.
+
+    Built on :func:`fold`, so it is always URL-safe ASCII and — importantly —
+    reversible into a ``name_fold`` by swapping the dashes back to spaces. That
+    makes a slug an indexed lookup key rather than something to store. Names with
+    no Latin characters at all (Greek script, junk rows) fold to an empty string
+    and therefore have no slug; callers must handle that.
+    """
+    return fold(value).replace(" ", "-")
+
+
 # Author aliases: fold(variant) -> canonical display name. The catalog sometimes
 # lists the same person under shortened/variant names; collapse them here. Extend
 # as you spot more (left side is the folded form of any spelling that should map).
@@ -102,6 +114,36 @@ def valid_language(name: str | None) -> str | None:
     if name and fold(name) in VALID_LANGUAGES:
         return name
     return None
+
+
+# schema.org's inLanguage wants an IETF BCP 47 code, not a Dutch language name.
+# "Schots" is deliberately absent: it maps to either Scots (sco) or Scottish
+# Gaelic (gd) and the catalog doesn't say which — better no code than a wrong one.
+_LANGUAGE_CODES: dict[str, str] = {
+    "Nederlands": "nl", "Engels": "en", "Duits": "de", "Frans": "fr",
+    "Spaans": "es", "Italiaans": "it", "Portugees": "pt", "Latijn": "la",
+    "Grieks": "el", "Nieuwgrieks": "el", "Russisch": "ru", "Pools": "pl",
+    "Tsjechisch": "cs", "Slowaaks": "sk", "Hongaars": "hu", "Roemeens": "ro",
+    "Bulgaars": "bg", "Servisch": "sr", "Kroatisch": "hr", "Bosnisch": "bs",
+    "Sloveens": "sl", "Oekraïens": "uk", "Wit-Russisch": "be",
+    "Macedonisch": "mk", "Albanees": "sq", "Zweeds": "sv", "Noors": "no",
+    "Deens": "da", "Fins": "fi", "IJslands": "is", "Ests": "et", "Lets": "lv",
+    "Litouws": "lt", "Turks": "tr", "Arabisch": "ar", "Hebreeuws": "he",
+    "Jiddisch": "yi", "Perzisch": "fa", "Koerdisch": "ku", "Chinees": "zh",
+    "Japans": "ja", "Koreaans": "ko", "Hindi": "hi", "Urdu": "ur",
+    "Bengaals": "bn", "Indonesisch": "id", "Maleis": "ms", "Thais": "th",
+    "Vietnamees": "vi", "Afrikaans": "af", "Swahili": "sw", "Armeens": "hy",
+    "Georgisch": "ka", "Catalaans": "ca", "Galicisch": "gl", "Baskisch": "eu",
+    "Iers": "ga", "Welsh": "cy", "Bretons": "br", "Papiaments": "pap",
+    "Fries": "fy", "Westerlauwers Fries": "fy", "Limburgs": "li",
+    "Esperanto": "eo", "Sanskriet": "sa", "meerdere talen": "mul",
+}
+LANGUAGE_CODES = {fold(name): code for name, code in _LANGUAGE_CODES.items()}
+
+
+def language_code(name: str | None) -> str | None:
+    """'Nederlands' -> 'nl'. Unknown or ambiguous names return None."""
+    return LANGUAGE_CODES.get(fold(name)) if name else None
 
 
 def match_key(title: str | None, author: str | None) -> str:

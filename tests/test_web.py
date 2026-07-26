@@ -1,5 +1,8 @@
 """End-to-end route tests over the hermetic fixture catalog (see conftest)."""
 
+import json
+import re
+
 
 def test_home_and_filters(client):
     for path in ["/", "/?q=ontdekking", "/?format=ebook", "/?format=audiobook",
@@ -66,8 +69,60 @@ def test_book_detail_mobile_layout(client):
 
 
 def test_author_page(client):
-    assert client.get("/author/Anna Vrij").status_code == 200
+    assert client.get("/author/anna-vrij").status_code == 200
     assert client.get("/author/Zzz Niemand").status_code == 404
+
+
+def test_author_urls_are_slugs(client):
+    from obc.textnorm import fold, slugify
+    # a slug round-trips into a name_fold, which is what makes it an indexed
+    # lookup instead of a stored column — and what merges the catalog's spelling
+    # duplicates ("Ad Van Schaik" / "Ad van Schaik") onto one page
+    for name in ("Ad Van Schaik", "Ad van Schaik", "Agnès Martin-Lugand"):
+        assert slugify(name).replace("-", " ") == fold(name)
+    assert slugify("Ad Van Schaik") == slugify("Ad van Schaik") == "ad-van-schaik"
+    assert slugify("Lisbeth Imbo") == "lisbeth-imbo"
+    assert slugify("Λήδα Βάρβαρούση") == ""     # no Latin characters to slug
+
+    assert client.get("/author/anna-vrij").status_code == 200
+    # the old percent-encoded links keep working and move to the slug
+    for legacy in ("/author/Anna Vrij", "/author/Anna%20Vrij", "/author/ANNA-VRIJ"):
+        r = client.get(legacy, follow_redirects=False)
+        assert r.status_code == 301, legacy
+        assert r.headers["location"] == "/author/anna-vrij", legacy
+    # and nothing links to the encoded form any more
+    book = client.get("/book/001").text
+    assert 'href="/author/anna-vrij"' in book
+    assert "/author/Anna%20Vrij" not in book
+    crumbs = [d for d in _jsonld(book) if d.get("@type") == "BreadcrumbList"][0]
+    assert any(i.get("item", "").endswith("/author/anna-vrij")
+               for i in crumbs["itemListElement"])
+
+
+def test_author_masthead(client, monkeypatch):
+    from obc.web import app as appmod
+    monkeypatch.setattr(appmod, "author_bio", lambda name: {
+        "extract": "Anna Vrij is een Nederlandse schrijver.",
+        "thumb": "https://example.test/anna.jpg",
+        "url": "https://nl.wikipedia.org/wiki/Anna_Vrij"})
+    body = client.get("/author/Anna Vrij").text
+    # portrait sits beside the name it belongs to, bio runs as prose beneath it
+    assert 'class="ident"' in body and 'class="portrait"' in body
+    assert 'alt="Portret van Anna Vrij"' in body
+    assert 'class="bio"' in body and "Nederlandse schrijver" in body
+    assert "nl.wikipedia.org/wiki/Anna_Vrij" in body
+    # the panel it replaced is gone: no accent bar, no card, no shouty eyebrow
+    assert "authorcard" not in body
+    assert "border-left:4px solid var(--accent)" not in body
+    assert "Over de auteur" not in body
+
+
+def test_author_masthead_without_a_bio(client):
+    # most authors have no Wikipedia match — the header must not leave an empty
+    # portrait slot or a stray rule behind (author_bio is stubbed to None)
+    body = client.get("/author/Anna Vrij").text
+    assert 'class="portrait"' not in body and 'class="bio"' not in body
+    assert "<h1>Anna Vrij</h1>" in body
 
 
 def test_series_page(client):
@@ -123,6 +178,104 @@ def test_seo_meta_and_jsonld(client):
     book = client.get("/book/001").text
     assert "application/ld+json" in book and "Book" in book
     assert 'property="og:image"' in book             # cover as OG image
+
+
+def _jsonld(body: str) -> list[dict]:
+    """Every ld+json block on a page, parsed."""
+    return [json.loads(m) for m in
+            re.findall(r'<script type="application/ld\+json">(.*?)</script>', body, re.S)]
+
+
+def test_site_name_signals_on_home(client):
+    # Google prints the site name above the result off WebSite structured data
+    # first and og:site_name second — without them it falls back to the domain.
+    home = client.get("/").text
+    assert 'property="og:site_name" content="Online Bibliotheek Catalogus"' in home
+    site = [d for d in _jsonld(home) if d.get("@type") == "WebSite"]
+    assert len(site) == 1
+    assert site[0]["name"] == "Online Bibliotheek Catalogus"
+    assert site[0]["url"].endswith("/")
+
+
+def test_website_jsonld_only_on_bare_home(client):
+    # the ?-carrying variants are noindex and robots-disallowed; marking them up as
+    # "the site" too would hand Search competing copies of the same entity.
+    # ?sort= and ?view= carry no chips and no query text, so they'd slip through a
+    # filters-only check — the rule keys off the query string itself.
+    for path in ("/?q=de", "/?format=ebook", "/?page=2", "/?sort=title",
+                 "/?view=list", "/?per_page=48", "/over", "/book/001"):
+        assert not [d for d in _jsonld(client.get(path).text)
+                    if d.get("@type") == "WebSite"], path
+
+
+def test_book_jsonld_uses_a_language_code_and_a_tidy_description(client):
+    from obc.textnorm import language_code
+    assert language_code("Nederlands") == "nl" and language_code("Engels") == "en"
+    assert language_code("nederlands") == "nl"        # folded lookup
+    assert language_code("Klingon") is None
+    assert language_code("Schots") is None            # Scots vs Gaelic — ambiguous
+    assert language_code(None) is None
+    book = [d for d in _jsonld(client.get("/book/001").text)
+            if d.get("@type") == "Book"][0]
+    assert book["inLanguage"] == "nl"                 # not "Nederlands"
+    assert not book["description"].startswith('"')    # no wrapping quote mark
+    assert "\n" not in book["description"]
+    spanish = [d for d in _jsonld(client.get("/book/006").text)
+               if d.get("@type") == "Book"][0]
+    assert spanish["inLanguage"] == "es"
+
+
+def test_author_pages_survive_a_slash_in_the_name(client):
+    # two catalog authors carry a slash ("Elizabeth August/Dreamshield"); with a
+    # plain {name} route their page 404s, so both the book-page link and the
+    # breadcrumb item URL would point at a dead URL
+    # our handler answers (route matched) rather than FastAPI's routing 404
+    for path in ("/author/Elizabeth August/Dreamshield",
+                 "/author/Elizabeth%20August%2FDreamshield"):
+        r = client.get(path)
+        assert r.status_code == 404 and "Auteur niet gevonden" in r.text, path
+    # every breadcrumb item URL must resolve — a trail into a 404 is worse than none
+    body = client.get("/book/001").text
+    crumbs = [d for d in _jsonld(body) if d.get("@type") == "BreadcrumbList"][0]
+    for item in crumbs["itemListElement"]:
+        if "item" in item:
+            path = item["item"].replace("http://testserver", "")
+            assert client.get(path).status_code == 200, item["item"]
+
+
+def test_home_title_and_description_quote_the_catalog_size(client):
+    home = client.get("/").text
+    assert "<title>Online Bibliotheek Catalogus — " in home   # brand first
+    assert "e-books en luisterboeken van de online Bibliotheek" in home
+
+
+def test_breadcrumbs_jsonld(client):
+    crumbs = [d for d in _jsonld(client.get("/book/001").text)
+              if d.get("@type") == "BreadcrumbList"]
+    assert len(crumbs) == 1
+    items = crumbs[0]["itemListElement"]
+    assert [i["position"] for i in items] == list(range(1, len(items) + 1))
+    assert items[0]["name"] == "Home" and items[0]["item"].endswith("/")
+    assert "item" not in items[-1]                   # the page you're on gets no link
+    # a book by a known author routes through that author's page
+    assert any(i.get("item", "").startswith(items[0]["item"] + "author/") for i in items)
+    # and the other detail pages carry a trail too
+    for path in ("/author/Anna Vrij", "/list/test-top", "/over", "/stats"):
+        body = client.get(path).text
+        assert any(d.get("@type") == "BreadcrumbList" for d in _jsonld(body)), path
+
+
+def test_book_meta_description_is_snippet_clean(client):
+    from obc.web.app import _snippet
+    # publisher blurbs arrive quote-wrapped and line-broken; a snippet must not
+    assert _snippet('  "Een\n  mooi   boek."  ') == "Een mooi boek."
+    assert _snippet("a" * 40 + " " + "b" * 200, limit=50).endswith("…")
+    assert len(_snippet("woord " * 100)) <= 156
+    assert not _snippet('"geciteerd"').startswith('"')
+    body = client.get("/book/001").text
+    desc = re.search(r'<meta name="description" content="(.*?)">', body).group(1)
+    assert desc and "\n" not in desc and not desc.startswith("&#34;")
+
 
 
 def test_goatcounter_snippet_present(client):

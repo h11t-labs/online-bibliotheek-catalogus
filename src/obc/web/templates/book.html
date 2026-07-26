@@ -85,7 +85,6 @@
   }
 {% endblock %}
 {% block body %}
-{% if jsonld %}<script type="application/ld+json">{{ jsonld | tojson }}</script>{% endif %}
 <main>
   <a class="back" href="javascript:history.back()">‹ Terug</a>
   <article class="detail">
@@ -111,7 +110,7 @@
       </div>
       <h1>{{ b['title'] or '—' }}</h1>
       {% if authors %}<p class="author">door
-        {% for a in authors %}<a class="flink" href="/author/{{ a|urlencode }}">{{ a }}</a>{{ ', ' if not loop.last }}{% endfor %}
+        {% for a in authors %}<a class="flink" href="{{ a|author_path }}">{{ a }}</a>{{ ', ' if not loop.last }}{% endfor %}
       </p>{% elif b['author'] %}<p class="author">door {{ b['author'] }}</p>{% endif %}
 
       {% if b['series'] %}

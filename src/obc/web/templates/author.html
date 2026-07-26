@@ -2,56 +2,60 @@
 {% from "_macros.html" import fmt_icons %}
 {% block title %}{{ name }} · Online Bibliotheek Catalogus{% endblock %}
 {% block style %}
-  .authorcard{display:flex;gap:22px;align-items:flex-start;background:var(--card);
-    border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:var(--radius);
-    padding:24px 26px;box-shadow:var(--shadow);margin:0 0 30px}
-  .authorcard .photo{width:120px;height:120px;border-radius:14px;object-fit:cover;flex:none;
-    box-shadow:var(--shadow)}
-  .authorcard .body{min-width:0}
-  .authorcard .eyebrow{font-size:12px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;
-    color:var(--accent);margin-bottom:7px}
-  .authorcard .x{font-size:15px;line-height:1.65;color:var(--ink-soft);margin:0}
-  .authorcard .x a{color:var(--accent);text-decoration:underline dotted}
-  .awards{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
-  .awards .ttl{width:100%;font-size:12px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;
-    color:var(--ink-soft);margin-bottom:2px}
-  .awards a{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;
-    padding:6px 12px;border-radius:999px;background:color-mix(in srgb,var(--accent) 16%,transparent);
-    color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 30%,transparent)}
-  .awards a:hover{background:color-mix(in srgb,var(--accent) 26%,transparent);text-decoration:none}
+  /* An author masthead, not a card: portrait next to the name it belongs to, bio
+     as prose at a readable measure, one hairline to separate it from the shelf.
+     The bio is usually a single Wikipedia sentence, so a full-width panel around
+     it left most of the page empty. */
+  .authorhead{padding-bottom:26px;border-bottom:1px solid var(--line);margin-bottom:32px}
+  .authorhead .ident{display:flex;align-items:center;gap:20px}
+  .authorhead .portrait{width:92px;height:92px;border-radius:50%;object-fit:cover;
+    flex:none;background:var(--bg-soft);border:1px solid var(--line)}
+  .authorhead .who{min-width:0}
+  .authorhead h1{margin:0 0 5px}
+  .bio{max-width:62ch;margin:20px 0 0;font-size:16px;line-height:1.65;color:var(--ink)}
+  .bio a{color:var(--accent);text-decoration:underline dotted;white-space:nowrap}
+  .awards{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+  .awards a{display:inline-flex;align-items:center;gap:7px;font-size:13px;
+    padding:6px 12px;border-radius:999px;border:1px solid var(--line-strong);
+    background:var(--bg-soft);color:var(--ink-soft)}
+  .awards a:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
+  .awards svg{opacity:.7}
   .list-ribbon{position:absolute;left:0;bottom:0;right:0;display:flex;align-items:center;
     gap:5px;padding:6px 9px;font-size:11.5px;font-weight:700;color:#fff;z-index:2;
     background:linear-gradient(0deg,rgba(154,59,46,.96),rgba(154,59,46,.7));}
   .list-ribbon svg{width:12px;height:12px;flex:none}
-  @media(max-width:560px){.authorcard{flex-direction:column;gap:16px}.authorcard .photo{width:88px;height:88px}}
+  @media(max-width:560px){
+    .authorhead{padding-bottom:22px;margin-bottom:26px}
+    .authorhead .ident{gap:15px}
+    .authorhead .portrait{width:64px;height:64px}
+    .bio{margin-top:16px;font-size:15.5px}
+  }
 {% endblock %}
 {% block body %}
 <main>
-  <div class="pagehead">
+  <div class="pagehead authorhead">
     <div class="crumb"><a href="javascript:history.back()">‹ Terug</a></div>
-    <h1>{{ name }}</h1>
-    <div class="sub">{{ total }} {{ 'titel' if total==1 else 'titels' }} in de bibliotheek
-      · <a class="flink" style="text-decoration:underline dotted" href="/?author={{ name|urlencode }}">filter in zoeken ›</a></div>
-  </div>
-  {% if bio or author_lists %}
-  <div class="authorcard">
-    {% if bio and bio.thumb %}<img class="photo" src="{{ bio.thumb }}" alt="{{ name }}">{% endif %}
-    <div class="body">
-      {% if bio %}
-      <div class="eyebrow">Over de auteur</div>
-      <p class="x">{{ bio.extract }}{% if bio.url %} <a href="{{ bio.url }}" target="_blank" rel="noopener">meer op Wikipedia ↗</a>{% endif %}</p>
+    <div class="ident">
+      {% if bio and bio.thumb %}
+      <img class="portrait" src="{{ bio.thumb }}" alt="Portret van {{ name }}"
+           width="92" height="92" loading="lazy">
       {% endif %}
-      {% if author_lists %}
-      <div class="awards">
-        <span class="ttl">Op lijsten &amp; prijzen</span>
-        {% for l in author_lists %}
-        <a href="/list/{{ l.slug }}"><svg width="13" height="13"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% endif %}{% if l.won == 1 %} · gewonnen{% elif l.won == 0 %} · genomineerd{% endif %}</a>
-        {% endfor %}
+      <div class="who">
+        <h1>{{ name }}</h1>
+        <div class="sub">{{ total }} {{ 'titel' if total==1 else 'titels' }} in de bibliotheek</div>
       </div>
-      {% endif %}
     </div>
+    {% if bio %}
+    <p class="bio">{{ bio.extract }}{% if bio.url %} <a href="{{ bio.url }}" target="_blank" rel="noopener">meer op Wikipedia ↗</a>{% endif %}</p>
+    {% endif %}
+    {% if author_lists %}
+    <div class="awards">
+      {% for l in author_lists %}
+      <a href="/list/{{ l.slug }}"><svg width="13" height="13"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% endif %}{% if l.won == 1 %} · gewonnen{% elif l.won == 0 %} · genomineerd{% endif %}</a>
+      {% endfor %}
+    </div>
+    {% endif %}
   </div>
-  {% endif %}
   <div class="grid">
     {% for b in books %}
     <a class="book" href="/book/{{ b['ppn'] }}">

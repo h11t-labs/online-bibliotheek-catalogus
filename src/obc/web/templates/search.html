@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% block title %}{% if q %}{{ q }} · Online Bibliotheek Catalogus{% else %}Online Bibliotheek Catalogus{% endif %}{% endblock %}
+{# Brand first: it doubles as the site-name signal Google reads off the home page. #}
+{% block title %}{% if q %}{{ q }} · Online Bibliotheek Catalogus{% else %}Online Bibliotheek Catalogus — {{ total_rounded }} e-books & luisterboeken{% endif %}{% endblock %}
 
 {% macro combo(name, all_label, options, selected, icon, server=False, labels=None) -%}
 {%- set lab = labels or {} -%}
@@ -174,7 +175,10 @@
   {% if not has_filters %}
   <section class="hero">
     <h1>Ontdek alle e-books &amp; luisterboeken uit de catalogus van de online Bibliotheek</h1>
-    <p>Blader en zoek in de hele collectie — met handige filters op genre, auteur, taal en meer, zodat je snel je volgende boek vindt.</p>
+    {# Deliberately echoes the meta description: Google picks whichever of the two
+       fits the query, so both should read as a complete, sensible snippet. #}
+    <p>Doorzoek de hele collectie van de online Bibliotheek. Filter op genre, auteur,
+      taal en jaar, en zie meteen of een titel op je e-reader past.</p>
     <div class="stat"><b>{{ "{:,}".format(total_indexed).replace(",", ".") }}</b> titels geïndexeerd</div>
   </section>
   {% endif %}
