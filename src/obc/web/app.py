@@ -41,8 +41,6 @@ SITEMAP_PAGE = 45000  # book URLs per sitemap file (under the 50k/file limit)
 # is fed to Search through WebSite structured data and og:site_name — the two
 # strongest signals, see https://developers.google.com/search/docs/appearance/site-names
 SITE_NAME = "Online Bibliotheek Catalogus"
-# Search Console "HTML tag" verification token; empty → no meta tag is rendered.
-GOOGLE_VERIFICATION = os.environ.get("OBC_GOOGLE_VERIFICATION", "").strip()
 
 _templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _STATIC = Path(__file__).parent / "static"
@@ -149,7 +147,6 @@ _templates.env.globals["url_without"] = _url_without
 _templates.env.globals["data_updated"] = _data_updated
 _templates.env.globals["site_url"] = SITE_URL
 _templates.env.globals["site_name"] = SITE_NAME
-_templates.env.globals["google_verification"] = GOOGLE_VERIFICATION
 
 try:
     from importlib.metadata import version as _pkg_version

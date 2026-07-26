@@ -277,15 +277,6 @@ def test_book_meta_description_is_snippet_clean(client):
     assert desc and "\n" not in desc and not desc.startswith("&#34;")
 
 
-def test_google_verification_tag_opt_in(client, monkeypatch):
-    assert "google-site-verification" not in client.get("/").text
-    from obc.web import app as appmod
-    appmod._templates.env.globals["google_verification"] = "tok123"
-    try:
-        assert 'name="google-site-verification" content="tok123"' in client.get("/").text
-    finally:
-        appmod._templates.env.globals["google_verification"] = appmod.GOOGLE_VERIFICATION
-
 
 def test_goatcounter_snippet_present(client):
     body = client.get("/").text
