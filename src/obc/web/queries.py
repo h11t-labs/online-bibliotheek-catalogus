@@ -207,6 +207,16 @@ def _has_primary_edition(conn: sqlite3.Connection) -> bool:
                for r in conn.execute("PRAGMA table_info(books)"))
 
 
+def _collapse_editions(conn: sqlite3.Connection) -> str:
+    """WHERE fragment that keeps one row per work, or '' on a pre-column catalog.
+
+    The author and series shelves need the same collapse the results grid does:
+    an e-book and its audiobook are one work, and listing both turned a four-part
+    series into eight cards. ``formats_map`` still badges the card with both.
+    """
+    return " AND b.primary_edition = 1" if _has_primary_edition(conn) else ""
+
+
 def total_books(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COUNT(*) FROM books").fetchone()[0]
 
@@ -415,7 +425,8 @@ def author_books(conn: sqlite3.Connection, name: str) -> list[sqlite3.Row]:
     """Books by the exact author name — the fallback for names that don't slug."""
     return conn.execute(
         "SELECT b.* FROM books b JOIN book_authors ba ON ba.book_ppn = b.ppn "
-        "JOIN authors a ON a.id = ba.author_id WHERE a.name = ? "
+        "JOIN authors a ON a.id = ba.author_id WHERE a.name = ?"
+        f"{_collapse_editions(conn)} "
         "ORDER BY b.year DESC, b.title COLLATE NOCASE LIMIT 300", (name,)).fetchall()
 
 
@@ -443,7 +454,8 @@ def author_books_by_fold(conn: sqlite3.Connection, fold_key: str) -> list[sqlite
     """
     return conn.execute(
         "SELECT b.* FROM books b JOIN book_authors ba ON ba.book_ppn = b.ppn "
-        "JOIN authors a ON a.id = ba.author_id WHERE a.name_fold = ? "
+        "JOIN authors a ON a.id = ba.author_id WHERE a.name_fold = ?"
+        f"{_collapse_editions(conn)} "
         "GROUP BY b.ppn ORDER BY b.year DESC, b.title COLLATE NOCASE LIMIT 300",
         (fold_key,)).fetchall()
 
@@ -455,7 +467,7 @@ def series_books(conn: sqlite3.Connection, names: tuple[str, ...]) -> list[sqlit
         return []
     clause, vals = _in("b.series", names)
     return conn.execute(
-        f"SELECT b.* FROM books b WHERE {clause} "
+        f"SELECT b.* FROM books b WHERE {clause}{_collapse_editions(conn)} "
         "ORDER BY b.series_no, b.year LIMIT 300", vals).fetchall()
 
 
@@ -483,14 +495,16 @@ def author_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 def author_title_counts(conn: sqlite3.Connection) -> dict[str, int]:
     """``{name_fold: distinct books}``.
 
-    Counted per folded key rather than summed per spelling: a book credited to
-    both "Ad Van Schaik" and "Ad van Schaik" is one title on the merged page (see
-    :func:`author_books_by_fold`), so summing the variants would let an author
-    into the sitemap claiming two titles for a page that shows one.
+    Counted the way the shelf counts, so the hub can't advertise more than the
+    page delivers: per folded key rather than summed per spelling (one book
+    credited to both "Ad Van Schaik" and "Ad van Schaik" is one title), and with
+    editions collapsed (an e-book and its audiobook are one work). Both feed
+    MIN_INDEXABLE_TITLES, which decides what reaches the sitemap.
     """
     return {r["fold"]: r["titles"] for r in conn.execute(
         "SELECT a.name_fold AS fold, COUNT(DISTINCT ba.book_ppn) AS titles "
         "FROM authors a JOIN book_authors ba ON ba.author_id = a.id "
+        f"JOIN books b ON b.ppn = ba.book_ppn WHERE 1=1{_collapse_editions(conn)} "
         "GROUP BY a.name_fold")}
 
 

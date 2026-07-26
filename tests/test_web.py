@@ -149,8 +149,8 @@ def test_hub_lists_one_entry_per_slug(client, ro_conn):
     entries = [e for rows in index.values() for e in rows]
     slugs = [slugify(e["name"]) for e in entries]
     assert len(set(slugs)) == len(slugs), "two hub entries share a slug"
-    hub = client.get("/auteurs/a").text
-    assert hub.count('href="/author/anna-vrij"') == 1
+    hub = client.get("/auteurs/b").text
+    assert hub.count('href="/author/bob-de-wit"') == 1
 
 
 def test_hub_counts_match_the_page_they_link_to(client, ro_conn):
@@ -223,8 +223,10 @@ def test_sitemap_lists_the_aggregation_pages(client):
     assert "/sitemap-browse.xml" in idx
     browse = client.get("/sitemap-browse.xml")
     assert browse.status_code == 200
-    assert "/auteurs<" in browse.text and "/auteurs/a<" in browse.text
-    assert "/author/anna-vrij<" in browse.text      # 2 titles -> its own page
+    assert "/auteurs<" in browse.text and "/auteurs/b<" in browse.text
+    assert "/author/bob-de-wit<" in browse.text     # 2 works -> its own page
+    # Anna Vrij has one work in two formats: one card, so not its own page
+    assert "/author/anna-vrij<" not in browse.text
     # slugs, never encoded names: a sitemap of URLs that immediately 301 wastes
     # exactly the crawl budget this sitemap exists to spend well
     assert "%20" not in browse.text and "%2F" not in browse.text
@@ -253,14 +255,14 @@ def test_lastmod_only_where_it_is_truthful(client):
 def test_authors_hub(client):
     hub = client.get("/auteurs")
     assert hub.status_code == 200
-    assert 'href="/auteurs/a"' in hub.text
-    letter = client.get("/auteurs/a")
+    assert 'href="/auteurs/b"' in hub.text
+    letter = client.get("/auteurs/b")
     assert letter.status_code == 200
-    assert 'href="/author/anna-vrij"' in letter.text
+    assert 'href="/author/bob-de-wit"' in letter.text
     assert "/author/dirk-kok" not in letter.text            # wrong letter
     # one spelling per letter, so /auteurs/A doesn't become a second URL
-    r = client.get("/auteurs/A", follow_redirects=False)
-    assert r.status_code == 301 and r.headers["location"] == "/auteurs/a"
+    r = client.get("/auteurs/B", follow_redirects=False)
+    assert r.status_code == 301 and r.headers["location"] == "/auteurs/b"
     assert client.get("/auteurs/zzz").status_code == 404
     # and it's linked from the shared header, not just the sitemap
     assert 'href="/auteurs"' in client.get("/").text
