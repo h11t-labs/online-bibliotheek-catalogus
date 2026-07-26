@@ -454,6 +454,31 @@ def series_books(conn: sqlite3.Connection, name: str) -> list[sqlite3.Row]:
         "ORDER BY b.series_no, b.year LIMIT 300", (name,)).fetchall()
 
 
+# An author or series page only earns a place in the sitemap / A-Z index once it
+# actually aggregates something. With a single title it is a weaker copy of that
+# title's own page, and 12k of those would dilute the pages that do add value.
+MIN_INDEXABLE_TITLES = 2
+
+
+def author_index(conn: sqlite3.Connection,
+                 min_titles: int = MIN_INDEXABLE_TITLES) -> list[sqlite3.Row]:
+    """Authors worth their own page: name, folded name and title count, A-Z."""
+    return conn.execute(
+        "SELECT a.name AS name, a.name_fold AS fold, COUNT(*) AS titles "
+        "FROM authors a JOIN book_authors ba ON ba.author_id = a.id "
+        "GROUP BY a.id HAVING COUNT(*) >= ? ORDER BY a.name_fold", (min_titles,)
+    ).fetchall()
+
+
+def series_index(conn: sqlite3.Connection,
+                 min_titles: int = MIN_INDEXABLE_TITLES) -> list[str]:
+    """Series names with at least ``min_titles`` parts, A-Z."""
+    return [r["series"] for r in conn.execute(
+        "SELECT series FROM books WHERE COALESCE(series, '') <> '' "
+        "GROUP BY series HAVING COUNT(*) >= ? ORDER BY series COLLATE NOCASE",
+        (min_titles,))]
+
+
 def similar_books(conn: sqlite3.Connection, ppn: str, method: str = "lsa",
                   limit: int = 20) -> list[sqlite3.Row]:
     """"Meer zoals dit": precomputed LSA neighbours for a book (see obc.similar).

@@ -169,6 +169,54 @@ def test_robots_and_sitemaps(client):
     assert books.status_code == 200 and "/book/001" in books.text
 
 
+def test_sitemap_lists_the_aggregation_pages(client):
+    # author + series pages answer the queries the catalog gets searched with,
+    # and used to be in no sitemap at all — reachable only from a book page
+    idx = client.get("/sitemap.xml").text
+    assert "/sitemap-browse.xml" in idx
+    browse = client.get("/sitemap-browse.xml")
+    assert browse.status_code == 200
+    assert "/auteurs<" in browse.text and "/auteurs/a<" in browse.text
+    assert "/author/Anna%20Vrij" in browse.text     # 2 titles -> its own page
+
+
+def test_sitemap_skips_single_title_aggregations(client, ro_conn):
+    # a page for an author (or a "series") with one title is a weaker copy of that
+    # title's own page; thousands of them dilute the ones that do add something
+    from obc.web import queries
+    browse = client.get("/sitemap-browse.xml").text
+    assert "/author/Dirk%20Kok" not in browse       # 1 title
+    assert client.get("/author/Dirk Kok").status_code == 200   # still reachable
+    # the fixture's only series has a single part, so it's held back as well
+    assert "/series/" not in browse
+    assert queries.series_index(ro_conn, min_titles=1) == ["Het Mysterie"]
+    assert queries.series_index(ro_conn) == []
+
+
+def test_lastmod_only_where_it_is_truthful(client):
+    # the catalog tracks no per-record change date, so stamping every book URL
+    # with the rebuild time would be a hint search engines learn to distrust
+    assert "<lastmod>" in client.get("/sitemap.xml").text
+    assert "<lastmod>" in client.get("/sitemap-static.xml").text
+    assert "<lastmod>" not in client.get("/sitemap-books-1.xml").text
+
+
+def test_authors_hub(client):
+    hub = client.get("/auteurs")
+    assert hub.status_code == 200
+    assert 'href="/auteurs/a"' in hub.text
+    letter = client.get("/auteurs/a")
+    assert letter.status_code == 200
+    assert "/author/Anna%20Vrij" in letter.text
+    assert "/author/Dirk%20Kok" not in letter.text          # wrong letter
+    # one spelling per letter, so /auteurs/A doesn't become a second URL
+    r = client.get("/auteurs/A", follow_redirects=False)
+    assert r.status_code == 301 and r.headers["location"] == "/auteurs/a"
+    assert client.get("/auteurs/zzz").status_code == 404
+    # and it's linked from the shared header, not just the sitemap
+    assert 'href="/auteurs"' in client.get("/").text
+
+
 def test_seo_meta_and_jsonld(client):
     home = client.get("/").text
     assert '<meta name="description"' in home

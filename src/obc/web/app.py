@@ -132,6 +132,11 @@ def _author_path(name: str) -> str:
     return f"/author/{slugify(name) or quote(name, safe='')}"
 
 
+def _nlnum(n: int) -> str:
+    """9803 -> '9.803' (Dutch thousands separator)."""
+    return f"{n:,}".replace(",", ".")
+
+
 def _data_updated() -> float | None:
     """Epoch seconds the catalog was last (re)built — the DB file's mtime."""
     try:
@@ -143,6 +148,7 @@ def _data_updated() -> float | None:
 _templates.env.filters["coverw"] = _coverw
 _templates.env.filters["nldate"] = _nldate
 _templates.env.filters["author_path"] = _author_path
+_templates.env.filters["nlnum"] = _nlnum
 _templates.env.globals["url_with"] = _url_with
 _templates.env.globals["url_without"] = _url_without
 _templates.env.globals["data_updated"] = _data_updated
@@ -180,7 +186,8 @@ app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan
 # Pages with no per-user state and a catalog that only changes on the daily rebuild,
 # so they're safe to cache publicly — this offloads repeat hits and crawler traffic
 # from the single small VM. Detail pages cache an hour; the browse home a few minutes.
-_CACHE_PREFIXES = ("/book/", "/author/", "/series/", "/list", "/stats", "/over")
+_CACHE_PREFIXES = ("/book/", "/author/", "/auteurs", "/series/", "/list", "/stats",
+                   "/over")
 
 
 # Templates use inline <script>/<style> blocks (base.html), GoatCounter loads its
@@ -345,6 +352,39 @@ def _facets(conn: sqlite3.Connection) -> dict:
     data = queries.compute_facets(conn)
     _facets_cache.update(key=key, data=data)
     return data
+
+
+# The A-Z author index is ~10k rows and identical for every visitor, so it is built
+# once per catalog rebuild — same DB-mtime trick as the facet cache above.
+_authors_cache: dict = {"key": None, "data": None}
+_OTHER_LETTER = "overig"  # names that don't start with a plain A-Z letter
+
+
+def _author_letter(fold: str) -> str:
+    """Bucket a folded author name into an A-Z tab, or the catch-all."""
+    first = (fold or "").strip()[:1].upper()
+    return first if "A" <= first <= "Z" else _OTHER_LETTER
+
+
+def _author_index(conn: sqlite3.Connection) -> dict[str, list[sqlite3.Row]]:
+    """``{"A": [rows…], …, "overig": [rows…]}`` — authors with their own page."""
+    try:
+        key = DB_PATH.stat().st_mtime_ns
+    except OSError:
+        key = None
+    if _authors_cache["key"] == key and _authors_cache["data"] is not None:
+        return _authors_cache["data"]
+    buckets: dict[str, list[sqlite3.Row]] = {}
+    for row in queries.author_index(conn):
+        buckets.setdefault(_author_letter(row["fold"]), []).append(row)
+    _authors_cache.update(key=key, data=buckets)
+    return buckets
+
+
+def _letter_order(index: dict) -> list[str]:
+    """A-Z first, the catch-all last."""
+    return sorted(k for k in index if k != _OTHER_LETTER) + \
+        ([_OTHER_LETTER] if _OTHER_LETTER in index else [])
 
 
 # --------------------------------------------------------------------------- #
@@ -521,8 +561,23 @@ def _breadcrumbs(request: Request, *trail: tuple[str, str]) -> dict:
             "itemListElement": items}
 
 
-def _sitemap(base: str, paths: list[str]) -> Response:
-    locs = "".join(f"<url><loc>{_xml_escape(base + p)}</loc></url>" for p in paths)
+def _w3c(ts: float | None) -> str:
+    """Epoch seconds as a W3C datetime for ``<lastmod>``; empty when unknown."""
+    if not ts:
+        return ""
+    return datetime.datetime.fromtimestamp(ts, datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _sitemap(base: str, paths: list[str], lastmod: str = "") -> Response:
+    """A urlset for ``paths``.
+
+    ``lastmod`` is opt-in per sitemap: search engines learn to ignore the hint
+    when it's wrong, and the catalog tracks no per-record change date — stamping
+    64k book URLs with "the day of the last rebuild" would be exactly that lie.
+    The pages that genuinely re-render on every rebuild do get one.
+    """
+    mod = f"<lastmod>{lastmod}</lastmod>" if lastmod else ""
+    locs = "".join(f"<url><loc>{_xml_escape(base + p)}</loc>{mod}</url>" for p in paths)
     body = ('<?xml version="1.0" encoding="UTF-8"?>'
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
             f"{locs}</urlset>")
@@ -548,9 +603,13 @@ def sitemap_index(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     total = queries.total_books(conn)
     base = _origin(request)
     pages = max(1, (total + SITEMAP_PAGE - 1) // SITEMAP_PAGE)
-    maps = [f"{base}/sitemap-static.xml",
+    maps = [f"{base}/sitemap-static.xml", f"{base}/sitemap-browse.xml",
             *[f"{base}/sitemap-books-{i}.xml" for i in range(1, pages + 1)]]
-    locs = "".join(f"<sitemap><loc>{_xml_escape(m)}</loc></sitemap>" for m in maps)
+    # Every child sitemap is regenerated from the catalog, so the rebuild time is
+    # an honest lastmod for the *files* even where it wouldn't be for their URLs.
+    mod = _w3c(_data_updated())
+    mod = f"<lastmod>{mod}</lastmod>" if mod else ""
+    locs = "".join(f"<sitemap><loc>{_xml_escape(m)}</loc>{mod}</sitemap>" for m in maps)
     body = ('<?xml version="1.0" encoding="UTF-8"?>'
             '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
             f"{locs}</sitemapindex>")
@@ -561,6 +620,24 @@ def sitemap_index(request: Request, conn: sqlite3.Connection = Depends(get_conn)
 def sitemap_static(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     slugs = [r["slug"] for r in conn.execute("SELECT slug FROM lists ORDER BY slug")]
     paths = ["/", "/over", "/lists", "/stats", *[f"/list/{s}" for s in slugs]]
+    # These really are rewritten by every rebuild (new titles, new list positions).
+    return _sitemap(_origin(request), paths, lastmod=_w3c(_data_updated()))
+
+
+@app.get("/sitemap-browse.xml", include_in_schema=False)
+def sitemap_browse(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """The aggregation pages: the A-Z hub, author pages and series pages.
+
+    These answer the queries the catalog is actually searched with ("boeken van
+    X", "Y reeks op volgorde") and were in no sitemap at all. Only pages that
+    aggregate two or more titles are listed — see queries.MIN_INDEXABLE_TITLES.
+    """
+    index = _author_index(conn)
+    paths = ["/auteurs"]
+    paths += [f"/auteurs/{letter.lower()}" for letter in _letter_order(index)]
+    paths += [f"/author/{quote(row['name'], safe='')}"
+              for letter in _letter_order(index) for row in index[letter]]
+    paths += [f"/series/{quote(name, safe='')}" for name in queries.series_index(conn)]
     return _sitemap(_origin(request), paths)
 
 
@@ -569,6 +646,48 @@ def sitemap_books(request: Request, n: int, conn: sqlite3.Connection = Depends(g
     rows = conn.execute("SELECT ppn FROM books ORDER BY ppn LIMIT ? OFFSET ?",
                         (SITEMAP_PAGE, (max(n, 1) - 1) * SITEMAP_PAGE)).fetchall()
     return _sitemap(_origin(request), [f"/book/{r['ppn']}" for r in rows])
+
+
+@app.get("/auteurs", response_class=HTMLResponse)
+def authors_index(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """A-Z hub over the author pages.
+
+    Author pages used to hang off individual book pages only, which left ~10k of
+    the site's most search-worthy pages ("boeken van X") several clicks deep and
+    out of every sitemap.
+    """
+    index = _author_index(conn)
+    letters = _letter_order(index)
+    total = sum(len(rows) for rows in index.values())
+    return _templates.TemplateResponse(request, "authors.html", {
+        "letters": letters, "letter": "", "authors": [], "total": total,
+        "counts": {ltr: len(index[ltr]) for ltr in letters},
+        "meta_description": f"Blader alfabetisch door {_nlnum(total)} auteurs met "
+                            f"meerdere titels in de online Bibliotheek — e-books en "
+                            f"luisterboeken."})
+
+
+@app.get("/auteurs/{letter}", response_class=HTMLResponse)
+def authors_letter(request: Request, letter: str,
+                   conn: sqlite3.Connection = Depends(get_conn)):
+    index = _author_index(conn)
+    key = letter.upper() if len(letter) == 1 else letter.lower()
+    if key not in index:
+        return HTMLResponse("<h1>Geen auteurs onder deze letter</h1>", status_code=404)
+    # One canonical spelling per letter, so /auteurs/A and /auteurs/a don't become
+    # two URLs with the same content.
+    canonical = key.lower()
+    if letter != canonical:
+        return RedirectResponse(f"/auteurs/{canonical}", status_code=301)
+    rows = index[key]
+    label = key.upper() if key != _OTHER_LETTER else "Overig"
+    return _templates.TemplateResponse(request, "authors.html", {
+        "letters": _letter_order(index), "letter": key, "label": label,
+        "authors": rows, "total": len(rows),
+        "counts": {ltr: len(index[ltr]) for ltr in index},
+        "meta_description": f"{_nlnum(len(rows))} auteurs waarvan de naam met {label} "
+                            f"begint, met al hun e-books en luisterboeken in de online "
+                            f"Bibliotheek."})
 
 
 # ``:path`` because two catalog authors carry a slash in their name ("Elizabeth
