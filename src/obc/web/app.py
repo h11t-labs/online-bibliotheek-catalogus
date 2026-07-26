@@ -132,6 +132,11 @@ def _author_path(name: str) -> str:
     return f"/author/{slugify(name) or quote(name, safe='')}"
 
 
+def _series_path(name: str) -> str:
+    """Canonical URL path for a series, mirroring :func:`_author_path`."""
+    return f"/series/{slugify(name) or quote(name, safe='')}"
+
+
 def _nlnum(n: int) -> str:
     """9803 -> '9.803' (Dutch thousands separator)."""
     return f"{n:,}".replace(",", ".")
@@ -148,6 +153,7 @@ def _data_updated() -> float | None:
 _templates.env.filters["coverw"] = _coverw
 _templates.env.filters["nldate"] = _nldate
 _templates.env.filters["author_path"] = _author_path
+_templates.env.filters["series_path"] = _series_path
 _templates.env.filters["nlnum"] = _nlnum
 _templates.env.globals["url_with"] = _url_with
 _templates.env.globals["url_without"] = _url_without
@@ -366,19 +372,62 @@ def _author_letter(fold: str) -> str:
     return first if "A" <= first <= "Z" else _OTHER_LETTER
 
 
-def _author_index(conn: sqlite3.Connection) -> dict[str, list[sqlite3.Row]]:
-    """``{"A": [rows…], …, "overig": [rows…]}`` — authors with their own page."""
+def _author_index(conn: sqlite3.Connection) -> dict[str, list[dict]]:
+    """``{"A": [{name, titles}…], …, "overig": […]}`` — authors with their own page.
+
+    Spelling variants are folded together first, because that is what the slug URL
+    does: listing "Ad Van Schaik" and "Ad van Schaik" as two entries pointing at
+    the same page would be a lie the hub tells about itself. Merging also decides
+    who qualifies — two rows of one title each are one author with two.
+    """
     try:
         key = DB_PATH.stat().st_mtime_ns
     except OSError:
         key = None
     if _authors_cache["key"] == key and _authors_cache["data"] is not None:
         return _authors_cache["data"]
-    buckets: dict[str, list[sqlite3.Row]] = {}
+    merged: dict[str, dict] = {}
     for row in queries.author_index(conn):
-        buckets.setdefault(_author_letter(row["fold"]), []).append(row)
+        # rows arrive title-count descending within a fold, so the first spelling
+        # seen for a key is the one that carries the most titles
+        entry = merged.setdefault(row["fold"], {"name": row["name"], "titles": 0})
+        entry["titles"] += row["titles"]
+    buckets: dict[str, list[dict]] = {}
+    for fold_key, entry in merged.items():
+        if entry["titles"] >= queries.MIN_INDEXABLE_TITLES:
+            buckets.setdefault(_author_letter(fold_key), []).append(entry)
+    for rows in buckets.values():
+        rows.sort(key=lambda e: slugify(e["name"]))
     _authors_cache.update(key=key, data=buckets)
     return buckets
+
+
+# Series get the same slug treatment as authors, but `books.series` is free text
+# with no folded column to look up, so the slug -> spellings map is built once per
+# catalog rebuild. 18 slugs cover more than one spelling ("De Stad" / "De stad");
+# those share a page rather than splitting the shelf in two.
+_series_cache: dict = {"key": None, "data": None}
+
+
+def _series_index(conn: sqlite3.Connection) -> dict[str, dict]:
+    """``{slug: {"name": display, "names": (spellings…), "titles": n}}``."""
+    try:
+        key = DB_PATH.stat().st_mtime_ns
+    except OSError:
+        key = None
+    if _series_cache["key"] == key and _series_cache["data"] is not None:
+        return _series_cache["data"]
+    merged: dict[str, dict] = {}
+    for row in queries.series_index(conn):
+        slug = slugify(row["name"])
+        if not slug:
+            continue
+        # rows arrive part-count descending, so the first spelling wins the heading
+        entry = merged.setdefault(slug, {"name": row["name"], "names": [], "titles": 0})
+        entry["names"].append(row["name"])
+        entry["titles"] += row["titles"]
+    _series_cache.update(key=key, data=merged)
+    return merged
 
 
 def _letter_order(index: dict) -> list[str]:
@@ -505,9 +554,21 @@ def search(
 # --------------------------------------------------------------------------- #
 # detail / browse pages
 # --------------------------------------------------------------------------- #
-@app.get("/series/{name}", response_class=HTMLResponse)
+@app.get("/series/{name:path}", response_class=HTMLResponse)
 def series_page(request: Request, name: str, conn: sqlite3.Connection = Depends(get_conn)):
-    rows = queries.series_books(conn, name)
+    """Series page, addressed by slug: /series/het-mysterie.
+
+    Like the author pages, the encoded-name URLs keep working and redirect.
+    """
+    slug = slugify(name)
+    entry = _series_index(conn).get(slug)
+    if entry:
+        if name != slug:
+            return RedirectResponse(f"/series/{slug}", status_code=301)
+        rows = queries.series_books(conn, tuple(entry["names"]))
+        name = entry["name"]
+    else:
+        rows = queries.series_books(conn, (name,))
     if not rows:
         return HTMLResponse("<h1>Reeks niet gevonden</h1>", status_code=404)
     formats_map = queries.formats_map(conn, rows)
@@ -635,9 +696,12 @@ def sitemap_browse(request: Request, conn: sqlite3.Connection = Depends(get_conn
     index = _author_index(conn)
     paths = ["/auteurs"]
     paths += [f"/auteurs/{letter.lower()}" for letter in _letter_order(index)]
-    paths += [f"/author/{quote(row['name'], safe='')}"
+    paths += [_author_path(row["name"])
               for letter in _letter_order(index) for row in index[letter]]
-    paths += [f"/series/{quote(name, safe='')}" for name in queries.series_index(conn)]
+    # Slugs, not encoded names: a sitemap full of URLs that immediately 301 wastes
+    # the crawl budget this PR exists to spend well.
+    paths += [f"/series/{slug}" for slug, entry in sorted(_series_index(conn).items())
+              if entry["titles"] >= queries.MIN_INDEXABLE_TITLES]
     return _sitemap(_origin(request), paths)
 
 

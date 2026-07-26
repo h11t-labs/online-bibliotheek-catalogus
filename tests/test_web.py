@@ -126,8 +126,31 @@ def test_author_masthead_without_a_bio(client):
 
 
 def test_series_page(client):
-    assert client.get("/series/Het Mysterie").status_code == 200
+    assert client.get("/series/het-mysterie").status_code == 200
     assert client.get("/series/Zzz Geen Reeks").status_code == 404
+
+
+def test_series_urls_are_slugs(client):
+    # the encoded form keeps working and moves to the slug, as with authors
+    r = client.get("/series/Het Mysterie", follow_redirects=False)
+    assert r.status_code == 301 and r.headers["location"] == "/series/het-mysterie"
+    book = client.get("/book/004").text
+    assert 'href="/series/het-mysterie"' in book
+    assert "/series/Het%20Mysterie" not in book
+
+
+def test_hub_lists_one_entry_per_slug(client, ro_conn):
+    # the hub must not show "Ad Van Schaik" and "Ad van Schaik" as two entries
+    # that lead to the same page — folding decides both the entry and who
+    # qualifies, since two rows of one title each are one author with two
+    from obc.textnorm import slugify
+    from obc.web import app as appmod
+    index = appmod._author_index(ro_conn)
+    entries = [e for rows in index.values() for e in rows]
+    slugs = [slugify(e["name"]) for e in entries]
+    assert len(set(slugs)) == len(slugs), "two hub entries share a slug"
+    hub = client.get("/auteurs/a").text
+    assert hub.count('href="/author/anna-vrij"') == 1
 
 
 def test_lists_pages(client):
@@ -177,7 +200,10 @@ def test_sitemap_lists_the_aggregation_pages(client):
     browse = client.get("/sitemap-browse.xml")
     assert browse.status_code == 200
     assert "/auteurs<" in browse.text and "/auteurs/a<" in browse.text
-    assert "/author/Anna%20Vrij" in browse.text     # 2 titles -> its own page
+    assert "/author/anna-vrij<" in browse.text      # 2 titles -> its own page
+    # slugs, never encoded names: a sitemap of URLs that immediately 301 wastes
+    # exactly the crawl budget this sitemap exists to spend well
+    assert "%20" not in browse.text and "%2F" not in browse.text
 
 
 def test_sitemap_skips_single_title_aggregations(client, ro_conn):
@@ -185,12 +211,11 @@ def test_sitemap_skips_single_title_aggregations(client, ro_conn):
     # title's own page; thousands of them dilute the ones that do add something
     from obc.web import queries
     browse = client.get("/sitemap-browse.xml").text
-    assert "/author/Dirk%20Kok" not in browse       # 1 title
-    assert client.get("/author/Dirk Kok").status_code == 200   # still reachable
+    assert "/author/dirk-kok" not in browse         # 1 title
+    assert client.get("/author/dirk-kok").status_code == 200   # still reachable
     # the fixture's only series has a single part, so it's held back as well
     assert "/series/" not in browse
-    assert queries.series_index(ro_conn, min_titles=1) == ["Het Mysterie"]
-    assert queries.series_index(ro_conn) == []
+    assert [r["name"] for r in queries.series_index(ro_conn)] == ["Het Mysterie"]
 
 
 def test_lastmod_only_where_it_is_truthful(client):
@@ -207,8 +232,8 @@ def test_authors_hub(client):
     assert 'href="/auteurs/a"' in hub.text
     letter = client.get("/auteurs/a")
     assert letter.status_code == 200
-    assert "/author/Anna%20Vrij" in letter.text
-    assert "/author/Dirk%20Kok" not in letter.text          # wrong letter
+    assert 'href="/author/anna-vrij"' in letter.text
+    assert "/author/dirk-kok" not in letter.text            # wrong letter
     # one spelling per letter, so /auteurs/A doesn't become a second URL
     r = client.get("/auteurs/A", follow_redirects=False)
     assert r.status_code == 301 and r.headers["location"] == "/auteurs/a"

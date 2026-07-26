@@ -448,10 +448,15 @@ def author_books_by_fold(conn: sqlite3.Connection, fold_key: str) -> list[sqlite
         (fold_key,)).fetchall()
 
 
-def series_books(conn: sqlite3.Connection, name: str) -> list[sqlite3.Row]:
+def series_books(conn: sqlite3.Connection, names: tuple[str, ...]) -> list[sqlite3.Row]:
+    """Books in any of ``names`` — several spellings of one series ("De Stad" /
+    "De stad") share a slug, and therefore a page."""
+    if not names:
+        return []
+    clause, vals = _in("b.series", names)
     return conn.execute(
-        "SELECT b.* FROM books b WHERE b.series = ? "
-        "ORDER BY b.series_no, b.year LIMIT 300", (name,)).fetchall()
+        f"SELECT b.* FROM books b WHERE {clause} "
+        "ORDER BY b.series_no, b.year LIMIT 300", vals).fetchall()
 
 
 # An author or series page only earns a place in the sitemap / A-Z index once it
@@ -460,23 +465,32 @@ def series_books(conn: sqlite3.Connection, name: str) -> list[sqlite3.Row]:
 MIN_INDEXABLE_TITLES = 2
 
 
-def author_index(conn: sqlite3.Connection,
-                 min_titles: int = MIN_INDEXABLE_TITLES) -> list[sqlite3.Row]:
-    """Authors worth their own page: name, folded name and title count, A-Z."""
+def author_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every author spelling with its folded key and title count, A-Z.
+
+    Deliberately unfiltered and un-merged: an author page is addressed by slug, so
+    spelling variants share one page, and both the "has enough titles" rule and
+    the choice of display spelling have to be applied to the *merged* group. That
+    grouping lives in the web layer, which caches it per catalog rebuild.
+    """
     return conn.execute(
         "SELECT a.name AS name, a.name_fold AS fold, COUNT(*) AS titles "
         "FROM authors a JOIN book_authors ba ON ba.author_id = a.id "
-        "GROUP BY a.id HAVING COUNT(*) >= ? ORDER BY a.name_fold", (min_titles,)
+        "GROUP BY a.id ORDER BY a.name_fold, titles DESC, a.name COLLATE NOCASE"
     ).fetchall()
 
 
-def series_index(conn: sqlite3.Connection,
-                 min_titles: int = MIN_INDEXABLE_TITLES) -> list[str]:
-    """Series names with at least ``min_titles`` parts, A-Z."""
-    return [r["series"] for r in conn.execute(
-        "SELECT series FROM books WHERE COALESCE(series, '') <> '' "
-        "GROUP BY series HAVING COUNT(*) >= ? ORDER BY series COLLATE NOCASE",
-        (min_titles,))]
+def series_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every series spelling with its part count, most parts first.
+
+    Un-merged and unfiltered for the same reason as :func:`author_index`: series
+    pages are addressed by slug, so spellings share a page and both the threshold
+    and the display spelling apply to the merged group.
+    """
+    return conn.execute(
+        "SELECT series AS name, COUNT(*) AS titles FROM books "
+        "WHERE COALESCE(series, '') <> '' "
+        "GROUP BY series ORDER BY titles DESC, series COLLATE NOCASE").fetchall()
 
 
 def similar_books(conn: sqlite3.Connection, ppn: str, method: str = "lsa",

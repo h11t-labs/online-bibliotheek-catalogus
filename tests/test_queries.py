@@ -169,7 +169,13 @@ def test_book_detail(ro_conn):
 
 def test_author_and_series(ro_conn):
     assert len(Q.author_books(ro_conn, "Anna Vrij")) == 2
-    assert {r["ppn"] for r in Q.series_books(ro_conn, "Het Mysterie")} == {"004"}
+    # both take the merged form now: a folded key for authors, every spelling of
+    # the series for series, because a slug URL can cover more than one of each
+    assert len(Q.author_books_by_fold(ro_conn, "anna vrij")) == 2
+    assert Q.author_display_name(ro_conn, "anna vrij") == "Anna Vrij"
+    assert Q.author_display_name(ro_conn, "niemand") is None
+    assert {r["ppn"] for r in Q.series_books(ro_conn, ("Het Mysterie",))} == {"004"}
+    assert Q.series_books(ro_conn, ()) == []
 
 
 def test_lists_overview_counts(ro_conn):

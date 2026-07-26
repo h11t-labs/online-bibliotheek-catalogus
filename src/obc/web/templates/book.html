@@ -115,7 +115,7 @@
 
       {% if b['series'] %}
       <div class="editions">
-        <a class="badge listbadge" href="/series/{{ b['series']|urlencode }}"><svg width="12" height="12" style="vertical-align:-2px"><use href="#ic-list"/></svg> {% if b['series_no'] %}Deel {{ b['series_no'] }} · {% endif %}{{ b['series'] }}</a>
+        <a class="badge listbadge" href="{{ b['series']|series_path }}"><svg width="12" height="12" style="vertical-align:-2px"><use href="#ic-list"/></svg> {% if b['series_no'] %}Deel {{ b['series_no'] }} · {% endif %}{{ b['series'] }}</a>
       </div>
       {% endif %}
 

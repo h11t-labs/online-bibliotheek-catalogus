@@ -45,8 +45,8 @@
   {% if authors %}
   <div class="names">
     {% for a in authors %}
-    <a href="/author/{{ a['name']|urlencode }}">{{ a['name'] }}
-      <span class="n">{{ a['titles'] }}</span></a>
+    <a href="{{ a.name|author_path }}">{{ a.name }}
+      <span class="n">{{ a.titles }}</span></a>
     {% endfor %}
   </div>
   {% elif letter %}
