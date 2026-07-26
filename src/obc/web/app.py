@@ -18,6 +18,7 @@ import datetime
 import os
 import re
 import sqlite3
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote, unquote, urlencode
@@ -460,7 +461,13 @@ def favicon_ico():
 
 # Facet values are identical for every request, so cache them and only recompute
 # when the database file changes (i.e. after a normalize).
+# Each of these is rebuilt from scratch when the catalog file changes, and the
+# genre one walks 157k rows. Without a lock every concurrent cold request builds
+# its own copy: eight simultaneous hits on /genres took 23s each and pushed the
+# process to 606 MB — on a 512 MB machine. The lock makes one thread build while
+# the others wait for its result.
 _facets_cache: dict = {"key": None, "data": None}
+_facets_cache_lock = threading.Lock()
 
 
 def _facets(conn: sqlite3.Connection) -> dict:
@@ -470,14 +477,18 @@ def _facets(conn: sqlite3.Connection) -> dict:
         key = None
     if _facets_cache["key"] == key and _facets_cache["data"] is not None:
         return _facets_cache["data"]
-    data = queries.compute_facets(conn)
-    _facets_cache.update(key=key, data=data)
-    return data
+    with _facets_cache_lock:
+        if _facets_cache["key"] == key and _facets_cache["data"] is not None:
+            return _facets_cache["data"]
+        data = queries.compute_facets(conn)
+        _facets_cache.update(key=key, data=data)
+        return data
 
 
 # The A-Z author index is ~10k rows and identical for every visitor, so it is built
 # once per catalog rebuild — same DB-mtime trick as the facet cache above.
 _authors_cache: dict = {"key": None, "data": None}
+_authors_cache_lock = threading.Lock()
 _OTHER_LETTER = "overig"  # names that don't start with a plain A-Z letter
 
 
@@ -511,32 +522,36 @@ def _author_index(conn: sqlite3.Connection,
         key = DB_PATH.stat().st_mtime_ns
     except OSError:
         key = None
-    if _authors_cache["key"] != key or _authors_cache["data"] is None:
-        _authors_cache.update(key=key, data={})
     cached = _authors_cache["data"]
-    if by in cached:
+    if _authors_cache["key"] == key and cached is not None and by in cached:
         return cached[by]
-    counts = queries.author_title_counts(conn)
-    merged: dict[str, dict] = {}
-    for row in queries.author_index(conn):
-        # A name with no Latin characters at all folds to "" and has no slug, so it
-        # cannot be a hub or sitemap entry — and merging on that empty key would
-        # fuse unrelated authors into one. Those keep their own encoded-name page.
-        if not row["fold"]:
-            continue
-        # rows arrive title-count descending within a fold, so the first spelling
-        # seen for a key is the one that carries the most titles
-        merged.setdefault(row["fold"],
-                          {"name": row["name"], "titles": counts.get(row["fold"], 0)})
-    sort_key = surname_key if by == BY_SURNAME else slugify
-    buckets: dict[str, list[dict]] = {}
-    for entry in merged.values():
-        buckets.setdefault(_author_letter(entry["name"], by), []).append(entry)
-    # the chosen key first, then the whole name, so a letter page reads as an index
-    for rows in buckets.values():
-        rows.sort(key=lambda e: (sort_key(e["name"]), slugify(e["name"])))
-    cached[by] = buckets
-    return buckets
+    with _authors_cache_lock:
+        if _authors_cache["key"] != key or _authors_cache["data"] is None:
+            _authors_cache.update(key=key, data={})
+        cached = _authors_cache["data"]
+        if by in cached:
+            return cached[by]
+        counts = queries.author_title_counts(conn)
+        merged: dict[str, dict] = {}
+        for row in queries.author_index(conn):
+            # A name with no Latin characters at all folds to "" and has no slug, so it
+            # cannot be a hub or sitemap entry — and merging on that empty key would
+            # fuse unrelated authors into one. Those keep their own encoded-name page.
+            if not row["fold"]:
+                continue
+            # rows arrive title-count descending within a fold, so the first spelling
+            # seen for a key is the one that carries the most titles
+            merged.setdefault(row["fold"],
+                              {"name": row["name"], "titles": counts.get(row["fold"], 0)})
+        sort_key = surname_key if by == BY_SURNAME else slugify
+        buckets: dict[str, list[dict]] = {}
+        for entry in merged.values():
+            buckets.setdefault(_author_letter(entry["name"], by), []).append(entry)
+        # the chosen key first, then the whole name, so a letter page reads as an index
+        for rows in buckets.values():
+            rows.sort(key=lambda e: (sort_key(e["name"]), slugify(e["name"])))
+        cached[by] = buckets
+        return buckets
 
 
 # Series get the same slug treatment as authors, but `books.series` is free text
@@ -544,6 +559,7 @@ def _author_index(conn: sqlite3.Connection,
 # catalog rebuild. 18 slugs cover more than one spelling ("De Stad" / "De stad");
 # those share a page rather than splitting the shelf in two.
 _series_cache: dict = {"key": None, "data": None}
+_series_cache_lock = threading.Lock()
 
 
 def _series_index(conn: sqlite3.Connection) -> dict[str, dict]:
@@ -554,17 +570,20 @@ def _series_index(conn: sqlite3.Connection) -> dict[str, dict]:
         key = None
     if _series_cache["key"] == key and _series_cache["data"] is not None:
         return _series_cache["data"]
-    merged: dict[str, dict] = {}
-    for row in queries.series_index(conn):
-        slug = slugify(row["name"])
-        if not slug:
-            continue
-        # rows arrive part-count descending, so the first spelling wins the heading
-        entry = merged.setdefault(slug, {"name": row["name"], "names": [], "titles": 0})
-        entry["names"].append(row["name"])
-        entry["titles"] += row["titles"]
-    _series_cache.update(key=key, data=merged)
-    return merged
+    with _series_cache_lock:
+        if _series_cache["key"] == key and _series_cache["data"] is not None:
+            return _series_cache["data"]
+        merged: dict[str, dict] = {}
+        for row in queries.series_index(conn):
+            slug = slugify(row["name"])
+            if not slug:
+                continue
+            # rows arrive part-count descending, so the first spelling wins the heading
+            entry = merged.setdefault(slug, {"name": row["name"], "names": [], "titles": 0})
+            entry["names"].append(row["name"])
+            entry["titles"] += row["titles"]
+        _series_cache.update(key=key, data=merged)
+        return merged
 
 
 def _letter_order(index: dict) -> list[str]:
@@ -580,6 +599,7 @@ def _letter_order(index: dict) -> list[str]:
 # page itself stays a single URL covering both.
 AUDIENCES = (("volwassenen", "Volwassenen"), ("jeugd", "Jeugd"))
 _genres_cache: dict = {"key": None, "data": None}
+_genres_cache_lock = threading.Lock()
 
 
 def _genre_data(conn: sqlite3.Connection) -> dict:
@@ -596,70 +616,72 @@ def _genre_data(conn: sqlite3.Connection) -> dict:
         key = None
     if _genres_cache["key"] == key and _genres_cache["data"] is not None:
         return _genres_cache["data"]
+    with _genres_cache_lock:
+        if _genres_cache["key"] == key and _genres_cache["data"] is not None:
+            return _genres_cache["data"]
 
-    flat: dict[str, dict] = {}
-    per_aud: dict[str, dict[str, dict]] = {a: {} for a, _ in AUDIENCES}
-    for row in queries.genre_books(conn):
-        slug = slugify(row["name"])
-        if not slug:
-            continue
-        entry = flat.setdefault(slug, {"name": row["name"], "names": [], "books": set(),
-                                       "parents": collections.Counter()})
-        if row["name"] not in entry["names"]:
-            entry["names"].append(row["name"])
-        entry["books"].add(row["ppn"])
-        pslug = slugify(row["parent"] or "")
-        entry["parents"][pslug] += 1
-        # 2.567 books carry no audience, and a catalog built without the detail
-        # pass has none at all — those land on the default shelf rather than
-        # falling out of the hub entirely. No genre in the live catalog is
-        # reachable *only* that way, so this shifts counts, never visibility.
-        aud = per_aud[row["audience"] if row["audience"] in per_aud else AUDIENCES[0][0]]
-        a = aud.setdefault(slug, {"books": set(), "parents": collections.Counter()})
-        a["books"].add(row["ppn"])
-        a["parents"][pslug] += 1
-
-    for entry in flat.values():
-        parent = entry["parents"].most_common(1)[0][0]
-        entry["parent"] = parent if parent and parent != slugify(entry["name"]) else ""
-        entry["titles"] = len(entry.pop("books"))
-        entry["name"] = max(entry["names"], key=len)
-        del entry["parents"]
-    for slug, entry in flat.items():
-        entry["children"] = sorted(
-            (c for c, o in flat.items() if o["parent"] == slug),
-            key=lambda c: (-flat[c]["titles"], c))
-
-    trees: dict[str, list[dict]] = {}
-    for aud, _label in AUDIENCES:
-        rows = per_aud[aud]
-        parent_of, titles_of = {}, {}
-        for slug, a in rows.items():
-            # An explicit parent outranks "filed at top level": most adult Film
-            # records carry no parent, a minority put it under Kunst & Cultuur, and
-            # promoting it to sit beside Literatuur & Romans would both read wrong
-            # and disagree with the breadcrumb its own page shows. Only when this
-            # audience never names a parent do we fall back to the catalog-wide one.
-            named = [(pslug, n) for pslug, n in a["parents"].items()
-                     if pslug and pslug != slug and pslug in rows]
-            pslug = max(named, key=lambda kv: kv[1])[0] if named else flat[slug]["parent"]
-            parent_of[slug] = pslug if pslug and pslug != slug and pslug in rows else ""
-            titles_of[slug] = len(a["books"])
-        tops = []
-        for slug in rows:
-            if parent_of[slug]:
+        flat: dict[str, dict] = {}
+        per_aud: dict[str, dict[str, dict]] = {a: {} for a, _ in AUDIENCES}
+        for row in queries.genre_books(conn):
+            slug = slugify(row["name"])
+            if not slug:
                 continue
-            kids = sorted((c for c in rows if parent_of[c] == slug),
-                          key=lambda c: -titles_of[c])
-            tops.append({"name": flat[slug]["name"], "slug": slug,
-                         "titles": titles_of[slug],
-                         "children": [{"name": flat[c]["name"], "slug": c,
-                                       "titles": titles_of[c]} for c in kids]})
-        trees[aud] = sorted(tops, key=lambda g: (-g["titles"], g["name"].lower()))
+            entry = flat.setdefault(slug, {"name": row["name"], "names": [], "books": set(),
+                                           "parents": collections.Counter()})
+            if row["name"] not in entry["names"]:
+                entry["names"].append(row["name"])
+            entry["books"].add(row["ppn"])
+            pslug = slugify(row["parent"] or "")
+            entry["parents"][pslug] += 1
+            # 2.567 books carry no audience, and a catalog built without the detail
+            # pass has none at all — those land on the default shelf rather than
+            # falling out of the hub entirely. No genre in the live catalog is
+            # reachable *only* that way, so this shifts counts, never visibility.
+            aud = per_aud[row["audience"] if row["audience"] in per_aud else AUDIENCES[0][0]]
+            a = aud.setdefault(slug, {"books": set(), "parents": collections.Counter()})
+            a["books"].add(row["ppn"])
+            a["parents"][pslug] += 1
 
-    data = {"flat": flat, "trees": trees}
-    _genres_cache.update(key=key, data=data)
-    return data
+        for entry in flat.values():
+            parent = entry["parents"].most_common(1)[0][0]
+            entry["parent"] = parent if parent and parent != slugify(entry["name"]) else ""
+            entry["titles"] = len(entry.pop("books"))
+            entry["name"] = max(entry["names"], key=len)
+            del entry["parents"]
+        for slug, entry in flat.items():
+            entry["children"] = sorted(
+                (c for c, o in flat.items() if o["parent"] == slug),
+                key=lambda c: (-flat[c]["titles"], c))
+
+        trees: dict[str, list[dict]] = {}
+        for aud, _label in AUDIENCES:
+            rows = per_aud[aud]
+            parent_of, titles_of = {}, {}
+            for slug, a in rows.items():
+                # A tree may only state what its own audience files. Borrowing the
+                # catalog-wide parent when this audience names none put "Film" under
+                # Kunst & Cultuur for adults, where all three adult records carry no
+                # parent at all — a relationship the data never asserts. An explicit
+                # parent still outranks a bare "top level" *within* the audience.
+                named = [(pslug, n) for pslug, n in a["parents"].items()
+                         if pslug and pslug != slug and pslug in rows]
+                parent_of[slug] = max(named, key=lambda kv: kv[1])[0] if named else ""
+                titles_of[slug] = len(a["books"])
+            tops = []
+            for slug in rows:
+                if parent_of[slug]:
+                    continue
+                kids = sorted((c for c in rows if parent_of[c] == slug),
+                              key=lambda c: -titles_of[c])
+                tops.append({"name": flat[slug]["name"], "slug": slug,
+                             "titles": titles_of[slug],
+                             "children": [{"name": flat[c]["name"], "slug": c,
+                                           "titles": titles_of[c]} for c in kids]})
+            trees[aud] = sorted(tops, key=lambda g: (-g["titles"], g["name"].lower()))
+
+        data = {"flat": flat, "trees": trees}
+        _genres_cache.update(key=key, data=data)
+        return data
 
 
 def _genres(conn: sqlite3.Connection) -> dict[str, dict]:

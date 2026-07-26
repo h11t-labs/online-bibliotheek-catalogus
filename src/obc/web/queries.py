@@ -591,10 +591,24 @@ def browse_summary(conn: sqlite3.Connection, f: SearchFilters,
     if not f.format:
         where.append("b.primary_edition = 1" if _has_primary_edition(conn) else "1=1")
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    # Availability, not representation. With editions collapsed each work is
+    # counted through whichever edition happens to represent it, so a genre whose
+    # works are all primarily e-books reported zero audiobooks while its own shelf
+    # badged 91 of them as also available to listen to. EXISTS over the work key —
+    # the same (title, author) pairing formats_map uses, and the one
+    # idx_books_title_author_lower covers.
+    def has_edition(cond: str) -> str:
+        return ("EXISTS (SELECT 1 FROM books e "
+                "        WHERE lower(e.title) = lower(b.title) "
+                "          AND lower(COALESCE(e.author, '')) = lower(COALESCE(b.author, '')) "
+                f"          AND {cond})")
+
+    as_ebook = has_edition("e.format = 'ebook'")
+    as_audio = has_edition("e.format = 'audiobook'")
+    on_ereader = has_edition("e.ereader = 1")
     row = conn.execute(
-        "SELECT SUM(b.format = 'ebook') AS ebooks, "
-        "       SUM(b.format = 'audiobook') AS audiobooks, "
-        "       SUM(b.ereader = 1) AS ereader, "
+        f"SELECT SUM({as_ebook}) AS ebooks, SUM({as_audio}) AS audiobooks, "
+        f"       SUM({on_ereader}) AS ereader, "
         "       MIN(NULLIF(b.year, 0)) AS year_min, MAX(b.year) AS year_max "
         f"FROM books b {where_sql}", params).fetchone()
     authors = conn.execute(

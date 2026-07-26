@@ -855,16 +855,27 @@ def test_genre_hierarchy(tmp_path, monkeypatch):
     assert 'href="/genre/spanning-thrillers"' in hub
     assert hub.index("/genre/spanning-thrillers") < hub.index("/genre/thrillers")
     # jeugd and volwassenen are separate taxonomies, switched rather than stacked
-    # A genre's own page and the hub must agree on where it sits: whenever the
-    # parent is present in a tree at all, the child may not also head that tree.
-    # (A parent with no books in this audience is a legitimate exception — for
-    # jeugd, "Waargebeurde verhalen" really is a shelf of its own.)
+    # A tree may only state what its own audience files: every parent it shows
+    # must be one this audience's own rows actually name.
     data = appmod._genre_data(conn)
-    for tops in data["trees"].values():
-        present = {t["slug"] for t in tops} | {k["slug"] for t in tops for k in t["children"]}
-        for t in tops:
-            parent = data["flat"][t["slug"]]["parent"]
-            assert not (parent and parent in present), t["slug"]
+    for aud, tops in data["trees"].items():
+        for top in tops:
+            for kid in top["children"]:
+                # books with an unknown audience land on the default shelf, so the
+                # check has to resolve the audience the way the app does
+                known = [a for a, _ in appmod.AUDIENCES]
+                marks = ",".join("?" * len(known))
+                named = conn.execute(
+                    "SELECT COUNT(*) FROM book_genres bg "
+                    "JOIN genres g ON g.id = bg.genre_id "
+                    "JOIN genres p ON p.id = bg.parent_id "
+                    "JOIN books b ON b.ppn = bg.book_ppn "
+                    "WHERE g.name = ? AND p.name = ? AND ? = (CASE WHEN "
+                    f"  lower(COALESCE(b.audience, '')) IN ({marks}) "
+                    "  THEN lower(COALESCE(b.audience, '')) ELSE ? END)",
+                    (kid["name"], top["name"], aud, *known,
+                     appmod.AUDIENCES[0][0])).fetchone()[0]
+                assert named, f"{aud}: {kid['name']} under {top['name']}"
     assert 'class="audbar"' in hub
     assert 'href="/genres?publiek=jeugd"' in hub
     jeugd = client.get("/genres?publiek=jeugd").text
