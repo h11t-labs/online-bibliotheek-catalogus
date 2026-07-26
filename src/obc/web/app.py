@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from .. import db
+from ..textnorm import language_code
 from . import queries
 from .bio import author_bio
 
@@ -587,12 +588,16 @@ def book(request: Request, ppn: str, conn: sqlite3.Connection = Depends(get_conn
     b = detail["row"]
     summary = (b["summary"] or "").strip()
     cover = _coverw(b["cover_url"], 400)
-    # schema.org/Book structured data for rich results
+    # schema.org/Book structured data. Google itself only reads Book markup from
+    # an onboarded feed, but Bing and LLM crawlers parse this, so it's worth
+    # keeping correct: a BCP 47 code rather than the Dutch language name, and a
+    # tidied blurb instead of the raw quote-wrapped, line-broken catalog text.
     jsonld = {"@context": "https://schema.org", "@type": "Book", "name": b["title"],
               "author": [{"@type": "Person", "name": a} for a in detail["authors"]] or None,
-              "inLanguage": b["language"], "isbn": b["isbn"], "publisher": b["publisher"],
+              "inLanguage": language_code(b["language"]),
+              "isbn": b["isbn"], "publisher": b["publisher"],
               "datePublished": str(b["year"]) if b["year"] else None,
-              "image": cover or None, "description": summary or None,
+              "image": cover or None, "description": _snippet(summary, 1000) or None,
               "bookFormat": ("https://schema.org/AudiobookFormat"
                              if b["format"] == "audiobook" else "https://schema.org/EBook"),
               "url": f"{_origin(request)}/book/{ppn}"}

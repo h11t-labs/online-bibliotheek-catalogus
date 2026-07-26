@@ -104,6 +104,36 @@ def valid_language(name: str | None) -> str | None:
     return None
 
 
+# schema.org's inLanguage wants an IETF BCP 47 code, not a Dutch language name.
+# "Schots" is deliberately absent: it maps to either Scots (sco) or Scottish
+# Gaelic (gd) and the catalog doesn't say which — better no code than a wrong one.
+_LANGUAGE_CODES: dict[str, str] = {
+    "Nederlands": "nl", "Engels": "en", "Duits": "de", "Frans": "fr",
+    "Spaans": "es", "Italiaans": "it", "Portugees": "pt", "Latijn": "la",
+    "Grieks": "el", "Nieuwgrieks": "el", "Russisch": "ru", "Pools": "pl",
+    "Tsjechisch": "cs", "Slowaaks": "sk", "Hongaars": "hu", "Roemeens": "ro",
+    "Bulgaars": "bg", "Servisch": "sr", "Kroatisch": "hr", "Bosnisch": "bs",
+    "Sloveens": "sl", "Oekraïens": "uk", "Wit-Russisch": "be",
+    "Macedonisch": "mk", "Albanees": "sq", "Zweeds": "sv", "Noors": "no",
+    "Deens": "da", "Fins": "fi", "IJslands": "is", "Ests": "et", "Lets": "lv",
+    "Litouws": "lt", "Turks": "tr", "Arabisch": "ar", "Hebreeuws": "he",
+    "Jiddisch": "yi", "Perzisch": "fa", "Koerdisch": "ku", "Chinees": "zh",
+    "Japans": "ja", "Koreaans": "ko", "Hindi": "hi", "Urdu": "ur",
+    "Bengaals": "bn", "Indonesisch": "id", "Maleis": "ms", "Thais": "th",
+    "Vietnamees": "vi", "Afrikaans": "af", "Swahili": "sw", "Armeens": "hy",
+    "Georgisch": "ka", "Catalaans": "ca", "Galicisch": "gl", "Baskisch": "eu",
+    "Iers": "ga", "Welsh": "cy", "Bretons": "br", "Papiaments": "pap",
+    "Fries": "fy", "Westerlauwers Fries": "fy", "Limburgs": "li",
+    "Esperanto": "eo", "Sanskriet": "sa", "meerdere talen": "mul",
+}
+LANGUAGE_CODES = {fold(name): code for name, code in _LANGUAGE_CODES.items()}
+
+
+def language_code(name: str | None) -> str | None:
+    """'Nederlands' -> 'nl'. Unknown or ambiguous names return None."""
+    return LANGUAGE_CODES.get(fold(name)) if name else None
+
+
 def match_key(title: str | None, author: str | None) -> str:
     """Catalog-match key from title + first author surname token."""
     a = fold(author).split()

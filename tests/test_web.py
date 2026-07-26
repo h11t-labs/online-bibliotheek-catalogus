@@ -156,6 +156,23 @@ def test_website_jsonld_only_on_bare_home(client):
                     if d.get("@type") == "WebSite"], path
 
 
+def test_book_jsonld_uses_a_language_code_and_a_tidy_description(client):
+    from obc.textnorm import language_code
+    assert language_code("Nederlands") == "nl" and language_code("Engels") == "en"
+    assert language_code("nederlands") == "nl"        # folded lookup
+    assert language_code("Klingon") is None
+    assert language_code("Schots") is None            # Scots vs Gaelic — ambiguous
+    assert language_code(None) is None
+    book = [d for d in _jsonld(client.get("/book/001").text)
+            if d.get("@type") == "Book"][0]
+    assert book["inLanguage"] == "nl"                 # not "Nederlands"
+    assert not book["description"].startswith('"')    # no wrapping quote mark
+    assert "\n" not in book["description"]
+    spanish = [d for d in _jsonld(client.get("/book/006").text)
+               if d.get("@type") == "Book"][0]
+    assert spanish["inLanguage"] == "es"
+
+
 def test_author_pages_survive_a_slash_in_the_name(client):
     # two catalog authors carry a slash ("Elizabeth August/Dreamshield"); with a
     # plain {name} route their page 404s, so both the book-page link and the
