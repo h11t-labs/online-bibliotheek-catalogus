@@ -173,7 +173,14 @@ def test_authors_are_alphabetised_on_surname(client):
     assert surname_key("Gerda van Wageningen") == "wageningen"
     assert surname_key("Buren, van") == "buren"            # already inverted
     assert surname_key("Bernlef") == "bernlef"             # single token
-    assert surname_key("") == ""
+    assert surname_key("") == "" and surname_key(None) == ""
+    # fold() decomposes diacritics, which deletes the Latin letters that have no
+    # combining form — "Strøm" folds to "str m" and would file under M
+    assert surname_key("Anita Strøm") == "strom"
+    assert surname_key("Anja Røyne") == "royne"
+    assert surname_key("Arndís Þórarinsdóttir") == "thorarinsdottir"
+    assert surname_key("Arnaldur Indriðason") == "indridason"
+    assert surname_key("Andrzej Sapkowski Ł") == "l"       # a bare particle-less token
     assert client.get("/authors/w").status_code == 200     # Bob de Wit lives here
     assert client.get("/authors/b").status_code == 404     # ...and not here
 

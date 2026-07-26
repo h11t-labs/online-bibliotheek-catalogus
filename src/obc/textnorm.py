@@ -85,6 +85,20 @@ _NAME_PARTICLES = {
 }
 
 
+# fold() strips diacritics by decomposing them, which silently *deletes* the Latin
+# letters that have no combining form: "Strøm" folds to "str m", "Þórarinsdóttir"
+# to "orarinsdottir". Harmless for matching, wrong for alphabetising — it filed 33
+# Nordic and Icelandic authors under a letter from the middle of their name (Røyne
+# under Y, Bøe under E). Spelled out here rather than inside fold(), because
+# authors.name_fold is written at normalize time and every slug URL round-trips
+# through it: changing fold() would 404 those pages until the next full rebuild.
+_TRANSLITERATE = str.maketrans({
+    "ø": "o", "Ø": "O", "æ": "ae", "Æ": "Ae", "œ": "oe", "Œ": "Oe",
+    "ł": "l", "Ł": "L", "đ": "d", "Đ": "D", "ð": "d", "Ð": "D",
+    "þ": "th", "Þ": "Th", "ß": "ss", "ı": "i",
+})
+
+
 def surname_key(name: str | None) -> str:
     """Folded surname for alphabetising: 'Alexander Klöpping' -> 'klopping'.
 
@@ -92,7 +106,7 @@ def surname_key(name: str | None) -> str:
     A-Z index has to sort on this rather than on the first character of the full
     name. "Bob de Wit" lands on 'wit', "Buren, van" on 'buren'.
     """
-    parts = fold(name).split()
+    parts = fold((name or "").translate(_TRANSLITERATE)).split()
     while len(parts) > 1 and parts[-1] in _NAME_PARTICLES:
         parts.pop()
     return parts[-1] if parts else ""
