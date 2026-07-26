@@ -113,3 +113,37 @@ def test_stream_rebuild_equivalent_to_bulk_load(tmp_path):
         return snap
 
     assert snapshot(tmp_path / "bulk.db") == snapshot(tmp_path / "stream.db")
+
+
+def test_browse_sorts_are_indexed(tmp_path):
+    """Every queries.SORTS ordering needs a (primary_edition, <sort key>) index, so a
+    browse page reads its page from the index instead of sorting every match in a temp
+    B-tree. Missing one costs ~33ms per page on the real catalog."""
+    from obc.web import queries
+    _build(tmp_path / "c.db")
+    conn = db.connect(tmp_path / "c.db")
+    # sql IS NULL for SQLite's own auto-indexes (sqlite_autoindex_books_1)
+    idx = {r["name"]: r["sql"] for r in conn.execute(
+        "SELECT name, sql FROM sqlite_master "
+        "WHERE type='index' AND tbl_name='books' AND sql IS NOT NULL")}
+    assert "year DESC" in idx["idx_books_primary_year"]
+    assert "added_rank" in idx["idx_books_primary_added"]
+    assert "COLLATE NOCASE" in idx["idx_books_primary_title"]
+    # every sort key (bar relevance, which is bm25 over the FTS table) is covered
+    for name in set(queries.SORTS) - {"relevance", "year_asc"}:
+        key = name.removesuffix("_desc")
+        assert any(key in sql for sql in idx.values()), f"no index serves sort={name}"
+    conn.close()
+
+
+def test_rebuild_collects_index_statistics(tmp_path):
+    """Both rebuild paths must leave sqlite_stat1 populated. Without statistics the
+    planner drives the facet queries off the boolean primary_edition index (4x slower
+    genre/author/list filters on the real catalog)."""
+    for stream in (False, True):
+        path = tmp_path / f"c{int(stream)}.db"
+        _build(path, stream=stream)
+        conn = db.connect(path)
+        tables = {r[0] for r in conn.execute("SELECT tbl FROM sqlite_stat1")}
+        assert "books" in tables, f"no statistics for books (stream={stream})"
+        conn.close()

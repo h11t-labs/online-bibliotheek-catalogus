@@ -143,6 +143,18 @@ CREATE INDEX IF NOT EXISTS idx_books_title     ON books(title);
 CREATE INDEX IF NOT EXISTS idx_books_added     ON books(added_rank);
 CREATE INDEX IF NOT EXISTS idx_books_series     ON books(series);
 CREATE INDEX IF NOT EXISTS idx_books_primary     ON books(primary_edition);
+-- One (primary_edition, <sort key>) index per entry in queries.SORTS, so every browse
+-- ordering is served straight from an index. Without them a browse page filters on
+-- primary_edition and then sorts all ~56k matching rows in a temp B-tree ("USE TEMP
+-- B-TREE FOR ORDER BY"): ~33ms per page locally and the bulk of the home page's
+-- response time on Fly's shared CPU. With them the same queries are ~0.1ms.
+-- Together they cost ~3MB (287MB -> 290MB on the 68k catalog).
+-- year_asc reuses the DESC index (SQLite scans it backwards). `added` needs the
+-- IS NULL expression as a column because the ORDER BY puts NULLs last while an
+-- ASC index stores them first. `title` must repeat COLLATE NOCASE to match.
+CREATE INDEX IF NOT EXISTS idx_books_primary_year  ON books(primary_edition, year DESC);
+CREATE INDEX IF NOT EXISTS idx_books_primary_added ON books(primary_edition, (added_rank IS NULL), added_rank);
+CREATE INDEX IF NOT EXISTS idx_books_primary_title ON books(primary_edition, title COLLATE NOCASE);
 -- case-insensitive (title, author) for the "other editions of this work" lookup on
 -- every book page — without it that query full-scans all books (≈4s on Fly's shared CPU)
 CREATE INDEX IF NOT EXISTS idx_books_title_author_lower
@@ -312,6 +324,21 @@ def set_primary_editions(cur: sqlite3.Cursor) -> None:
         "  FROM books) WHERE rn = 1)")
 
 
+def analyze(cur: sqlite3.Cursor) -> None:
+    """Collect index statistics into ``sqlite_stat1`` (~0.3s on the full catalog).
+
+    Without them SQLite plans the facet queries blind and picks ``idx_books_primary``
+    as the driving index — an index on a *boolean* where ~56k of 68k rows are 1, so a
+    genre/author/list filter walks 56k index entries per request. With statistics it
+    drives off the selective side (``idx_bg_genre``, a few thousand entries) instead:
+    ``?genre=...`` drops from 32ms to 8ms for both the COUNT and the row fetch.
+
+    Run at the end of every rebuild, not from ``_SCHEMA``: statistics describe the data,
+    so they go stale as the catalog changes and are only worth what the last refresh
+    measured."""
+    cur.execute("ANALYZE")
+
+
 def bulk_load(conn: sqlite3.Connection, records: Iterable[dict[str, Any]],
               lists: list[dict] | None = None) -> int:
     """Fast full rebuild: truncate then batch-insert everything.
@@ -338,6 +365,7 @@ def bulk_load(conn: sqlite3.Connection, records: Iterable[dict[str, Any]],
     _insert_lists(cur, lists or [])
     _insert_fts(cur, records)
     set_primary_editions(cur)
+    analyze(cur)
     conn.commit()
     return n
 
@@ -428,6 +456,7 @@ def stream_rebuild(conn: sqlite3.Connection, records: Iterable[dict[str, Any]],
                     [(lg, fold(lg), c) for lg, c in lang_counts.items()])
     _insert_lists(cur, lists or [])
     set_primary_editions(cur)
+    analyze(cur)
     conn.commit()
     return n
 
