@@ -9,6 +9,14 @@
      by type and indentation, and one hairline per row does the separating that 42
      bordered cards were doing badly. Two columns balance by count, not by order,
      so a genre with twelve children doesn't leave a hole beside it. */
+  .audbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 26px;font-size:13px}
+  .audbar .lbl{color:var(--ink-soft)}
+  .audbar > a{display:inline-flex;align-items:baseline;gap:7px;padding:6px 14px;
+    border-radius:999px;border:1px solid var(--line);background:var(--card);
+    color:var(--ink-soft)}
+  .audbar > a span{font-size:11.5px;opacity:.75;font-variant-numeric:tabular-nums}
+  .audbar > a.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);
+    font-weight:700}
   .gtax{columns:2;column-gap:44px}
   .gtop{break-inside:avoid;padding:0 0 15px;margin:0 0 15px;
     border-bottom:1px solid var(--line)}
@@ -38,10 +46,21 @@
     <h1 class="page-h">Genres</h1>
     {# a catalog rebuilt without the detail pass has no subgenres at all, and
        "42 genres in 42 hoofdgenres" reads like a bug #}
-    <p class="page-sub">{{ total|nlnum }} genres in de collectie{% if tops < total %},
-      ondergebracht in {{ tops|nlnum }} hoofdgenres{% endif %}. Elk genre opent alle
-      e-books en luisterboeken die eronder vallen.</p>
+    <p class="page-sub">{{ total|nlnum }} genres in de collectie. Jeugd en volwassenen
+      hebben elk hun eigen indeling — hetzelfde subgenre kan onder een ander
+      hoofdgenre vallen. Elk genre opent alle e-books en luisterboeken die eronder
+      vallen, voor beide publieken.</p>
   </div>
+
+  {% if audiences|length > 1 %}
+  <div class="audbar">
+    <span class="lbl">Voor:</span>
+    {% for a in audiences %}
+    <a href="/genres{{ '' if loop.first else '?publiek=' ~ a.key }}"
+       class="{{ 'on' if a.key == publiek }}">{{ a.label }} <span>{{ a.total|nlnum }}</span></a>
+    {% endfor %}
+  </div>
+  {% endif %}
 
   <div class="gtax">
     {% for g in genres %}

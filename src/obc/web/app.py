@@ -567,22 +567,22 @@ def _letter_order(index: dict) -> list[str]:
         ([_OTHER_LETTER] if _OTHER_LETTER in index else [])
 
 
-# Genre pages live at a real path (/genre/spanning-thrillers) rather than the
-# ?genre= query space, which is noindex + robots-disallowed. The slug -> name map
-# is the reverse lookup for that, cached per catalog rebuild.
+# The catalog carries two taxonomies, not one: jeugd and volwassenen reuse genre
+# names under different parents, and 67 of 213 subgenres sit somewhere different
+# depending on which shelf you are standing at. Flattening them picked a winner
+# and misfiled the loser, so the hub renders a tree per audience while the genre
+# page itself stays a single URL covering both.
+AUDIENCES = (("volwassenen", "Volwassenen"), ("jeugd", "Jeugd"))
 _genres_cache: dict = {"key": None, "data": None}
-# How many covers a browse landing page shows. It is an entry point, not a
-# replacement for the search UI — the "filter in zoeken" link opens the rest.
-BROWSE_PREVIEW = 120
 
 
-def _genres(conn: sqlite3.Connection) -> dict[str, dict]:
-    """``{slug: {"name": display, "names": [spellings…], "titles": n}}``.
+def _genre_data(conn: sqlite3.Connection) -> dict:
+    """``{"flat": {slug: entry}, "trees": {audience: [top entries]}}``, cached.
 
-    Genres collide the same way series do — the catalog holds "Biografieën" twice,
-    once with a combining diaeresis and once precomposed, and both fold to
-    `biografieen`. Keying a plain dict on the slug silently dropped one of them and
-    its books with it, so they are merged instead, as everywhere else.
+    ``flat`` backs the genre page and the sitemap — one entry per slug, counted
+    over distinct books because spelling variants share them (the catalog holds
+    "Biografieën" twice, precomposed and with a combining diaeresis). ``trees`` is
+    the hub's view: per audience, top genres carrying their own children.
     """
     try:
         key = DB_PATH.stat().st_mtime_ns
@@ -590,36 +590,73 @@ def _genres(conn: sqlite3.Connection) -> dict[str, dict]:
         key = None
     if _genres_cache["key"] == key and _genres_cache["data"] is not None:
         return _genres_cache["data"]
-    # Counted over distinct books rather than by summing each spelling's own
-    # count: the two "Biografieën" share a book, so the sum advertised three
-    # titles for a page that shows two.
-    books: dict[str, set] = {}
-    names: dict[str, list[str]] = {}
-    parents: dict[str, collections.Counter] = {}
+
+    flat: dict[str, dict] = {}
+    per_aud: dict[str, dict[str, dict]] = {a: {} for a, _ in AUDIENCES}
     for row in queries.genre_books(conn):
         slug = slugify(row["name"])
         if not slug:
             continue
-        books.setdefault(slug, set()).add(row["ppn"])
-        if row["name"] not in names.setdefault(slug, []):
-            names[slug].append(row["name"])
-        # The parent sits on the link, not the genre, because jeugd and volwassenen
-        # reuse names under different parents — take the one most of its books agree
-        # on, and treat "no parent" as a vote for top-level.
-        parents.setdefault(slug, collections.Counter())[slugify(row["parent"] or "")] += 1
-    merged: dict[str, dict] = {}
-    for slug, ppns in books.items():
-        parent = parents[slug].most_common(1)[0][0]
-        merged[slug] = {"name": max(names[slug], key=len), "names": names[slug],
-                        "titles": len(ppns),
-                        "parent": parent if parent and parent != slug else ""}
-    # children hang off their parent, so a top genre can list what sits under it
-    for slug, entry in merged.items():
+        entry = flat.setdefault(slug, {"name": row["name"], "names": [], "books": set(),
+                                       "parents": collections.Counter()})
+        if row["name"] not in entry["names"]:
+            entry["names"].append(row["name"])
+        entry["books"].add(row["ppn"])
+        pslug = slugify(row["parent"] or "")
+        entry["parents"][pslug] += 1
+        # 2.567 books carry no audience, and a catalog built without the detail
+        # pass has none at all — those land on the default shelf rather than
+        # falling out of the hub entirely. No genre in the live catalog is
+        # reachable *only* that way, so this shifts counts, never visibility.
+        aud = per_aud[row["audience"] if row["audience"] in per_aud else AUDIENCES[0][0]]
+        a = aud.setdefault(slug, {"books": set(), "parents": collections.Counter()})
+        a["books"].add(row["ppn"])
+        a["parents"][pslug] += 1
+
+    for entry in flat.values():
+        parent = entry["parents"].most_common(1)[0][0]
+        entry["parent"] = parent if parent and parent != slugify(entry["name"]) else ""
+        entry["titles"] = len(entry.pop("books"))
+        entry["name"] = max(entry["names"], key=len)
+        del entry["parents"]
+    for slug, entry in flat.items():
         entry["children"] = sorted(
-            (c for c, e in merged.items() if e["parent"] == slug),
-            key=lambda c: (-merged[c]["titles"], c))
-    _genres_cache.update(key=key, data=merged)
-    return merged
+            (c for c, o in flat.items() if o["parent"] == slug),
+            key=lambda c: (-flat[c]["titles"], c))
+
+    trees: dict[str, list[dict]] = {}
+    for aud, _label in AUDIENCES:
+        rows = per_aud[aud]
+        parent_of, titles_of = {}, {}
+        for slug, a in rows.items():
+            pslug = a["parents"].most_common(1)[0][0]
+            parent_of[slug] = pslug if pslug and pslug != slug and pslug in rows else ""
+            titles_of[slug] = len(a["books"])
+        tops = []
+        for slug in rows:
+            if parent_of[slug]:
+                continue
+            kids = sorted((c for c in rows if parent_of[c] == slug),
+                          key=lambda c: -titles_of[c])
+            tops.append({"name": flat[slug]["name"], "slug": slug,
+                         "titles": titles_of[slug],
+                         "children": [{"name": flat[c]["name"], "slug": c,
+                                       "titles": titles_of[c]} for c in kids]})
+        trees[aud] = sorted(tops, key=lambda g: (-g["titles"], g["name"].lower()))
+
+    data = {"flat": flat, "trees": trees}
+    _genres_cache.update(key=key, data=data)
+    return data
+
+
+def _genres(conn: sqlite3.Connection) -> dict[str, dict]:
+    """``{slug: {name, names, titles, parent, children}}`` across both audiences."""
+    return _genre_data(conn)["flat"]
+
+
+# How many covers a browse landing page shows. It is an entry point, not a
+# replacement for the search UI — the "filter in zoeken" link opens the rest.
+BROWSE_PREVIEW = 120
 
 
 def _browse_page(request: Request, conn: sqlite3.Connection, *, heading: str,
@@ -942,23 +979,33 @@ def sitemap_books(request: Request, n: int, conn: sqlite3.Connection = Depends(g
 
 
 @app.get("/genres", response_class=HTMLResponse)
-def genres_index(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    """Hub over the genre pages, largest genre first."""
-    index = _genres(conn)
-    # Only top genres head the hub; a subgenre is reached from its parent, so the
-    # list reads as a taxonomy instead of parents and children jumbled by size.
-    genres = sorted(
-        ({"name": e["name"], "slug": slug, "titles": e["titles"],
-          "children": [{"name": index[c]["name"], "slug": c,
-                        "titles": index[c]["titles"]} for c in e["children"]]}
-         for slug, e in index.items() if not e["parent"]),
-        key=lambda g: (-g["titles"], g["name"].lower()))
+def genres_index(request: Request, publiek: str = AUDIENCES[0][0],
+                 conn: sqlite3.Connection = Depends(get_conn)):
+    """Hub over the genre pages, one audience at a time.
+
+    Jeugd and volwassenen are separate taxonomies, and stacking both made a page
+    of 364 genres — a toggle shows the one you are actually browsing. Same shape
+    as the author hub's sort toggle: the clean path stays canonical, and the
+    ?-variant is robots-disallowed, so it adds no crawlable duplicate.
+    """
+    data = _genre_data(conn)
+    index, trees = data["flat"], data["trees"]
+    # One section per audience: a subgenre sits under the parent that is right for
+    # *that* shelf, so "Avontuur" appears under Spanning & Avontuur for jeugd and
+    # under Spanning & Thrillers for volwassenen — as the catalog actually files it.
+    audiences = [{"key": key, "label": label, "tops": len(trees[key]),
+                  "total": sum(1 + len(g["children"]) for g in trees[key])}
+                 for key, label in AUDIENCES if trees[key]]
+    keys = [a["key"] for a in audiences]
+    publiek = publiek if publiek in keys else (keys[0] if keys else "")
+    shown = next((a for a in audiences if a["key"] == publiek), None)
     return _templates.TemplateResponse(request, "genres.html", {
-        "genres": genres, "total": len(index), "tops": len(genres),
+        "audiences": audiences, "publiek": publiek, "shown": shown,
+        "genres": trees.get(publiek, []), "total": len(index),
         "breadcrumbs": _breadcrumbs(request, ("Genres", "")),
         "meta_description": f"Alle {_nlnum(len(index))} genres in de online "
-                            f"Bibliotheek — van thrillers tot filosofie, met het "
-                            f"aantal e-books en luisterboeken per genre."})
+                            f"Bibliotheek, apart voor volwassenen en jeugd — met "
+                            f"het aantal e-books en luisterboeken per genre."})
 
 
 @app.get("/genre/{slug}", response_class=HTMLResponse)

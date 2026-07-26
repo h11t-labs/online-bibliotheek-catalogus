@@ -524,7 +524,7 @@ def series_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def genre_books(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """``(genre name, parent name, book ppn)`` per genre link, editions collapsed.
+    """``(genre, parent, ppn, audience)`` per genre link, editions collapsed.
 
     The web layer groups these by slug and counts *distinct* ppns: two spellings
     of one genre routinely share books, so summing their separate counts
@@ -532,10 +532,14 @@ def genre_books(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
     The parent lives on the link, not on the genre, because jeugd and volwassenen
     reuse the same genre names under different parents (see
-    :func:`obc.db.set_book_genre_parents`) — so a genre's parent here is whichever
-    one most of its books resolve to.
+    :func:`obc.db.set_book_genre_parents`): 67 of 213 subgenres sit under a
+    different parent per audience — "Avontuur" under "Spanning & Avontuur" for
+    jeugd and under "Spanning & Thrillers" for volwassenen. The audience comes
+    along so the web layer can build one tree per audience instead of flattening
+    the two into a single wrong one.
     """
-    sql = ("SELECT g.name AS name, p.name AS parent, bg.book_ppn AS ppn "
+    sql = ("SELECT g.name AS name, p.name AS parent, bg.book_ppn AS ppn, "
+           "       lower(COALESCE(b.audience, '')) AS audience "
            "FROM genres g JOIN book_genres bg ON bg.genre_id = g.id "
            "LEFT JOIN genres p ON p.id = bg.parent_id "
            f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)}")
@@ -545,7 +549,8 @@ def genre_books(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         if "parent_id" not in str(exc):
             raise
         return conn.execute(
-            "SELECT g.name AS name, NULL AS parent, bg.book_ppn AS ppn FROM genres g "
+            "SELECT g.name AS name, NULL AS parent, bg.book_ppn AS ppn, "
+            "       lower(COALESCE(b.audience, '')) AS audience FROM genres g "
             "JOIN book_genres bg ON bg.genre_id = g.id "
             f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)}"
         ).fetchall()

@@ -813,6 +813,9 @@ def _catalog_with_genre_parents(tmp_path):
                      (ppn, ids[sub]))
     conn.execute("UPDATE book_genres SET parent_id = ? WHERE genre_id = ?",
                  (ids[top], ids[sub]))
+    # one jeugd title, so the hub has two audiences to switch between — the live
+    # catalog files 5.762 books that way and gives them their own taxonomy
+    conn.execute("UPDATE books SET audience = 'Jeugd' WHERE ppn = '005'")
     conn.commit()
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")   # so mode=ro readers see it
     conn.close()
@@ -840,7 +843,14 @@ def test_genre_hierarchy(tmp_path, monkeypatch):
     # the hub is headed by top genres, with their children beneath them
     assert 'href="/genre/spanning-thrillers"' in hub
     assert hub.index("/genre/spanning-thrillers") < hub.index("/genre/thrillers")
-    assert "hoofdgenres" in hub
+    # jeugd and volwassenen are separate taxonomies, switched rather than stacked
+    assert 'class="audbar"' in hub
+    assert 'href="/genres?publiek=jeugd"' in hub
+    jeugd = client.get("/genres?publiek=jeugd").text
+    assert jeugd != hub and 'class="on"' in jeugd
+    # an unknown audience falls back instead of 404ing, and the canonical stays clean
+    assert client.get("/genres?publiek=onzin").status_code == 200
+    assert '<link rel="canonical" href="http://testserver/genres">' in jeugd
 
     child = client.get("/genre/thrillers").text
     assert 'href="/genre/spanning-thrillers"' in child       # a way back up
