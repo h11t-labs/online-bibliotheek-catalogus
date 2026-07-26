@@ -146,11 +146,32 @@ def test_site_name_signals_on_home(client):
 
 
 def test_website_jsonld_only_on_bare_home(client):
-    # the filtered/paged variants are noindex; marking them up as "the site" too
-    # would hand Search competing copies of the same entity
-    for path in ("/?q=de", "/?format=ebook", "/?page=2", "/over", "/book/001"):
+    # the ?-carrying variants are noindex and robots-disallowed; marking them up as
+    # "the site" too would hand Search competing copies of the same entity.
+    # ?sort= and ?view= carry no chips and no query text, so they'd slip through a
+    # filters-only check — the rule keys off the query string itself.
+    for path in ("/?q=de", "/?format=ebook", "/?page=2", "/?sort=title",
+                 "/?view=list", "/?per_page=48", "/over", "/book/001"):
         assert not [d for d in _jsonld(client.get(path).text)
                     if d.get("@type") == "WebSite"], path
+
+
+def test_author_pages_survive_a_slash_in_the_name(client):
+    # two catalog authors carry a slash ("Elizabeth August/Dreamshield"); with a
+    # plain {name} route their page 404s, so both the book-page link and the
+    # breadcrumb item URL would point at a dead URL
+    # our handler answers (route matched) rather than FastAPI's routing 404
+    for path in ("/author/Elizabeth August/Dreamshield",
+                 "/author/Elizabeth%20August%2FDreamshield"):
+        r = client.get(path)
+        assert r.status_code == 404 and "Auteur niet gevonden" in r.text, path
+    # every breadcrumb item URL must resolve — a trail into a 404 is worse than none
+    body = client.get("/book/001").text
+    crumbs = [d for d in _jsonld(body) if d.get("@type") == "BreadcrumbList"][0]
+    for item in crumbs["itemListElement"]:
+        if "item" in item:
+            path = item["item"].replace("http://testserver", "")
+            assert client.get(path).status_code == 200, item["item"]
 
 
 def test_home_title_and_description_quote_the_catalog_size(client):

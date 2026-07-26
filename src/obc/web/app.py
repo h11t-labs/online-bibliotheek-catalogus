@@ -383,9 +383,10 @@ def search(
                       "url": _url_with(state, ereader="", page=1)})
 
     # WebSite structured data belongs on the home page only, and only on the bare
-    # browse: the filtered/paged variants are noindex, so marking them up as "the
-    # site" would just hand Search conflicting copies.
-    is_home = not (q or chips) and page == 1
+    # browse: every ?-carrying variant is noindex and robots-disallowed, so marking
+    # those up as "the site" too would just hand Search conflicting copies. Matches
+    # the rule the cache middleware already uses for the home page.
+    is_home = not (q or chips) and page == 1 and not request.url.query
     return _templates.TemplateResponse(request, "search.html", {
         "books": rows, "total": total, "total_indexed": total_indexed, "q": q,
         "total_rounded": _rounded(total_indexed),
@@ -517,7 +518,11 @@ def sitemap_books(request: Request, n: int, conn: sqlite3.Connection = Depends(g
     return _sitemap(_origin(request), [f"/book/{r['ppn']}" for r in rows])
 
 
-@app.get("/author/{name}", response_class=HTMLResponse)
+# ``:path`` because two catalog authors carry a slash in their name ("Elizabeth
+# August/Dreamshield"). With a plain ``{name}`` their page 404s under either
+# spelling — both the link on the book page and the breadcrumb item URL added
+# here would have pointed at a dead URL.
+@app.get("/author/{name:path}", response_class=HTMLResponse)
 def author_page(request: Request, name: str, conn: sqlite3.Connection = Depends(get_conn)):
     rows = queries.author_books(conn, name)
     if not rows:
