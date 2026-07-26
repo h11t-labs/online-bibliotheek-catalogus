@@ -673,3 +673,52 @@ def test_connect_ro_usable_across_threads(catalog_db):
 
     assert "err" not in out, f"cross-thread use raised: {out.get('err')!r}"
     assert out["n"] > 0
+
+
+def test_404_serves_the_branded_page_for_every_kind_of_miss(client):
+    # Each dead URL gets the full site shell (header search, nav, footer) with copy
+    # that names what was missed — not a bare <h1> and not FastAPI's JSON detail.
+    cases = (("/deze-pagina-bestaat-niet", "Deze pagina bestaat niet"),
+             ("/book/zzznope", "Dit boek staat niet in de catalogus"),
+             ("/author/zzz-niemand", "Auteur niet gevonden"),
+             ("/series/zzz-geen-reeks", "Reeks niet gevonden"),
+             ("/list/zzznope", "Lijst niet gevonden"),
+             ("/authors/zzz", "Geen auteurs onder deze letter"))
+    for path, head in cases:
+        r = client.get(path)
+        assert r.status_code == 404, path
+        assert "text/html" in r.headers["content-type"], path
+        assert head in r.text, path
+        assert 'class="search-trigger' in r.text and "<footer>" in r.text, path
+        # an error page is worth crawling for its links, never worth indexing
+        assert '<meta name="robots" content="noindex,follow">' in r.text, path
+        assert "cache-control" not in r.headers, path
+
+
+def test_404_suggests_near_matches_and_seeds_the_search(client):
+    # A dead /series/ URL whose words point at a real author: the page offers the
+    # author page and hands the words to the search box.
+    body = client.get("/series/anna-vrij").text
+    assert 'value="anna vrij"' in body
+    assert 'href="/author/anna-vrij"' in body
+
+
+def test_404_skips_suggestions_for_scanner_paths(client):
+    # Random probes (/wp-login.php and friends) hold no words worth a search, so
+    # they neither prefill the box nor cost an FTS query.
+    body = client.get("/wp-login.php").text
+    assert 'value=""' in body and "Bedoelde je" not in body
+
+
+def test_404_offers_matching_genres(client, monkeypatch):
+    # The fixture catalog carries no genres, so the suggester is stubbed: what is
+    # asserted here is the shape of the link a genre match produces — a browse
+    # filter (genres have no page of their own), with the name safely encoded.
+    from obc.web import app as appmod
+
+    monkeypatch.setattr(appmod.queries, "suggest", lambda *a, **k: {
+        "title_rows": [], "authors": [], "publishers": [], "languages": [],
+        "lists": [], "genres": ["Spanning & Thrillers"]})
+    body = client.get("/list/thriller").text
+    assert 'href="/?genre=Spanning%20%26%20Thrillers"' in body
+    assert "Spanning &amp; Thrillers" in body
