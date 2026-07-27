@@ -488,6 +488,35 @@ def ebooks_page(request, conn=Depends(get_conn)):
    `"no such table: works_fts"` (keep the `books` entries — harmless, and they
    cover a pre-rename DB during the window).
 7. `/stats` context unchanged; data via updated `web_stats`.
+8. **URL migration — both spaces, one canonical** (owner decision, confirmed):
+   - Canonical book URL: **`/boek/{slug}--{work_id}`**, where
+     `slug = slugify(works.title)` (our own `textnorm.slugify`, **not** the
+     library's edition slug — library slugs can themselves end in `--`, ours
+     never contain a double hyphen, so `--` is an unambiguous separator; an
+     empty slug — non-Latin title — gives `/boek/{work_id}`).
+   - New Jinja global `book_path(row) -> str` (works rows and any row aliasing
+     `work_id` + `title`); **every** internal book href in the templates named
+     above uses it — read the earlier `/book/{{ b['work_id'] }}` bullets as
+     `{{ book_path(b) }}` (+ `#e-book` / `#luisterboek` anchors where named).
+   - Route `GET /boek/{rest:path}`: split on the last `--` (no `--` → the whole
+     segment is the id); unknown id → `_not_found(request, "book")`; a non-
+     representative edition id or a wrong/stale slug → **301 to the canonical
+     path**; exact match → render.
+   - `GET /book/{ppn}` becomes redirect-only: resolve edition→work and 301 to
+     `book_path`; unknown → 404 as today. Keep the route forever (68k indexed
+     URLs point at it).
+   - Sitemaps (`sitemap_books`), JSON-LD `url`, breadcrumbs, OG url: canonical
+     paths. Add `"/boek/"` to `_CACHE_PREFIXES` (keep `"/book/"` — redirects are
+     cacheable too).
+   - `/suggest` JSON: each title gains `"url"` (canonical path); the dropdown JS
+     in `base.html` uses `t.url` for the row click and `t.url + '#e-book'` /
+     `'#luisterboek'` for the per-format buttons instead of composing
+     `/book/{ppn}` — otherwise every dropdown click eats a 301 and the format
+     anchor would survive only by luck.
+   - Tests: `/book/001` → 301 `/boek/de-ontdekking--001`; `/book/002` → same
+     target; `/boek/foute-slug--001` → 301 canonical; `/boek/001` → 301
+     canonical; canonical renders 200 with both edition blocks;
+     `/sitemap-books-1.xml` lists only `/boek/…` URLs.
 
 **`src/obc/web/scheduler.py`:** in `_default_cmds()`, before building `cmds`:
 
@@ -669,9 +698,10 @@ once and never equals the source" (structurally guaranteed; keep the assertion).
 1. `grep -rn "primary_edition\|formats_map\|editions_map\|book_genres\|book_authors\|book_lists\|book_similar\|books_fts\|FROM books\b" src/` →
    only hits allowed: the `load_prior_ereader` books-fallback and the
    scheduler/bootstrap compatibility strings.
-2. Every `/book/…` href in templates points at a `work_id` (or an edition anchor
-   `#e-book`/`#luisterboek` on the work URL). No template reads a work-level fact
-   from an edition row.
+2. Every internal book link in templates and JSON goes through `book_path()`
+   (canonical `/boek/{slug}--{work_id}`, optionally with an `#e-book` /
+   `#luisterboek` anchor); `grep -rn '"/book/' src/obc/web/templates/` returns
+   nothing. No template reads a work-level fact from an edition row.
 3. `queries.py` has **no** `(title, author)` string-matching join left.
 4. The suggest JSON contract (`titles[].editions`) is byte-shape-identical to
    before (dropdown JS untouched).
