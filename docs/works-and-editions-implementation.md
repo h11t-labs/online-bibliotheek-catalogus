@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS works (
     author         TEXT,                -- representative's display string
     summary        TEXT,                -- longest non-empty across editions
     cover_url      TEXT,                -- representative's
+    slug           TEXT,                -- '{title-slug}--{author-slug}', see step 4.8
     language       TEXT,                -- rep's, else any edition's (key ⇒ consistent)
     publisher      TEXT,                -- rep's (editions keep their own)
     year           INTEGER,             -- MIN(NULLIF(year,0)) across editions
@@ -489,34 +490,45 @@ def ebooks_page(request, conn=Depends(get_conn)):
    cover a pre-rename DB during the window).
 7. `/stats` context unchanged; data via updated `web_stats`.
 8. **URL migration — both spaces, one canonical** (owner decision, confirmed):
-   - Canonical book URL: **`/boek/{slug}--{work_id}`**, where
-     `slug = slugify(works.title)` (our own `textnorm.slugify`, **not** the
-     library's edition slug — library slugs can themselves end in `--`, ours
-     never contain a double hyphen, so `--` is an unambiguous separator; an
-     empty slug — non-Latin title — gives `/boek/{work_id}`).
-   - New Jinja global `book_path(row) -> str` (works rows and any row aliasing
-     `work_id` + `title`); **every** internal book href in the templates named
+   - Canonical book URL: **`/boek/{title-slug}--{author-slug}--{work_id}`**,
+     e.g. `/boek/de-ontdekking--anna-vrij--001`. Built from our own
+     `textnorm.slugify`, **not** the library's edition slug — library slugs can
+     themselves end in `--`, ours never contain a double hyphen, so `--` is an
+     unambiguous separator. Empty pieces drop *with their separator*: no author
+     → `/boek/de-ontdekking--001`; non-Latin title and author → `/boek/{id}`.
+   - The slug is **stored**: `works.slug TEXT`, stamped by a small post-pass
+     `_stamp_work_slugs(cur)` in `db.py` right after `_build_works` (one SELECT
+     of `(work_id, title, first author)` — first author via
+     `work_authors ORDER BY position LIMIT 1`, *not* by splitting the display
+     string, which can contain commas inside a name — then one `executemany`
+     UPDATE). Title part capped at 60 chars, author part at 40, both cut on a
+     dash boundary; the cap may change later without breaking anything, because
+     a stale slug 301s (the id is the truth).
+   - New Jinja global `book_path(row) -> str` reading `row['slug']` +
+     `row['work_id']`; **every** internal book href in the templates named
      above uses it — read the earlier `/book/{{ b['work_id'] }}` bullets as
      `{{ book_path(b) }}` (+ `#e-book` / `#luisterboek` anchors where named).
-   - Route `GET /boek/{rest:path}`: split on the last `--` (no `--` → the whole
-     segment is the id); unknown id → `_not_found(request, "book")`; a non-
-     representative edition id or a wrong/stale slug → **301 to the canonical
-     path**; exact match → render.
+     Queries that feed book links but don't `SELECT w.*` (`suggest`,
+     `similar_books`, `list_items`) must include `w.slug`.
+   - Route `GET /boek/{rest:path}`: the id is everything after the **last**
+     `--` (no `--` → the whole segment is the id); unknown id →
+     `_not_found(request, "book")`; a non-representative edition id or a
+     wrong/stale slug → **301 to the canonical path**; exact match → render.
    - `GET /book/{ppn}` becomes redirect-only: resolve edition→work and 301 to
      `book_path`; unknown → 404 as today. Keep the route forever (68k indexed
      URLs point at it).
-   - Sitemaps (`sitemap_books`), JSON-LD `url`, breadcrumbs, OG url: canonical
-     paths. Add `"/boek/"` to `_CACHE_PREFIXES` (keep `"/book/"` — redirects are
-     cacheable too).
+   - Sitemaps (`sitemap_books` selects `work_id, slug`), JSON-LD `url`,
+     breadcrumbs, OG url: canonical paths. Add `"/boek/"` to `_CACHE_PREFIXES`
+     (keep `"/book/"` — redirects are cacheable too).
    - `/suggest` JSON: each title gains `"url"` (canonical path); the dropdown JS
      in `base.html` uses `t.url` for the row click and `t.url + '#e-book'` /
      `'#luisterboek'` for the per-format buttons instead of composing
      `/book/{ppn}` — otherwise every dropdown click eats a 301 and the format
      anchor would survive only by luck.
-   - Tests: `/book/001` → 301 `/boek/de-ontdekking--001`; `/book/002` → same
-     target; `/boek/foute-slug--001` → 301 canonical; `/boek/001` → 301
-     canonical; canonical renders 200 with both edition blocks;
-     `/sitemap-books-1.xml` lists only `/boek/…` URLs.
+   - Tests: `/book/001` and `/book/002` → 301 `/boek/de-ontdekking--anna-vrij--001`;
+     `/boek/foute-slug--001` → 301 canonical; `/boek/001` → 301 canonical;
+     canonical renders 200 with both edition blocks; a work without authors gets
+     a title-only slug; `/sitemap-books-1.xml` lists only `/boek/…` URLs.
 
 **`src/obc/web/scheduler.py`:** in `_default_cmds()`, before building `cmds`:
 

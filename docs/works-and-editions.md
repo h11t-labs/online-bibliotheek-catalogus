@@ -308,11 +308,14 @@ Cheap to build and cheap to run:
 ## 7. Web / UI / SEO
 
 - **One URL per book.** Decided (owner): the canonical URL moves to
-  `/boek/{slug}--{work_id}` in the same PR — since a chunk of the URL space is
-  moving anyway, this is the one cheap moment to get a Dutch, titled path (one
-  re-index event instead of two). Every old `/book/{ppn}` URL — both editions —
-  keeps working forever via a 301 to the canonical work URL, and a stale slug
-  301s to the current one (the id is the truth, the slug is cosmetic).
+  `/boek/{title}--{author}--{work_id}` in the same PR — since a chunk of the URL
+  space is moving anyway, this is the one cheap moment to get a Dutch, titled
+  path (one re-index event instead of two). The author is in the slug because
+  titles collide constantly while title+author barely does, and because
+  "titel auteur" is exactly the query these pages should rank for. Every old
+  `/book/{ppn}` URL — both editions — keeps working forever via a 301 to the
+  canonical work URL, and a stale slug 301s to the current one (the id is the
+  truth, the slug is cosmetic).
   `sitemap-books-*.xml` lists canonical work URLs only — at least ~12k fewer URLs
   to crawl (§2.4), all of them distinct pages.
 - **The book page answers the actual complaint.** Shared facts once (title,
