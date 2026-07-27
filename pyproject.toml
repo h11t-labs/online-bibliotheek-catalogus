@@ -87,4 +87,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E402"]              # fixtures imported after warning filters
-"src/obc/web/app.py" = ["B008"]   # FastAPI Query(...) in defaults is the idiom
+# FastAPI Query(...) / Depends(...) in defaults is the idiom, in every module
+# that declares routes.
+"src/obc/web/app.py" = ["B008"]
+"src/obc/web/seo.py" = ["B008"]

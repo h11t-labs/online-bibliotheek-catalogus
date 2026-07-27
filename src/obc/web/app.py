@@ -9,16 +9,19 @@ to :mod:`obc.web.queries`, then build presentation bits (cover sizing, filter
 chips, URLs) and render a template. Search uses FTS5 ``bm25`` ranking (weighted
 toward title/author) combined with WHERE filters; an empty query falls back to a
 plain browse ordered by the chosen sort.
+
+Three modules sit under this one and none of them import it back:
+:mod:`obc.web.queries` (every SQL statement), :mod:`obc.web.indexes` (the
+connection, and the indexes derived once per catalog rebuild) and
+:mod:`obc.web.seo` (canonical URLs, breadcrumbs, robots.txt, sitemaps).
 """
 
 from __future__ import annotations
 
-import collections
 import datetime
 import os
 import re
 import sqlite3
-import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote, unquote, urlencode
@@ -28,22 +31,13 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.routing import APIRoute
 from fastapi.templating import Jinja2Templates
 
-from .. import db
-from ..textnorm import language_code, slugify, surname_key
-from . import queries
+from ..textnorm import language_code, slugify
+from . import indexes, queries, seo
 from .bio import author_bio
+from .indexes import AUDIENCES, AUTHOR_SORTS, BY_SURNAME, get_conn
 
-DB_PATH = Path(os.environ.get("OBC_DB", db.DEFAULT_DB))
 PAGE_SIZE = 24
 PER_PAGE_OPTIONS = (12, 24, 48, 96)  # selectable items-per-page (PAGE_SIZE is the default)
-# Absolute site origin for canonical/OG/sitemap URLs (e.g. https://…fly.dev). Empty
-# locally → those fall back to the request's own base URL.
-SITE_URL = os.environ.get("OBC_SITE_URL", "").rstrip("/")
-SITEMAP_PAGE = 45000  # book URLs per sitemap file (under the 50k/file limit)
-# The brand Google should print above the result instead of the bare domain. It
-# is fed to Search through WebSite structured data and og:site_name — the two
-# strongest signals, see https://developers.google.com/search/docs/appearance/site-names
-SITE_NAME = "Online Bibliotheek Catalogus"
 
 _templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _STATIC = Path(__file__).parent / "static"
@@ -124,50 +118,22 @@ def _snippet(text: str, limit: int = 155) -> str:
     return head[:head.rfind(" ")].rstrip(" ,;:-–—") + "…" if " " in head else head + "…"
 
 
-def _author_path(name: str) -> str:
-    """The canonical URL path for an author: ``/author/lisbeth-imbo``.
-
-    A handful of names (Greek script, a stray "|" row) hold no Latin characters
-    and fold to nothing, so they have no slug and keep their encoded name. One
-    helper so links, breadcrumbs and sitemaps can never drift apart.
-    """
-    return f"/author/{slugify(name) or quote(name, safe='')}"
-
-
-def _series_path(name: str) -> str:
-    """Canonical URL path for a series, mirroring :func:`_author_path`."""
-    return f"/series/{slugify(name) or quote(name, safe='')}"
-
-
-def _genre_path(name: str) -> str:
-    """Canonical URL path for a genre, mirroring :func:`_author_path`."""
-    return f"/genre/{slugify(name) or quote(name, safe='')}"
-
-
 def _nlnum(n: int) -> str:
     """9803 -> '9.803' (Dutch thousands separator)."""
     return f"{n:,}".replace(",", ".")
 
 
-def _data_updated() -> float | None:
-    """Epoch seconds the catalog was last (re)built — the DB file's mtime."""
-    try:
-        return DB_PATH.stat().st_mtime
-    except OSError:
-        return None
-
-
 _templates.env.filters["coverw"] = _coverw
 _templates.env.filters["nldate"] = _nldate
-_templates.env.filters["author_path"] = _author_path
-_templates.env.filters["series_path"] = _series_path
-_templates.env.filters["genre_path"] = _genre_path
+_templates.env.filters["author_path"] = seo.author_path
+_templates.env.filters["series_path"] = seo.series_path
+_templates.env.filters["genre_path"] = seo.genre_path
 _templates.env.filters["nlnum"] = _nlnum
 _templates.env.globals["url_with"] = _url_with
 _templates.env.globals["url_without"] = _url_without
-_templates.env.globals["data_updated"] = _data_updated
-_templates.env.globals["site_url"] = SITE_URL
-_templates.env.globals["site_name"] = SITE_NAME
+_templates.env.globals["data_updated"] = indexes.data_updated
+_templates.env.globals["site_url"] = seo.SITE_URL
+_templates.env.globals["site_name"] = seo.SITE_NAME
 
 try:
     from importlib.metadata import version as _pkg_version
@@ -231,7 +197,7 @@ def _hostname(value: str) -> str:
 
 # Compared port-less on both sides: a SITE_URL carrying a port (local runs, a
 # staging origin) would otherwise match nothing and quietly disable the redirect.
-_CANONICAL_HOST = _hostname(SITE_URL) if SITE_URL else ""
+_CANONICAL_HOST = _hostname(seo.SITE_URL) if seo.SITE_URL else ""
 # Health checks and the cron machine reach the app over the private network under
 # the machine's own Host; those paths are never redirected.
 _NO_REDIRECT = ("/healthz", "/admin/")
@@ -245,18 +211,23 @@ def _is_alias(host: str) -> bool:
     return host == f"www.{_CANONICAL_HOST}" or host.endswith(".fly.dev")
 
 
+# One middleware, not two: each `@app.middleware("http")` wraps the whole app in
+# another BaseHTTPMiddleware, and that layer is not free — it runs the downstream
+# app in an anyio task group and streams the response back through a memory
+# stream, per request. The alias redirect and the response headers have nothing to
+# do with each other, but they do belong in the same pass.
 @app.middleware("http")
-async def _canonical_host(request: Request, call_next):
+async def _headers_and_canonical_host(request: Request, call_next):
+    # The alias 301 skips the routing pass but still gets the headers below — it is
+    # a response the site sends, and it used to get them by virtue of running in
+    # the inner of the two middlewares.
     if (_is_alias(request.headers.get("host", ""))
             and not request.url.path.startswith(_NO_REDIRECT)):
         query = f"?{request.url.query}" if request.url.query else ""
-        return RedirectResponse(SITE_URL + request.url.path + query, status_code=301)
-    return await call_next(request)
-
-
-@app.middleware("http")
-async def _response_headers(request: Request, call_next):
-    response = await call_next(request)
+        response: Response = RedirectResponse(
+            seo.SITE_URL + request.url.path + query, status_code=301)
+    else:
+        response = await call_next(request)
     # Security headers on every response (cheap, no per-user state).
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -266,23 +237,9 @@ async def _response_headers(request: Request, call_next):
         path = request.url.path
         if path == "/" and not request.url.query:
             response.headers["Cache-Control"] = "public, max-age=600"
-        elif any(path == p or path.startswith(p) for p in _CACHE_PREFIXES):
+        elif path.startswith(_CACHE_PREFIXES):
             response.headers["Cache-Control"] = "public, max-age=3600"
     return response
-
-
-def get_conn():
-    """Per-request read-only DB connection, always closed (FastAPI dependency).
-
-    Reads the module-global DB_PATH at call time (tests monkeypatch app.DB_PATH),
-    not captured at import. If the DB isn't there yet, connect_ro raises
-    OperationalError here and the bootstrap-503 handler renders the friendly page.
-    """
-    conn = queries.connect_ro(DB_PATH)
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 
 @app.exception_handler(sqlite3.OperationalError)
@@ -367,7 +324,7 @@ def _near_matches(term: str, limit: int = 6, titles: bool = True) -> list[dict]:
     if not term:
         return []
     try:
-        conn = queries.connect_ro(DB_PATH)
+        conn = queries.connect_ro(indexes.DB_PATH)
     except sqlite3.Error:
         return []
     try:
@@ -380,7 +337,7 @@ def _near_matches(term: str, limit: int = 6, titles: bool = True) -> list[dict]:
         return []
     # Authors and lists first: they are whole destinations, while a title row is
     # one book out of many that matched the same words.
-    out = [{"kind": "author", "icon": "author", "label": name, "url": _author_path(name)}
+    out = [{"kind": "author", "icon": "author", "label": name, "url": seo.author_path(name)}
            for name in data["authors"]]
     out += [{"kind": "list", "icon": "list", "label": lst["name"],
              "url": f"/list/{lst['slug']}"} for lst in data["lists"]]
@@ -462,236 +419,6 @@ def favicon_ico():
     return FileResponse(_STATIC / "favicon.svg", media_type="image/svg+xml")
 
 
-# Facet values are identical for every request, so cache them and only recompute
-# when the database file changes (i.e. after a normalize).
-# Each of these is rebuilt from scratch when the catalog file changes, and the
-# genre one walks 157k rows. Without a lock every concurrent cold request builds
-# its own copy: eight simultaneous hits on /genres took 23s each and pushed the
-# process to 606 MB — on a 512 MB machine. The lock makes one thread build while
-# the others wait for its result.
-_facets_cache: dict = {"key": None, "data": None}
-_facets_cache_lock = threading.Lock()
-
-
-def _facets(conn: sqlite3.Connection) -> dict:
-    try:
-        key = DB_PATH.stat().st_mtime_ns
-    except OSError:
-        key = None
-    if _facets_cache["key"] == key and _facets_cache["data"] is not None:
-        return _facets_cache["data"]
-    with _facets_cache_lock:
-        if _facets_cache["key"] == key and _facets_cache["data"] is not None:
-            return _facets_cache["data"]
-        data = queries.compute_facets(conn)
-        _facets_cache.update(key=key, data=data)
-        return data
-
-
-# The A-Z author index is ~10k rows and identical for every visitor, so it is built
-# once per catalog rebuild — same DB-mtime trick as the facet cache above.
-_authors_cache: dict = {"key": None, "data": None}
-_authors_cache_lock = threading.Lock()
-_OTHER_LETTER = "overig"  # names that don't start with a plain A-Z letter
-
-
-# Two ways to alphabetise a name index, both defensible: readers hunting a known
-# writer look under the surname, readers browsing recognise the whole name.
-BY_SURNAME, BY_FIRST = "achternaam", "voornaam"
-AUTHOR_SORTS = (BY_SURNAME, BY_FIRST)
-
-
-def _author_letter(name: str, by: str = BY_SURNAME) -> str:
-    """Bucket an author under a letter, or the catch-all."""
-    key = surname_key(name) if by == BY_SURNAME else slugify(name)
-    first = key[:1].upper()
-    return first if "A" <= first <= "Z" else _OTHER_LETTER
-
-
-def _author_index(conn: sqlite3.Connection,
-                  by: str = BY_SURNAME) -> dict[str, list[dict]]:
-    """``{"A": [{name, titles}…], …, "overig": […]}`` — every author, bucketed.
-
-    Spelling variants are folded together first, because that is what the slug URL
-    does: listing "Ad Van Schaik" and "Ad van Schaik" as two entries pointing at
-    the same page would be a lie the hub tells about itself.
-
-    Every author is listed, including the 13k with a single title. The
-    MIN_INDEXABLE_TITLES rule is about what the *sitemap* promotes, not about what
-    a reader is allowed to find — a browsable index that silently omits more than
-    half the authors is simply broken.
-    """
-    try:
-        key = DB_PATH.stat().st_mtime_ns
-    except OSError:
-        key = None
-    cached = _authors_cache["data"]
-    if _authors_cache["key"] == key and cached is not None and by in cached:
-        return cached[by]
-    with _authors_cache_lock:
-        if _authors_cache["key"] != key or _authors_cache["data"] is None:
-            _authors_cache.update(key=key, data={})
-        cached = _authors_cache["data"]
-        if by in cached:
-            return cached[by]
-        counts = queries.author_title_counts(conn)
-        merged: dict[str, dict] = {}
-        for row in queries.author_index(conn):
-            # A name with no Latin characters at all folds to "" and has no slug, so it
-            # cannot be a hub or sitemap entry — and merging on that empty key would
-            # fuse unrelated authors into one. Those keep their own encoded-name page.
-            if not row["fold"]:
-                continue
-            # rows arrive title-count descending within a fold, so the first spelling
-            # seen for a key is the one that carries the most titles
-            merged.setdefault(row["fold"],
-                              {"name": row["name"], "titles": counts.get(row["fold"], 0)})
-        sort_key = surname_key if by == BY_SURNAME else slugify
-        buckets: dict[str, list[dict]] = {}
-        for entry in merged.values():
-            buckets.setdefault(_author_letter(entry["name"], by), []).append(entry)
-        # the chosen key first, then the whole name, so a letter page reads as an index
-        for rows in buckets.values():
-            rows.sort(key=lambda e: (sort_key(e["name"]), slugify(e["name"])))
-        cached[by] = buckets
-        return buckets
-
-
-# Series get the same slug treatment as authors, but `books.series` is free text
-# with no folded column to look up, so the slug -> spellings map is built once per
-# catalog rebuild. 18 slugs cover more than one spelling ("De Stad" / "De stad");
-# those share a page rather than splitting the shelf in two.
-_series_cache: dict = {"key": None, "data": None}
-_series_cache_lock = threading.Lock()
-
-
-def _series_index(conn: sqlite3.Connection) -> dict[str, dict]:
-    """``{slug: {"name": display, "names": (spellings…), "titles": n}}``."""
-    try:
-        key = DB_PATH.stat().st_mtime_ns
-    except OSError:
-        key = None
-    if _series_cache["key"] == key and _series_cache["data"] is not None:
-        return _series_cache["data"]
-    with _series_cache_lock:
-        if _series_cache["key"] == key and _series_cache["data"] is not None:
-            return _series_cache["data"]
-        merged: dict[str, dict] = {}
-        for row in queries.series_index(conn):
-            slug = slugify(row["name"])
-            if not slug:
-                continue
-            # rows arrive part-count descending, so the first spelling wins the heading
-            entry = merged.setdefault(slug, {"name": row["name"], "names": [], "titles": 0})
-            entry["names"].append(row["name"])
-            entry["titles"] += row["titles"]
-        _series_cache.update(key=key, data=merged)
-        return merged
-
-
-def _letter_order(index: dict) -> list[str]:
-    """A-Z first, the catch-all last."""
-    return sorted(k for k in index if k != _OTHER_LETTER) + \
-        ([_OTHER_LETTER] if _OTHER_LETTER in index else [])
-
-
-# The catalog carries two taxonomies, not one: jeugd and volwassenen reuse genre
-# names under different parents, and 67 of 213 subgenres sit somewhere different
-# depending on which shelf you are standing at. Flattening them picked a winner
-# and misfiled the loser, so the hub renders a tree per audience while the genre
-# page itself stays a single URL covering both.
-AUDIENCES = (("volwassenen", "Volwassenen"), ("jeugd", "Jeugd"))
-_genres_cache: dict = {"key": None, "data": None}
-_genres_cache_lock = threading.Lock()
-
-
-def _genre_data(conn: sqlite3.Connection) -> dict:
-    """``{"flat": {slug: entry}, "trees": {audience: [top entries]}}``, cached.
-
-    ``flat`` backs the genre page and the sitemap — one entry per slug, counted
-    over distinct books because spelling variants share them (the catalog holds
-    "Biografieën" twice, precomposed and with a combining diaeresis). ``trees`` is
-    the hub's view: per audience, top genres carrying their own children.
-    """
-    try:
-        key = DB_PATH.stat().st_mtime_ns
-    except OSError:
-        key = None
-    if _genres_cache["key"] == key and _genres_cache["data"] is not None:
-        return _genres_cache["data"]
-    with _genres_cache_lock:
-        if _genres_cache["key"] == key and _genres_cache["data"] is not None:
-            return _genres_cache["data"]
-
-        flat: dict[str, dict] = {}
-        per_aud: dict[str, dict[str, dict]] = {a: {} for a, _ in AUDIENCES}
-        for row in queries.genre_books(conn):
-            slug = slugify(row["name"])
-            if not slug:
-                continue
-            entry = flat.setdefault(slug, {"name": row["name"], "names": [], "books": set(),
-                                           "parents": collections.Counter()})
-            if row["name"] not in entry["names"]:
-                entry["names"].append(row["name"])
-            entry["books"].add(row["ppn"])
-            pslug = slugify(row["parent"] or "")
-            entry["parents"][pslug] += 1
-            # 2.567 books carry no audience, and a catalog built without the detail
-            # pass has none at all — those land on the default shelf rather than
-            # falling out of the hub entirely. No genre in the live catalog is
-            # reachable *only* that way, so this shifts counts, never visibility.
-            aud = per_aud[row["audience"] if row["audience"] in per_aud else AUDIENCES[0][0]]
-            a = aud.setdefault(slug, {"books": set(), "parents": collections.Counter()})
-            a["books"].add(row["ppn"])
-            a["parents"][pslug] += 1
-
-        for entry in flat.values():
-            parent = entry["parents"].most_common(1)[0][0]
-            entry["parent"] = parent if parent and parent != slugify(entry["name"]) else ""
-            entry["titles"] = len(entry.pop("books"))
-            entry["name"] = max(entry["names"], key=len)
-            del entry["parents"]
-        for slug, entry in flat.items():
-            entry["children"] = sorted(
-                (c for c, o in flat.items() if o["parent"] == slug),
-                key=lambda c: (-flat[c]["titles"], c))
-
-        trees: dict[str, list[dict]] = {}
-        for aud, _label in AUDIENCES:
-            rows = per_aud[aud]
-            parent_of, titles_of = {}, {}
-            for slug, a in rows.items():
-                # A tree may only state what its own audience files. Borrowing the
-                # catalog-wide parent when this audience names none put "Film" under
-                # Kunst & Cultuur for adults, where all three adult records carry no
-                # parent at all — a relationship the data never asserts. An explicit
-                # parent still outranks a bare "top level" *within* the audience.
-                named = [(pslug, n) for pslug, n in a["parents"].items()
-                         if pslug and pslug != slug and pslug in rows]
-                parent_of[slug] = max(named, key=lambda kv: kv[1])[0] if named else ""
-                titles_of[slug] = len(a["books"])
-            tops = []
-            for slug in rows:
-                if parent_of[slug]:
-                    continue
-                kids = sorted((c for c in rows if parent_of[c] == slug),
-                              key=lambda c: -titles_of[c])
-                tops.append({"name": flat[slug]["name"], "slug": slug,
-                             "titles": titles_of[slug],
-                             "children": [{"name": flat[c]["name"], "slug": c,
-                                           "titles": titles_of[c]} for c in kids]})
-            trees[aud] = sorted(tops, key=lambda g: (-g["titles"], g["name"].lower()))
-
-        data = {"flat": flat, "trees": trees}
-        _genres_cache.update(key=key, data=data)
-        return data
-
-
-def _genres(conn: sqlite3.Connection) -> dict[str, dict]:
-    """``{slug: {name, names, titles, parent, children}}`` across both audiences."""
-    return _genre_data(conn)["flat"]
-
-
 # How many covers a browse landing page shows. It is an entry point, not a
 # replacement for the search UI — the "filter in zoeken" link opens the rest.
 BROWSE_PREVIEW = 120
@@ -717,7 +444,7 @@ def _browse_page(request: Request, conn: sqlite3.Connection, *, heading: str,
         "formats_map": queries.formats_map(conn, result.rows),
         "lists_map": queries.lists_map(conn, result.rows),
         "parent": parent, "children": children or [],
-        "breadcrumbs": _breadcrumbs(
+        "breadcrumbs": seo.breadcrumbs(
             request, *([crumb] if crumb else []),
             *([(parent["name"], f"/genre/{parent['slug']}")] if parent else []),
             (heading, "")),
@@ -768,14 +495,14 @@ def search(
 
     result = queries.search(conn, filters, page, page_size)
     rows = result.rows
-    facets = _facets(conn)
+    facets = indexes.facets(conn)
     editions_map = queries.editions_map(conn, rows)
     lists_map = queries.lists_map(conn, rows)
     total_indexed = queries.total_books(conn)
 
     total = result.total
     pages = max(1, (total + page_size - 1) // page_size)
-    list_names = {lst["slug"]: lst["name"] for lst in facets["lists"]}
+    list_labels = {lst["slug"]: lst["name"] for lst in facets["lists"]}
 
     state = {"q": q, "format": format_, "language": language, "genre": genre,
              "publisher": publisher, "author": author, "list": lists_,
@@ -797,7 +524,7 @@ def search(
             chips.append({"label": v, "icon": icon,
                           "url": _url_without(state, key, v)})
     for slug in state["list"]:
-        chips.append({"label": list_names.get(slug, slug), "icon": "list",
+        chips.append({"label": list_labels.get(slug, slug), "icon": "list",
                       "url": _url_without(state, "list", slug)})
     if yf is not None:
         chips.append({"label": f"vanaf {yf}", "icon": "cal",
@@ -822,10 +549,10 @@ def search(
             "Bibliotheek. Filter op genre, auteur, taal en jaar, en zie meteen of een "
             "titel op je e-reader past."),
         "jsonld": ({"@context": "https://schema.org", "@type": "WebSite",
-                    "name": SITE_NAME,
+                    "name": seo.SITE_NAME,
                     "alternateName": ["Online Bibliotheek Zoekgids",
                                       "Catalogus online Bibliotheek"],
-                    "url": _origin(request) + "/",
+                    "url": seo.origin(request) + "/",
                     "inLanguage": "nl-NL"} if is_home else None),
         "format": format_, "language": language, "genre": genre,
         "publisher": publisher, "author": author, "list": lists_, "ereader": ereader,
@@ -836,7 +563,7 @@ def search(
         "robots": "noindex,follow" if (q or chips) else "index,follow",
         "editions_map": editions_map, "lists_map": lists_map,
         "list_options": [lst["slug"] for lst in facets["lists"]],
-        "list_labels": {lst["slug"]: lst["name"] for lst in facets["lists"]},
+        "list_labels": list_labels,
     })
 
 
@@ -850,7 +577,7 @@ def series_page(request: Request, name: str, conn: sqlite3.Connection = Depends(
     Like the author pages, the encoded-name URLs keep working and redirect.
     """
     slug = slugify(name)
-    entry = _series_index(conn).get(slug)
+    entry = indexes.series(conn).get(slug)
     if entry:
         if name != slug:
             return RedirectResponse(f"/series/{slug}", status_code=301)
@@ -863,7 +590,7 @@ def series_page(request: Request, name: str, conn: sqlite3.Connection = Depends(
     formats_map = queries.formats_map(conn, rows)
     return _templates.TemplateResponse(request, "series.html", {
         "name": name, "books": rows, "total": len(rows), "formats_map": formats_map,
-        "breadcrumbs": _breadcrumbs(request, (f"Reeks {name}", "")),
+        "breadcrumbs": seo.breadcrumbs(request, (f"Reeks {name}", "")),
         "meta_description": f"Alle {len(rows)} delen van de reeks {name} in de online "
                             f"Bibliotheek — op volgorde, met e-book en luisterboek."})
 
@@ -872,14 +599,14 @@ def series_page(request: Request, name: str, conn: sqlite3.Connection = Depends(
 def stats_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     data = queries.web_stats(conn)
     return _templates.TemplateResponse(request, "stats.html", {
-        "s": data, "breadcrumbs": _breadcrumbs(request, ("Statistieken", ""))})
+        "s": data, "breadcrumbs": seo.breadcrumbs(request, ("Statistieken", ""))})
 
 
 @app.get("/about", response_class=HTMLResponse)
 def about(request: Request):
     """Static 'about' page — independent of the catalog DB so it always renders."""
     return _templates.TemplateResponse(request, "about.html", {
-        "breadcrumbs": _breadcrumbs(request, ("Over deze catalogus", ""))})
+        "breadcrumbs": seo.breadcrumbs(request, ("Over deze catalogus", ""))})
 
 
 # /over shipped in v1.1.2 and is in the live sitemap, so unlike the other URLs
@@ -892,130 +619,6 @@ def about_legacy():
     return RedirectResponse("/about", status_code=301)
 
 
-# --------------------------------------------------------------------------- #
-# SEO: robots.txt + (paginated) sitemap
-# --------------------------------------------------------------------------- #
-def _xml_escape(s: str) -> str:
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _origin(request: Request) -> str:
-    return SITE_URL or str(request.base_url).rstrip("/")
-
-
-def _breadcrumbs(request: Request, *trail: tuple[str, str]) -> dict:
-    """schema.org BreadcrumbList from ``(label, path)`` pairs, Home prepended.
-
-    Lets Search print a readable trail ("Home › Auteur › Titel") in place of the
-    raw URL. The final crumb is the page you're on, so it gets no ``item`` link
-    — pass an empty path for it.
-    """
-    base = _origin(request)
-    items = [{"@type": "ListItem", "position": 1, "name": "Home", "item": base + "/"}]
-    for pos, (label, path) in enumerate(trail, start=2):
-        crumb = {"@type": "ListItem", "position": pos, "name": label}
-        if path:
-            crumb["item"] = base + path
-        items.append(crumb)
-    return {"@context": "https://schema.org", "@type": "BreadcrumbList",
-            "itemListElement": items}
-
-
-def _w3c(ts: float | None) -> str:
-    """Epoch seconds as a W3C datetime for ``<lastmod>``; empty when unknown."""
-    if not ts:
-        return ""
-    return datetime.datetime.fromtimestamp(ts, datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _sitemap(base: str, paths: list[str], lastmod: str = "") -> Response:
-    """A urlset for ``paths``.
-
-    ``lastmod`` is opt-in per sitemap: search engines learn to ignore the hint
-    when it's wrong, and the catalog tracks no per-record change date — stamping
-    64k book URLs with "the day of the last rebuild" would be exactly that lie.
-    The pages that genuinely re-render on every rebuild do get one.
-    """
-    mod = f"<lastmod>{lastmod}</lastmod>" if lastmod else ""
-    locs = "".join(f"<url><loc>{_xml_escape(base + p)}</loc>{mod}</url>" for p in paths)
-    body = ('<?xml version="1.0" encoding="UTF-8"?>'
-            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-            f"{locs}</urlset>")
-    return Response(body, media_type="application/xml")
-
-
-@app.get("/robots.txt", include_in_schema=False)
-def robots_txt(request: Request):
-    lines = ["User-agent: *",
-             # Throttle bots — one small VM serving 68k pages. Google ignores
-             # Crawl-delay, but Bing honours it literally: at 10s a full pass over
-             # the catalog took more than a week, so most of it was never seen.
-             # Detail pages are public-cacheable for an hour, so 1s is affordable.
-             "Crawl-delay: 1",
-             "Disallow: /suggest", "Disallow: /facet", "Disallow: /admin/",
-             "Disallow: /*?",  # the infinite filtered-search URL space
-             f"Sitemap: {_origin(request)}/sitemap.xml"]
-    return Response("\n".join(lines) + "\n", media_type="text/plain")
-
-
-@app.get("/sitemap.xml", include_in_schema=False)
-def sitemap_index(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    total = queries.total_books(conn)
-    base = _origin(request)
-    pages = max(1, (total + SITEMAP_PAGE - 1) // SITEMAP_PAGE)
-    maps = [f"{base}/sitemap-static.xml", f"{base}/sitemap-browse.xml",
-            *[f"{base}/sitemap-books-{i}.xml" for i in range(1, pages + 1)]]
-    # Every child sitemap is regenerated from the catalog, so the rebuild time is
-    # an honest lastmod for the *files* even where it wouldn't be for their URLs.
-    mod = _w3c(_data_updated())
-    mod = f"<lastmod>{mod}</lastmod>" if mod else ""
-    locs = "".join(f"<sitemap><loc>{_xml_escape(m)}</loc>{mod}</sitemap>" for m in maps)
-    body = ('<?xml version="1.0" encoding="UTF-8"?>'
-            '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-            f"{locs}</sitemapindex>")
-    return Response(body, media_type="application/xml")
-
-
-@app.get("/sitemap-static.xml", include_in_schema=False)
-def sitemap_static(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    slugs = [r["slug"] for r in conn.execute("SELECT slug FROM lists ORDER BY slug")]
-    paths = ["/", "/about", "/lists", "/stats", *[f"/list/{s}" for s in slugs]]
-    # These really are rewritten by every rebuild (new titles, new list positions).
-    return _sitemap(_origin(request), paths, lastmod=_w3c(_data_updated()))
-
-
-@app.get("/sitemap-browse.xml", include_in_schema=False)
-def sitemap_browse(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    """The aggregation pages: the A-Z hub, author pages and series pages.
-
-    These answer the queries the catalog is actually searched with ("boeken van
-    X", "Y reeks op volgorde") and were in no sitemap at all. Only pages that
-    aggregate two or more titles are listed — see queries.MIN_INDEXABLE_TITLES.
-    """
-    index = _author_index(conn)
-    paths = ["/authors", "/genres"]
-    paths += [f"/authors/{letter.lower()}" for letter in _letter_order(index)]
-    # The hubs list everything; the sitemap only nominates pages that aggregate
-    # something, so single-title pages stay reachable without being advertised as
-    # destinations. Slugs, never encoded names: a sitemap full of URLs that
-    # immediately 301 wastes the crawl budget it exists to spend well.
-    paths += [_author_path(row["name"])
-              for letter in _letter_order(index) for row in index[letter]
-              if row["titles"] >= queries.MIN_INDEXABLE_TITLES]
-    paths += [f"/series/{slug}" for slug, entry in sorted(_series_index(conn).items())
-              if entry["titles"] >= queries.MIN_INDEXABLE_TITLES]
-    paths += [f"/genre/{slug}" for slug, entry in sorted(_genres(conn).items())
-              if entry["titles"] >= queries.MIN_INDEXABLE_TITLES]
-    return _sitemap(_origin(request), paths)
-
-
-@app.get("/sitemap-books-{n}.xml", include_in_schema=False)
-def sitemap_books(request: Request, n: int, conn: sqlite3.Connection = Depends(get_conn)):
-    rows = conn.execute("SELECT ppn FROM books ORDER BY ppn LIMIT ? OFFSET ?",
-                        (SITEMAP_PAGE, (max(n, 1) - 1) * SITEMAP_PAGE)).fetchall()
-    return _sitemap(_origin(request), [f"/book/{r['ppn']}" for r in rows])
-
-
 @app.get("/genres", response_class=HTMLResponse)
 def genres_index(request: Request, publiek: str = AUDIENCES[0][0],
                  conn: sqlite3.Connection = Depends(get_conn)):
@@ -1026,7 +629,7 @@ def genres_index(request: Request, publiek: str = AUDIENCES[0][0],
     as the author hub's sort toggle: the clean path stays canonical, and the
     ?-variant is robots-disallowed, so it adds no crawlable duplicate.
     """
-    data = _genre_data(conn)
+    data = indexes.genre_data(conn)
     index, trees = data["flat"], data["trees"]
     # One section per audience: a subgenre sits under the parent that is right for
     # *that* shelf, so "Avontuur" appears under Spanning & Avontuur for jeugd and
@@ -1040,7 +643,7 @@ def genres_index(request: Request, publiek: str = AUDIENCES[0][0],
     return _templates.TemplateResponse(request, "genres.html", {
         "audiences": audiences, "publiek": publiek, "shown": shown,
         "genres": trees.get(publiek, []), "total": len(index),
-        "breadcrumbs": _breadcrumbs(request, ("Genres", "")),
+        "breadcrumbs": seo.breadcrumbs(request, ("Genres", "")),
         "meta_description": f"Alle {_nlnum(len(index))} genres in de online "
                             f"Bibliotheek, apart voor volwassenen en jeugd — met "
                             f"het aantal e-books en luisterboeken per genre."})
@@ -1049,12 +652,12 @@ def genres_index(request: Request, publiek: str = AUDIENCES[0][0],
 @app.get("/genre/{slug}", response_class=HTMLResponse)
 def genre_page(request: Request, slug: str,
                conn: sqlite3.Connection = Depends(get_conn)):
-    entry = _genres(conn).get(slugify(slug))
+    entry = indexes.genres(conn).get(slugify(slug))
     if entry is None:
         return _not_found(request, "genre", _slug_words(slug))
     if slug != slugify(slug):   # one canonical spelling per genre
         return RedirectResponse(f"/genre/{slugify(slug)}", status_code=301)
-    index = _genres(conn)
+    index = indexes.genres(conn)
     name = entry["name"]
     parent = index.get(entry["parent"]) if entry["parent"] else None
     return _browse_page(
@@ -1069,8 +672,6 @@ def genre_page(request: Request, slug: str,
                   for c in entry["children"]])
 
 
-
-
 @app.get("/authors", response_class=HTMLResponse)
 def authors_index(request: Request, sort: str = BY_SURNAME,
                   conn: sqlite3.Connection = Depends(get_conn)):
@@ -1081,8 +682,8 @@ def authors_index(request: Request, sort: str = BY_SURNAME,
     out of every sitemap.
     """
     sort = sort if sort in AUTHOR_SORTS else BY_SURNAME
-    index = _author_index(conn, sort)
-    letters = _letter_order(index)
+    index = indexes.authors_by_letter(conn, sort)
+    letters = indexes.letter_order(index)
     total = sum(len(rows) for rows in index.values())
     return _templates.TemplateResponse(request, "authors.html", {
         "letters": letters, "letter": "", "authors": [], "total": total, "sort": sort,
@@ -1095,7 +696,7 @@ def authors_index(request: Request, sort: str = BY_SURNAME,
 def authors_letter(request: Request, letter: str, sort: str = BY_SURNAME,
                    conn: sqlite3.Connection = Depends(get_conn)):
     sort = sort if sort in AUTHOR_SORTS else BY_SURNAME
-    index = _author_index(conn, sort)
+    index = indexes.authors_by_letter(conn, sort)
     key = letter.upper() if len(letter) == 1 else letter.lower()
     if key not in index:
         return _not_found(request, "letter")
@@ -1107,9 +708,9 @@ def authors_letter(request: Request, letter: str, sort: str = BY_SURNAME,
                                 (f"?sort={sort}" if sort != BY_SURNAME else ""),
                                 status_code=301)
     rows = index[key]
-    label = key.upper() if key != _OTHER_LETTER else "Overig"
+    label = key.upper() if key != indexes.OTHER_LETTER else "Overig"
     return _templates.TemplateResponse(request, "authors.html", {
-        "letters": _letter_order(index), "letter": key, "label": label,
+        "letters": indexes.letter_order(index), "letter": key, "label": label,
         "authors": rows, "total": len(rows), "sort": sort,
         "counts": {ltr: len(index[ltr]) for ltr in index},
         "meta_description": f"{_nlnum(len(rows))} auteurs waarvan de naam met {label} "
@@ -1155,7 +756,7 @@ def author_page(request: Request, name: str, conn: sqlite3.Connection = Depends(
         "name": name, "books": rows, "total": len(rows),
         "formats_map": formats_map, "lists_map": lists_map,
         "author_lists": author_lists, "bio": author_bio(name),
-        "breadcrumbs": _breadcrumbs(request, (name, "")),
+        "breadcrumbs": seo.breadcrumbs(request, (name, "")),
         "meta_description": f"Alle {len(rows)} titels van {name} in de online "
                             f"Bibliotheek — e-books en luisterboeken."})
 
@@ -1168,7 +769,7 @@ def lists_overview(request: Request, sort: str = "name",
     rows = queries.lists_overview(conn, sort)
     return _templates.TemplateResponse(request, "lists.html", {
         "lists": rows, "sort": sort,
-        "breadcrumbs": _breadcrumbs(request, ("Lijsten", ""))})
+        "breadcrumbs": seo.breadcrumbs(request, ("Lijsten", ""))})
 
 
 @app.get("/list/{slug}", response_class=HTMLResponse)
@@ -1188,7 +789,7 @@ def list_detail(request: Request, slug: str, show: str = "",
         show, items = "", rows
     return _templates.TemplateResponse(request, "list_detail.html", {
         "lst": lst, "items": items, "available": available, "total": total, "show": show,
-        "breadcrumbs": _breadcrumbs(request, ("Lijsten", "/lists"), (lst["name"], "")),
+        "breadcrumbs": seo.breadcrumbs(request, ("Lijsten", "/lists"), (lst["name"], "")),
         "meta_description": (lst["description"] or f"De lijst {lst['name']}")
                             + f" — {available} van {total} titels in de bibliotheek."})
 
@@ -1214,7 +815,7 @@ def book(request: Request, ppn: str, conn: sqlite3.Connection = Depends(get_conn
               "image": cover or None, "description": _snippet(summary, 1000) or None,
               "bookFormat": ("https://schema.org/AudiobookFormat"
                              if b["format"] == "audiobook" else "https://schema.org/EBook"),
-              "url": f"{_origin(request)}/book/{ppn}"}
+              "url": f"{seo.origin(request)}/book/{ppn}"}
     jsonld = {k: v for k, v in jsonld.items() if v}
     # "meer zoals dit": LSA content-based recommendations (see obc.similar), shown as
     # a horizontal scroll strip on the book page.
@@ -1225,9 +826,9 @@ def book(request: Request, ppn: str, conn: sqlite3.Connection = Depends(get_conn
         "similar": similar,
         "meta_description": _snippet(summary) or f"{b['title']} in de online Bibliotheek.",
         "og_image": cover, "jsonld": jsonld,
-        "breadcrumbs": _breadcrumbs(
+        "breadcrumbs": seo.breadcrumbs(
             request,
-            *([(detail["authors"][0], _author_path(detail["authors"][0]))]
+            *([(detail["authors"][0], seo.author_path(detail["authors"][0]))]
               if detail["authors"] else []),
             (b["title"], ""))})
 
@@ -1279,6 +880,19 @@ def facet(kind: str = Query("", alias="type"), q: str = "",
 # schema entirely, which is also the truthful description: HEAD is transport
 # plumbing here, not a distinct operation. The handler still runs; the server
 # drops the body off the response.
+#
+# The crawler routes are copied onto the app one by one rather than with
+# `include_router`, and before the twinning below. FastAPI keeps an included
+# router in `app.routes` as a single opaque container, so the pass below cannot
+# see into it — robots.txt and the sitemaps would go on answering HEAD with 405,
+# and those are the first URLs a checker probes.
+for _route in list(seo.router.routes):
+    if isinstance(_route, APIRoute):
+        app.add_api_route(
+            _route.path, _route.endpoint, methods=list(_route.methods or ()),
+            include_in_schema=False, name=_route.name,
+            response_class=_route.response_class)
+
 for _route in list(app.routes):
     if isinstance(_route, APIRoute) and "GET" in (_route.methods or ()):
         app.add_api_route(

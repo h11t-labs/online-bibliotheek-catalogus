@@ -285,3 +285,37 @@ def test_relevance_weights_subjects_above_summary(tmp_path):
     ro.close()
     order = [r["ppn"] for r in res.rows]
     assert order == ["SUB", "SUM"]
+
+
+def test_genre_aggregates_match_the_per_spelling_oracle(ro_conn):
+    """The slug-grouped statements must count what genre_index counts.
+
+    Grouping in SQL is only safe if it groups by what it claims to: `GROUP BY`
+    naming an output alias silently resolved to the `books.audience` column
+    instead, which merged unrelated genres into one row and dropped others
+    entirely — with no error, just wrong numbers on the hub.
+    """
+    from obc.textnorm import slugify
+
+    per_spelling = Q.genre_index(ro_conn)
+    assert per_spelling, "fixture has no genres to compare against"
+
+    # every spelling that carries a book is present, under its own slug
+    names = Q.genre_names(ro_conn)
+    assert {(r["slug"], r["name"]) for r in names} == \
+           {(slugify(r["name"]), r["name"]) for r in per_spelling}
+
+    # audiences partition the books, so summing them reproduces the slug's total
+    totals: dict[str, int] = {}
+    for row in Q.genre_title_counts(ro_conn):
+        totals[row["slug"]] = totals.get(row["slug"], 0) + row["titles"]
+    for row in per_spelling:
+        slug = slugify(row["name"])
+        # a slug shared by two spellings covers at least what either one does,
+        # and never more than both together (they routinely share books)
+        assert row["titles"] <= totals[slug] <= sum(
+            r["titles"] for r in per_spelling if slugify(r["name"]) == slug)
+
+    # parent links are counted per link, over the same collapsed row set
+    links = Q.genre_parent_links(ro_conn)
+    assert {r["slug"] for r in links} <= set(totals)

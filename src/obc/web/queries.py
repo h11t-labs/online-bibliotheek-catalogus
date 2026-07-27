@@ -17,17 +17,26 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
-from ..textnorm import fold
+from ..textnorm import fold, slugify
+
+# Genre slugs are computed inside SQL (see the genre statements below), which calls
+# this once per scanned row — hundreds of thousands of times over a few hundred
+# distinct names. Memoised, all but the first few hundred calls are a dict lookup.
+_slug = lru_cache(maxsize=4096)(slugify)
 
 
 # --------------------------------------------------------------------------- #
 # connection
 # --------------------------------------------------------------------------- #
 def connect_ro(db_path: str | Path) -> sqlite3.Connection:
-    """Open a read-only connection with a ``fold()`` SQL function for
-    diacritic/case-insensitive ``LIKE`` matching (Klöpping ~ klopping).
+    """Open a read-only connection with ``fold()`` and ``slug()`` SQL functions.
+
+    ``fold()`` gives diacritic/case-insensitive ``LIKE`` matching (Klöpping ~
+    klopping); ``slug()`` is the same slug the URLs use, so grouping by the thing
+    a page is addressed by can happen in SQL instead of in Python.
 
     ``check_same_thread=False``: FastAPI can run a ``yield`` dependency's setup and
     the route handler on different threadpool threads, so a connection opened in
@@ -41,6 +50,12 @@ def connect_ro(db_path: str | Path) -> sqlite3.Connection:
     )
     conn.row_factory = sqlite3.Row
     conn.create_function("fold", 1, lambda s: fold(s) if s else "", deterministic=True)
+    conn.create_function("slug", 1, lambda s: _slug(s) if s else "", deterministic=True)
+    # Read the database through the OS page cache instead of copying pages into
+    # this connection's own. Connections are per request, so a private cache is
+    # thrown away as soon as it is warm; a mapping is shared by every request and
+    # every thread, and costs evictable file-backed pages rather than heap.
+    conn.execute("PRAGMA mmap_size = 268435456")
     return conn
 
 
@@ -226,21 +241,16 @@ def total_books(conn: sqlite3.Connection) -> int:
 # --------------------------------------------------------------------------- #
 def formats_map(conn: sqlite3.Connection, rows) -> dict[str, list[str]]:
     """Map ppn -> sorted list of formats the *work* exists in (a title may have
-    both an e-book and an audiobook edition under different PPNs)."""
-    titles = list({r["title"] for r in rows if r["title"]})
-    by_work: dict[tuple, set] = {}
-    if titles:
-        qmarks = ",".join("?" * len(titles))
-        for r in conn.execute(
-                f"SELECT title, author, format FROM books WHERE title IN ({qmarks})",
-                titles):
-            key = ((r["title"] or "").lower(), (r["author"] or "").lower())
-            by_work.setdefault(key, set()).add(r["format"])
-    out = {}
-    for r in rows:
-        key = ((r["title"] or "").lower(), (r["author"] or "").lower())
-        out[r["ppn"]] = sorted(f for f in by_work.get(key, {r["format"]}) if f)
-    return out
+    both an e-book and an audiobook edition under different PPNs).
+
+    The badge on a card and the icon that links to an edition are the same fact
+    asked two ways, so this is :func:`editions_map` with the PPNs dropped rather
+    than a second copy of the same grouping.
+    """
+    # `if f` because a row whose own format is NULL falls back to itself, and a
+    # card must badge nothing rather than a blank format.
+    return {ppn: sorted(f for f in editions if f)
+            for ppn, editions in editions_map(conn, rows).items()}
 
 
 def editions_map(conn: sqlite3.Connection, rows) -> dict[str, dict[str, str]]:
@@ -523,46 +533,96 @@ def series_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         "GROUP BY series ORDER BY titles DESC, series COLLATE NOCASE").fetchall()
 
 
-def genre_books(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """``(genre, parent, ppn, audience)`` per genre link, editions collapsed.
+# The three statements below back the genre hub and the genre pages. They all
+# aggregate inside SQLite and hand back roughly a thousand rows between them.
+#
+# The web layer used to do this itself, over one row per (book × genre link) —
+# ~400k rows on the live catalog — deduplicated into Python sets of PPNs. That is
+# what made the first request after a rebuild cost 23s and push a 512 MB machine
+# to 606 MB. SQLite counts the same thing over its own indexes at a fraction of
+# both.
+#
+# They group by ``slug(name)``, not by genre id, because two spellings of one
+# genre share a slug, share a page, and routinely share books — the catalog holds
+# "Biografieën" twice, precomposed and with a combining diaeresis. Counting those
+# apart and adding the totals up advertises more titles than the page delivers.
+#
+# GROUP BY spells the expressions out instead of naming the output aliases. An
+# alias only wins that lookup when nothing else claims the name, and `audience` is
+# also a column on `books` — SQLite silently grouped by the raw column, and by
+# something else entirely for `slug`, quietly merging genres into one another.
+_GENRE_SOURCE = ("FROM genres g JOIN book_genres bg ON bg.genre_id = g.id "
+                 "JOIN books b ON b.ppn = bg.book_ppn")
+_SLUG = "slug(g.name)"
+_AUDIENCE = "lower(COALESCE(b.audience, ''))"
 
-    The web layer groups these by slug and counts *distinct* ppns: two spellings
-    of one genre routinely share books, so summing their separate counts
-    advertised more titles than the page delivers.
 
-    The parent lives on the link, not on the genre, because jeugd and volwassenen
-    reuse the same genre names under different parents (see
-    :func:`obc.db.set_book_genre_parents`): 67 of 213 subgenres sit under a
-    different parent per audience — "Avontuur" under "Spanning & Avontuur" for
-    jeugd and under "Spanning & Thrillers" for volwassenen. The audience comes
-    along so the web layer can build one tree per audience instead of flattening
-    the two into a single wrong one.
+def genre_title_counts(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """``(slug, audience, titles)`` — distinct works per genre slug per audience.
+
+    Audience is a column on the book, so every book falls in exactly one bucket:
+    a slug's catalog-wide total is the sum of its per-audience counts, with
+    nothing counted twice. That is what lets the hub's numbers and the genre
+    page's own shelf agree.
     """
-    sql = ("SELECT g.name AS name, p.name AS parent, bg.book_ppn AS ppn, "
-           "       lower(COALESCE(b.audience, '')) AS audience "
-           "FROM genres g JOIN book_genres bg ON bg.genre_id = g.id "
-           "LEFT JOIN genres p ON p.id = bg.parent_id "
-           f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)}")
+    return conn.execute(
+        f"SELECT {_SLUG} AS slug, {_AUDIENCE} AS audience, "
+        "       COUNT(DISTINCT bg.book_ppn) AS titles "
+        f"{_GENRE_SOURCE} WHERE 1=1{_collapse_editions(conn)} "
+        f"GROUP BY {_SLUG}, {_AUDIENCE}").fetchall()
+
+
+def genre_parent_links(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """``(slug, parent, audience, n)`` — how often a link names a given parent.
+
+    Counted per *link* rather than per book, because the parent is a property of
+    the link: jeugd and volwassenen reuse the same genre names under different
+    parents (see :func:`obc.db.set_book_genre_parents`), and 67 of 213 subgenres
+    sit somewhere different depending on the shelf — "Avontuur" under "Spanning &
+    Avontuur" for jeugd, under "Spanning & Thrillers" for volwassenen. The web
+    layer picks the most-named parent, per audience.
+    """
+    parent = "slug(COALESCE(p.name, ''))"
+    sql = (f"SELECT {_SLUG} AS slug, {parent} AS parent, "
+           f"       {_AUDIENCE} AS audience, COUNT(*) AS n "
+           f"{_GENRE_SOURCE} LEFT JOIN genres p ON p.id = bg.parent_id "
+           f"WHERE 1=1{_collapse_editions(conn)} "
+           f"GROUP BY {_SLUG}, {parent}, {_AUDIENCE}")
     try:
         return conn.execute(sql).fetchall()
     except sqlite3.OperationalError as exc:  # catalog built before bg.parent_id
         if "parent_id" not in str(exc):
             raise
         return conn.execute(
-            "SELECT g.name AS name, NULL AS parent, bg.book_ppn AS ppn, "
-            "       lower(COALESCE(b.audience, '')) AS audience FROM genres g "
-            "JOIN book_genres bg ON bg.genre_id = g.id "
-            f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)}"
-        ).fetchall()
+            f"SELECT {_SLUG} AS slug, '' AS parent, {_AUDIENCE} AS audience, "
+            f"       COUNT(*) AS n "
+            f"{_GENRE_SOURCE} WHERE 1=1{_collapse_editions(conn)} "
+            f"GROUP BY {_SLUG}, {_AUDIENCE}").fetchall()
+
+
+def genre_names(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """``(slug, name)`` for every genre spelling that carries at least one book.
+
+    Longest spelling first: that is the one the pages head with, and ordering it
+    here keeps the choice stable instead of depending on whatever order the join
+    happened to return.
+    """
+    return conn.execute(
+        f"SELECT {_SLUG} AS slug, g.name AS name {_GENRE_SOURCE} "
+        f"WHERE 1=1{_collapse_editions(conn)} "
+        "GROUP BY g.id ORDER BY LENGTH(g.name) DESC, g.name").fetchall()
 
 
 def genre_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Every genre with its work count, largest first.
+    """Every genre with its work count, largest first — one row per *spelling*.
 
     Counted with editions collapsed, like the shelves: an e-book and its
-    audiobook are one title in the genre, not two. Unfiltered for the same reason
-    as :func:`author_index` — the hub lists every genre, the sitemap decides
-    separately which ones it nominates.
+    audiobook are one title in the genre, not two.
+
+    Nothing on the site reads this: the pages are built from the slug-grouped
+    statements above. It is kept as the tests' independent oracle — a second,
+    much simpler way to count the same thing, which is what makes those tests
+    able to catch a mistake in the grouped path rather than restate it.
     """
     return conn.execute(
         "SELECT g.name AS name, COUNT(DISTINCT bg.book_ppn) AS titles FROM genres g "
