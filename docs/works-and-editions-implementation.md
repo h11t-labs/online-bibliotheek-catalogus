@@ -637,6 +637,15 @@ once and never equals the source" (structurally guaranteed; keep the assertion).
    records where `also_available_as` is truthy **and** `related_ppns` is absent,
    refetch the detail page (`cache=False`), `_merge` and write. Add the argparse
    flag + dispatch. Log the todo-count up front.
+
+   Why targeted and not a full re-enrich: an absent `also_available_as` label
+   means the page had no twin block when it was enriched, so refetching it
+   yields nothing — the label is a free oracle for which pages carry a link.
+   Twins licensed *after* a record was enriched are covered anyway: the newer
+   edition's own enrich captures the link, and `group_editions` unions in both
+   directions. So `--relink` reaches the same grouping evidence as re-scraping
+   all ~68k detail pages, at roughly a third of the requests, and it is
+   self-resuming (a merged record drops out of the selector).
 3. **README.md**: usage section gains `obc works --report` and
    `scrape --relink`; "How it works" storage paragraph rewritten (works +
    editions, one URL per book); pages list gains `/e-books`, `/luisterboeken`.
