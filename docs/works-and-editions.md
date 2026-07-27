@@ -115,6 +115,12 @@ aggregate. Two reasons: a table called `books` whose rows are not books is the
 original confusion, and a work-level fact stored in two places (once on the work,
 once per edition) is a fact that can disagree with itself.
 
+> Implementation note: `editions` physically keeps every raw record column (it is
+> the per-PPN mirror `works` is derived from, and `raw_json` lives there anyway);
+> the "narrowing" is the **read contract** — the web layer reads work-level facts
+> only from `works`. See `docs/works-and-editions-implementation.md`, which is
+> authoritative on build details.
+
 The satellite tables move to the work, because that is the level they describe:
 
 | Today | Becomes | Why |
