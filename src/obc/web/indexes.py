@@ -131,10 +131,16 @@ def authors_by_letter(conn: sqlite3.Connection,
 
     Cached per sort order, on top of the merge above: the two orders bucket and
     sort the same authors, so only the cheap half is done twice.
+
+    Both lookups go through one pinned view. They are two halves of a single
+    answer, and reading the version separately for each let a rebuild landing
+    between them file the old catalog's authors under the new version — where
+    they would stay, wrong, until the next rebuild.
     """
     # Resolved before build(), never inside it: the cache holds a plain lock while
     # building, so a builder that called back into it would deadlock.
-    entries = catalog_cache.get("authors", lambda: author_entries(conn))
+    pinned = catalog_cache.pinned()
+    entries = pinned.get("authors", lambda: author_entries(conn))
 
     def build() -> dict[str, list[dict]]:
         sort_key = surname_key if by == BY_SURNAME else slugify
@@ -146,7 +152,7 @@ def authors_by_letter(conn: sqlite3.Connection,
             rows.sort(key=lambda e: (sort_key(e["name"]), slugify(e["name"])))
         return buckets
 
-    return catalog_cache.get(("authors", by), build)
+    return pinned.get(("authors", by), build)
 
 
 # Series get the same slug treatment as authors, but `books.series` is free text

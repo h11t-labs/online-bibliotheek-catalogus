@@ -47,18 +47,31 @@ class VersionedCache:
 
     def get(self, key: Hashable, build: Callable[[], Any]) -> Any:
         """The cached value for ``key``, calling ``build()`` on a miss."""
-        version = self._version()
+        return self._get(key, build, self._version())
+
+    def pinned(self) -> PinnedCache:
+        """A view fixed to the version as of now — see :class:`PinnedCache`."""
+        return PinnedCache(self, self._version())
+
+    def _get(self, key: Hashable, build: Callable[[], Any], version: Any) -> Any:
         cached_version, entries = self._snapshot
         if cached_version == version and key in entries:
             return entries[key]
         with self._lock:
             cached_version, entries = self._snapshot
-            if cached_version != version:
-                entries = {}          # a rebuild landed: everything is stale
-            elif key in entries:
+            if cached_version == version and key in entries:
                 return entries[key]   # another thread built it while we waited
             value = build()
-            self._snapshot = (version, {**entries, key: value})
+            # Publish only if the catalog is still the one we set out to describe.
+            # A build can outlast a rebuild — it reads a connection opened before
+            # the swap — and labelling its result with the version that has since
+            # landed would serve the previous catalog until the *next* rebuild.
+            # Skipping the write costs one rebuild; getting it wrong costs a day.
+            # It also keeps a slow caller from replacing a newer snapshot with its
+            # own older one, which would throw away every entry built since.
+            if self._version() == version:
+                base = entries if cached_version == version else {}
+                self._snapshot = (version, {**base, key: value})
             return value
 
     def clear(self) -> None:
@@ -66,3 +79,24 @@ class VersionedCache:
         different fixture catalog per case."""
         with self._lock:
             self._snapshot = (_UNSET, {})
+
+
+class PinnedCache:
+    """Several lookups that have to describe the *same* catalog.
+
+    A value built out of another cached value must not be stored under a version
+    its input never saw. Reading the version once per lookup allowed exactly that:
+    fetch the merged author list, have a rebuild land, then file the buckets
+    derived from it under the new version — where they would sit, wrong, until the
+    rebuild after that. Pinning makes both lookups name one catalog, and the
+    publish guard in :meth:`VersionedCache._get` drops the write if that catalog
+    is gone by the time the build finishes.
+    """
+
+    def __init__(self, cache: VersionedCache, version: Any) -> None:
+        self._cache = cache
+        self._pinned_version = version
+
+    def get(self, key: Hashable, build: Callable[[], Any]) -> Any:
+        """As :meth:`VersionedCache.get`, but against the pinned version."""
+        return self._cache._get(key, build, self._pinned_version)
