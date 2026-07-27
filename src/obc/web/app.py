@@ -271,14 +271,34 @@ async def _response_headers(request: Request, call_next):
     return response
 
 
-def get_conn():
+def _catalog_key() -> int | None:
+    """Which build of the catalog DB_PATH points at right now (its mtime), or None
+    while there is no file to look at."""
+    try:
+        return DB_PATH.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
+def get_conn(request: Request):
     """Per-request read-only DB connection, always closed (FastAPI dependency).
 
     Reads the module-global DB_PATH at call time (tests monkeypatch app.DB_PATH),
     not captured at import. If the DB isn't there yet, connect_ro raises
     OperationalError here and the bootstrap-503 handler renders the friendly page.
+
+    ``request.state.catalog_key`` records which build this connection actually
+    holds. A refresh swaps the catalog in atomically (normalize writes a .tmp and
+    ``os.replace``\\ s it), so a connection opened a moment earlier keeps reading the
+    old inode while the path already reports the new one — and anything caching that
+    connection's results under the path's mtime would file yesterday's numbers under
+    today's catalog, where they would sit until the next rebuild. Statting around the
+    open catches that: a swap in between leaves the key None, and the request is
+    served without being cached.
     """
+    key = _catalog_key()
     conn = queries.connect_ro(DB_PATH)
+    request.state.catalog_key = key if _catalog_key() == key else None
     try:
         yield conn
     finally:
@@ -708,12 +728,14 @@ _summary_cache: dict = {"key": None, "data": {}}
 _summary_cache_lock = threading.Lock()
 
 
-def _browse_summary(conn: sqlite3.Connection,
+def _browse_summary(request: Request, conn: sqlite3.Connection,
                     filters: queries.SearchFilters) -> dict:
-    try:
-        key = DB_PATH.stat().st_mtime_ns
-    except OSError:
-        key = None
+    # Keyed on the build this *connection* holds, not on whatever the path points
+    # at by now — see get_conn. None means the two disagreed: answer from the
+    # connection, cache nothing.
+    key = getattr(request.state, "catalog_key", None)
+    if key is None:
+        return queries.browse_summary(conn, filters)
     with _summary_cache_lock:
         if _summary_cache["key"] != key:
             _summary_cache.update(key=key, data={})
@@ -734,7 +756,7 @@ def _browse_page(request: Request, conn: sqlite3.Connection, *, heading: str,
                  children: list[dict] | None = None) -> Response:
     """Render a browse landing page (a genre or a format) from ``filters``."""
     result = queries.search(conn, filters, page=1, page_size=BROWSE_PREVIEW)
-    summary = _browse_summary(conn, filters)
+    summary = _browse_summary(request, conn, filters)
     # Only mention the split when there is one — a format page would otherwise
     # advertise "50.398 e-books en 0 luisterboeken".
     split = (f" {_nlnum(summary['ebooks'])} e-books en "

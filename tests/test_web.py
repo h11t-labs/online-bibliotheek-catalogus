@@ -895,3 +895,46 @@ def test_genre_hierarchy(tmp_path, monkeypatch):
     assert 'class="subgenres"' in parent and 'href="/genre/thrillers"' in parent
     conn.close()
     appmod._genres_cache.update(key=None, data=None)
+
+
+def test_summary_cache_follows_the_connection_not_the_path(catalog_db, ro_conn, monkeypatch):
+    """A refresh swaps the catalog in atomically, so a connection opened just before
+    the swap still reads the old inode while DB_PATH already reports the new build.
+    Caching that connection's numbers under the *path's* key would serve yesterday's
+    figures until the next rebuild — get_conn hands us the build it really holds."""
+    from types import SimpleNamespace
+
+    from obc.web import app as appmod
+    from obc.web import queries
+
+    monkeypatch.setattr(appmod, "DB_PATH", catalog_db)
+    appmod._summary_cache.update(key=None, data={})
+    f = queries.SearchFilters(genres=("Spanning & Thrillers",))
+
+    def req(key):
+        return SimpleNamespace(state=SimpleNamespace(catalog_key=key))
+
+    # swapped mid-open: answer the request, remember nothing
+    assert appmod._browse_summary(req(None), ro_conn, f)["ebooks"] >= 0
+    assert appmod._summary_cache["data"] == {}
+
+    first = appmod._browse_summary(req(111), ro_conn, f)
+    assert appmod._summary_cache["data"][f] is first
+    assert appmod._browse_summary(req(111), ro_conn, f) is first     # served from cache
+    appmod._browse_summary(req(222), ro_conn, f)                     # a new build ...
+    assert appmod._summary_cache["key"] == 222                       # ... starts over
+    assert appmod._summary_cache["data"][f] is not first
+    appmod._summary_cache.update(key=None, data={})
+
+
+def test_get_conn_stamps_the_build_it_opened(catalog_db, monkeypatch):
+    from types import SimpleNamespace
+
+    from obc.web import app as appmod
+
+    monkeypatch.setattr(appmod, "DB_PATH", catalog_db)
+    request = SimpleNamespace(state=SimpleNamespace())
+    gen = appmod.get_conn(request)
+    next(gen)
+    assert request.state.catalog_key == catalog_db.stat().st_mtime_ns
+    gen.close()
