@@ -112,6 +112,14 @@ CREATE TABLE IF NOT EXISTS work_genres (
     parent_id INTEGER,
     PRIMARY KEY (work_id, genre_id)
 );
+-- authors: one row per PERSON, not per spelling (owner decision). name_fold is
+-- the identity; name is the most-common spelling across all credits, chosen at
+-- build time. Names that fold to '' (non-Latin scripts) never merge — one row
+-- per spelling there, as today. Display strings on works/editions stay exactly
+-- as scraped; this table is the identity underneath them. The PK of
+-- work_authors dedupes a work credited under two spellings of one person.
+-- (Schema unchanged from today — UNIQUE(name) still holds since name determines
+-- fold — what changes is the build: keyed by fold, not by name.)
 CREATE TABLE IF NOT EXISTS work_authors (
     work_id   TEXT NOT NULL REFERENCES works(work_id) ON DELETE CASCADE,
     author_id INTEGER NOT NULL REFERENCES authors(id) ON DELETE CASCADE,
@@ -277,6 +285,17 @@ if field == "also_available_as":
    **must** arrive with `work_id` (normalize stamps them; fall back to
    `r.get("work_id") or ppn` defensively). No FTS rows during streaming — FTS is
    built set-based afterwards.
+5b. **Person-grain authors** (both rebuild paths):
+   - the author-id cache is keyed by `fold(name)` — or by `"\x00" + name` when
+     the fold is empty, so non-Latin spellings never merge;
+   - first-seen spelling is inserted as `authors.name`; alongside, keep
+     `spell_counts: dict[fold, Counter[str]]` incremented per credit;
+   - after streaming, one `executemany` UPDATE sets each person's `name` to
+     their most-common spelling (ties: the `Counter.most_common` order is
+     nondeterministic across equal counts — break ties on the lexicographically
+     smallest spelling so rebuilds are reproducible);
+   - `work_authors` rows therefore point at persons; `INSERT OR IGNORE` +
+     the PK collapse a work credited under two spellings into one link.
 6. New `_build_works(cur)` — pure SQL, run after all editions are inserted:
 
 ```sql
@@ -357,8 +376,10 @@ FROM works w;
   - `"008"`: audiobook, title `"Koken met Liefde - luisterboek"`, author
     `"Dirk Kok"` — merges with 005 **only** via `strip_format_noise`.
   - `"009"`: audiobook, title `"Het grote mysterie, tweede deel"`, author
-    `"Bob de Wit"`, `"related_ppns": ["004"]` — merges with 004 **only** via the
-    explicit link.
+    `"Bob De Wit"` (capital-D **spelling variant**, same fold),
+    `"related_ppns": ["004"]` — merges with 004 **only** via the explicit link,
+    and doubles as the person-grain case: one `authors` row for Bob de Wit, and
+    the majority spelling (`"Bob de Wit"`, 2 credits vs 1) wins the display name.
   - Resulting truth: **9 editions, 5 works**; work `001` = {001,002,007}
     (`audiobook_ppn` = `"002"`), work `003` = {003}, work `004` = {004,009},
     work `005` = {005,008}, work `006` = {006}.
@@ -394,7 +415,7 @@ Full inventory — every public name, disposition:
 | `connect_ro`, `parse_year`, `fts_match`, `_limit`, `_in` | keep unchanged |
 | `SORTS` | alias `b.` → `w.` (`"added": "w.added_rank IS NULL, w.added_rank ASC"`, …) |
 | `SearchFilters`, `SearchResult` | keep (same fields; `format` still `""/"ebook"/"audiobook"`) |
-| `_build_where` | rewrite: `format` → `w.has_ebook = 1` / `w.has_audiobook = 1`; `ereader` → `w.ereader = 1`; languages/publishers/year on `w.`; authors → `w.work_id IN (SELECT wa.work_id FROM work_authors wa JOIN authors a …)`; lists → `work_lists`; genres → `work_genres` |
+| `_build_where` | rewrite: `format` → `w.has_ebook = 1` / `w.has_audiobook = 1`; `ereader` → `w.ereader = 1`; languages/publishers/year on `w.`; authors → `w.work_id IN (SELECT wa.work_id FROM work_authors wa JOIN authors a … WHERE a.name_fold IN (fold(?), …))` — **match on fold**, so a `?author=` URL carrying a variant spelling keeps working now that only the canonical spelling exists as `a.name` (`fold()` is registered on ro connections); lists → `work_lists`; genres → `work_genres` |
 | `search` | `FROM works w [JOIN works_fts ft ON ft.work_id = w.work_id]`; **delete** the `primary_edition` block and the format-filter exception; bm25 weights unchanged |
 | `_has_primary_edition`, `_collapse_editions` | **delete** (and the two tests that exercised the pre-column fallback) |
 | `total_books` | rename `total_works`; `COUNT(*) FROM works` (fix the two call sites in `app.py`) |
@@ -404,10 +425,10 @@ Full inventory — every public name, disposition:
 | `suggest` | over `works_fts`/`works`; select `w.work_id AS ppn, w.title, w.author, w.cover_url, w.ebook_ppn, w.audiobook_ppn, CASE WHEN w.has_ebook THEN 'ebook' ELSE 'audiobook' END AS format`; the `prim` filter is gone (one row per work by construction) |
 | `facet_values` | joins switch to `work_authors`; publisher table unchanged |
 | `book_detail(conn, ppn)` | new contract, below |
-| `author_books`, `author_books_by_fold`, `author_display_name`, `author_index`, `author_title_counts` | join `works w` + `work_authors`; no collapse suffix; counts are naturally per work |
+| `author_books`, `author_books_by_fold`, `author_display_name`, `author_index`, `author_title_counts` | persons make these trivial: `author_books_by_fold` is a plain join on `a.name_fold = ?` — **drop the `GROUP BY b.ppn`** (the work_authors PK already deduped double-spelling credits); `author_display_name` is `SELECT name FROM authors WHERE name_fold = ? LIMIT 1` (the spelling vote moved to build time); `author_index` returns one row per person (no title-count-descending trick needed); `author_title_counts` is `GROUP BY a.name_fold` over `work_authors` with no collapse gymnastics; `author_books` (exact-name path for empty-fold names) unchanged in shape |
 | `series_books` | `FROM works w WHERE w.series IN (…) ORDER BY w.series_no, w.year` |
 | `genre_books`, `genre_index` | over `work_genres`/`works` (returns `work_id`, keep the dict key name `ppn` in the row alias to leave `app._genre_data` untouched: `bg.work_id AS ppn`); **drop** the `parent_id` try/except fallbacks — the works-absence 503 covers the deploy window now |
-| `browse_summary` | drop the mirror-the-collapse branch and the `has_edition` EXISTS pair; `SUM(w.has_ebook) AS ebooks, SUM(w.has_audiobook) AS audiobooks, SUM(w.ereader) AS ereader`; author breakdown joins `work_authors` |
+| `browse_summary` | drop the mirror-the-collapse branch and the `has_edition` EXISTS pair; `SUM(w.has_ebook) AS ebooks, SUM(w.has_audiobook) AS audiobooks, SUM(w.ereader) AS ereader`; author breakdown joins `work_authors` and groups by `wa.author_id` — the `name_fold <> ''` exclusion can go (it existed because fold-grouping fused unrelated non-Latin names; persons keep them separate rows) |
 | `similar_books` | reads `work_similar s JOIN works w ON w.work_id = s.other_work_id`; select `w.work_id AS ppn, w.title, w.author, w.cover_url, w.has_ebook, w.has_audiobook, s.score` |
 | `lists_overview`, `list_row`, `list_items` | `list_items` joins `works w ON w.work_id = li.ppn`; expose `w.cover_url AS bcover, w.has_ebook AS bebook, w.has_audiobook AS baudio` (template updated in step 4) |
 | `web_stats` | totals from `works`/`editions`; genre bars over `work_genres`; drop the pre-`parent_id` fallback |
@@ -440,7 +461,12 @@ fixture. Key new assertions:
 - `book_detail("002") == {"redirect": "001"}`; `book_detail("001")["editions"]`
   has ppns `["001", "002", "007"]`; `book_detail("nope") is None`.
 - `browse_summary` on no filters: `ebooks == 5, audiobooks == 3`.
-- `author_books_by_fold("anna vrij")` → 1 row; `("bob de wit")` → 2 works.
+- `author_books_by_fold("anna vrij")` → 1 row; `("bob de wit")` → 2 works
+  (003 + the merged 004/009 — one shelf despite the two spellings).
+- Person grain: `authors` holds 5 rows; the Bob de Wit row's `name` is
+  `"Bob de Wit"` (majority spelling); `SearchFilters(authors=("Bob De Wit",))`
+  (variant spelling) still finds his works via the fold match.
+- `author_display_name("bob de wit") == "Bob de Wit"`.
 - suggest for `"ontdek"`: one row, `ppn == "001"`, carries both `*_ppn`s.
 - delete `test_formats_map_links_both_editions`, the two
   `*_tolerates_pre_hierarchy_schema` tests; keep+update the relevance-weight test
@@ -489,6 +515,13 @@ def ebooks_page(request, conn=Depends(get_conn)):
    `"no such table: works_fts"` (keep the `books` entries — harmless, and they
    cover a pre-rename DB during the window).
 7. `/stats` context unchanged; data via updated `web_stats`.
+7b. `_author_index` (the A-Z hub cache): the fold-merge loop shrinks — rows from
+   `author_index` are already one-per-person, so the `merged.setdefault(...)`
+   dance and its "first spelling seen carries the most titles" ordering trick
+   are deleted; what remains is bucketing by letter + the per-sort caching.
+   The `author_page` route no longer needs the display-name lookup as a separate
+   step (`author_display_name` is now a single-row read; keep the call, it's the
+   empty-result signal for 404s).
 8. **URL migration — both spaces, one canonical** (owner decision, confirmed):
    - Canonical book URL: **`/boek/{title-slug}--{author-slug}--{work_id}`**,
      e.g. `/boek/de-ontdekking--anna-vrij--001`. Built from our own

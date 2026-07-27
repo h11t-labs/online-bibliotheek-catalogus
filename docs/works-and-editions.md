@@ -150,11 +150,14 @@ borrow an edition, never a work.
 
 Works had the identity disease in seven scattered places with real bugs. The
 satellites each have it in **one centralised, working place** — which is why they
-only get re-linked to the work here, not remodelled. For the record, per entity:
+only get re-linked to the work here, not remodelled. One exception earned its
+way in: authors, where "keep the scraped display string, FK the person
+underneath" turned out to *delete* read-time machinery rather than add build
+machinery. Per entity:
 
 | Entity | After this PR | Identity handling (unchanged) | Greenfield shape, if it ever hurts |
 | --- | --- | --- | --- |
-| Authors | `authors` + `work_authors` | spelling variants merged at read time via `name_fold` (~359 cases) | a `persons` grain stamped at normalize, like works over editions |
+| Authors | **remodelled in this PR after all** (owner call): `authors` becomes one row per *person* (`name` = most-common spelling, `name_fold` = identity; empty folds never merge), `work_authors` FKs the person. Display strings on works/editions stay exactly as scraped — nothing to keep in sync by hand, and lookups are a plain FK join. The read-time machinery this deletes: the `GROUP BY b.ppn` dedupe in `author_books_by_fold`, `author_display_name()`'s per-request spelling vote, and the hub's merge loop. The author *filter* matches on `name_fold = fold(?)` so variant-spelling URLs keep working. | — (this was the future shape; it turned out to be a rider, not a project — the merge moves from read time to build time inside code the PR already rewrites) |
 | Genres | `genres` + `work_genres` (parent still on the link) | slug-merge of spelling variants + per-audience trees derived in the web cache with most-common-parent voting | key genres by the source's own **(audience, facet code)** with `parent_id` on the genre row — kills the voting machinery. Blocked today: facet-harvested genres (`genres.json`) carry names without codes, so a code-keyed table has data gaps to answer first |
 | Series | free text on `works.series` + `series_no` (no table) | spellings share a page via slug at read time (18 cases) | a `series` table, only once series get their own metadata |
 | Publishers, languages | strings on works/editions + counted autocomplete tables | canonicalised at normalize (`PUBLISHER_ALIASES`, `valid_language`) | none planned — no entity pages, so nothing needs an FK |
