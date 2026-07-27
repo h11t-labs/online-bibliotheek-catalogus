@@ -141,12 +141,37 @@ CREATE VIRTUAL TABLE IF NOT EXISTS works_fts USING fts5(
     tokenize = 'unicode61 remove_diacritics 2'
 );
 
+-- Derived read tables/columns — "the build owns derivation" (design doc §3):
+-- everything below is stamped by the build so the read path never re-derives it.
+-- authors gains (in its DDL): n_works INTEGER, surname_sort TEXT, first_sort TEXT
+-- genres  gains (in its DDL): n_works INTEGER
+-- works   gains (in its DDL): series_slug TEXT
+CREATE TABLE IF NOT EXISTS series (
+    slug   TEXT PRIMARY KEY,   -- slugify(spelling); variants share a row
+    name   TEXT,               -- most-common spelling (today: first by part count)
+    titles INTEGER             -- distinct works
+);
+CREATE TABLE IF NOT EXISTS genre_pages (   -- one row per /genre/{slug} page
+    slug        TEXT PRIMARY KEY,          -- spelling variants merged, as today
+    name        TEXT,                      -- longest spelling (today's pick)
+    titles      INTEGER,                   -- distinct works
+    parent_slug TEXT                       -- catalog-wide parent ('' = top)
+);
+CREATE TABLE IF NOT EXISTS genre_tree (    -- the hub's per-audience taxonomy
+    audience    TEXT NOT NULL,             -- 'volwassenen' | 'jeugd'
+    slug        TEXT NOT NULL,
+    parent_slug TEXT,                      -- '' = top level in this audience
+    titles      INTEGER,                   -- works in this audience
+    PRIMARY KEY (audience, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_authors_nworks ON authors(n_works DESC);
+
 -- browse sort indexes: every works row is a book, so no boolean prefix column
 -- (the whole idx_books_primary_* family and idx_books_title_author_lower are GONE)
 CREATE INDEX IF NOT EXISTS idx_works_year   ON works(year DESC);
 CREATE INDEX IF NOT EXISTS idx_works_added  ON works((added_rank IS NULL), added_rank);
 CREATE INDEX IF NOT EXISTS idx_works_title  ON works(title COLLATE NOCASE);
-CREATE INDEX IF NOT EXISTS idx_works_series ON works(series);
+CREATE INDEX IF NOT EXISTS idx_works_series ON works(series_slug);
 CREATE INDEX IF NOT EXISTS idx_wg_genre     ON work_genres(genre_id);
 CREATE INDEX IF NOT EXISTS idx_wa_author    ON work_authors(author_id);
 CREATE INDEX IF NOT EXISTS idx_wl_list      ON work_lists(list_id);
@@ -344,6 +369,25 @@ FROM works w;
 
    (Delete `_fts_values` and `_insert_fts`; subjects come from `work_genres` now,
    which is the union the old per-record path approximated.)
+7b. **Derived read tables** ("the build owns derivation") — small post-passes in
+   `db.py`, run after `_build_works` in both rebuild paths:
+   - `_stamp_counts(cur)`: `UPDATE authors SET n_works = (SELECT COUNT(*) FROM
+     work_authors WHERE author_id = authors.id)`; same for `genres.n_works` over
+     `work_genres` (COUNT(DISTINCT work_id) not needed — the PK already dedupes).
+   - author sort keys: the same post-pass that picks the display spelling also
+     stamps `surname_sort = surname_key(name)` and `first_sort = slugify(name)`
+     (both from `textnorm`; one executemany).
+   - `_stamp_series(cur)`: `works.series_slug = slugify(series)` (in the slug
+     post-pass), then fill `series` — per slug: `name` = the spelling carrying
+     the most works, `titles` = COUNT of works.
+   - `build_genre_taxonomy(conn)`: **port `app._genre_data` verbatim** — the
+     slug merge, longest-spelling name pick, catalog-wide parent vote, and the
+     per-audience tree rules (explicit parent outranks top-level; a tree only
+     states what its own audience files; no-audience books fall to the default
+     shelf) — writing `genre_pages` + `genre_tree` instead of a process cache.
+     Called from `normalize` **after** `set_work_genre_parents` (it reads
+     `parent_id`). Do not redesign any rule; move where it runs, and move its
+     tests with it.
 8. `load_prior_ereader`: query `editions`, and on `sqlite3.Error` **retry with
    `books`** — during the first deploy the *live* DB it reads still has the old
    schema, and losing the flag would blank the facet (the exact failure this
@@ -421,13 +465,13 @@ Full inventory — every public name, disposition:
 | `total_books` | rename `total_works`; `COUNT(*) FROM works` (fix the two call sites in `app.py`) |
 | `formats_map`, `editions_map` | **delete** — flags/ppns ride on the work row |
 | `lists_map` | keyed by `work_id`, reads `work_lists`; callers pass work rows |
-| `compute_facets` | formats: `[f for f, flag in (("audiobook","has_audiobook"),("ebook","has_ebook")) if conn.execute(f"SELECT EXISTS(SELECT 1 FROM works WHERE {flag}=1)").fetchone()[0]]`; other facets over `works` + `work_*` joins |
-| `suggest` | over `works_fts`/`works`; select `w.work_id AS ppn, w.title, w.author, w.cover_url, w.ebook_ppn, w.audiobook_ppn, CASE WHEN w.has_ebook THEN 'ebook' ELSE 'audiobook' END AS format`; the `prim` filter is gone (one row per work by construction) |
-| `facet_values` | joins switch to `work_authors`; publisher table unchanged |
+| `compute_facets` | formats: `[f for f, flag in (("audiobook","has_audiobook"),("ebook","has_ebook")) if conn.execute(f"SELECT EXISTS(SELECT 1 FROM works WHERE {flag}=1)").fetchone()[0]]`; genres/authors from the stamped `n_works` columns (`ORDER BY n_works DESC LIMIT …` — no per-request GROUP BY over the link tables); cheap enough that the route-level cache dies (step 4) |
+| `suggest` | over `works_fts`/`works`; select `w.work_id AS ppn, w.title, w.author, w.slug, w.cover_url, w.ebook_ppn, w.audiobook_ppn, CASE WHEN w.has_ebook THEN 'ebook' ELSE 'audiobook' END AS format`; the `prim` filter is gone (one row per work by construction); the author/genre suggestion subqueries order by `n_works` instead of counting per request |
+| `facet_values` | author branch reads `authors.n_works` (no join); publisher table unchanged |
 | `book_detail(conn, ppn)` | new contract, below |
-| `author_books`, `author_books_by_fold`, `author_display_name`, `author_index`, `author_title_counts` | persons make these trivial: `author_books_by_fold` is a plain join on `a.name_fold = ?` — **drop the `GROUP BY b.ppn`** (the work_authors PK already deduped double-spelling credits); `author_display_name` is `SELECT name FROM authors WHERE name_fold = ? LIMIT 1` (the spelling vote moved to build time); `author_index` returns one row per person (no title-count-descending trick needed); `author_title_counts` is `GROUP BY a.name_fold` over `work_authors` with no collapse gymnastics; `author_books` (exact-name path for empty-fold names) unchanged in shape |
-| `series_books` | `FROM works w WHERE w.series IN (…) ORDER BY w.series_no, w.year` |
-| `genre_books`, `genre_index` | over `work_genres`/`works` (returns `work_id`, keep the dict key name `ppn` in the row alias to leave `app._genre_data` untouched: `bg.work_id AS ppn`); **drop** the `parent_id` try/except fallbacks — the works-absence 503 covers the deploy window now |
+| `author_books`, `author_books_by_fold`, `author_display_name`, `author_index`, `author_title_counts` | persons make these trivial: `author_books_by_fold` is a plain join on `a.name_fold = ?` — **drop the `GROUP BY b.ppn`** (the work_authors PK already deduped double-spelling credits); `author_display_name` is `SELECT name FROM authors WHERE name_fold = ? LIMIT 1` (the spelling vote moved to build time); `author_index` returns one row per person with `name, name_fold, surname_sort, first_sort, n_works` — no per-request counting; `author_title_counts` is **deleted** (it *was* `n_works`); `author_books` (exact-name path for empty-fold names) unchanged in shape |
+| `series_books` | `FROM works w WHERE w.series_slug = ? ORDER BY w.series_no, w.year` (one indexed lookup; the names-tuple variant dies with the web-layer series cache); new tiny reader `series_row(conn, slug)` for the heading |
+| `genre_books`, `genre_index` | **deleted** — they existed to feed `app._genre_data`, which moves into the build (step 2.7b). Replacements are plain reads: `genre_page(conn, slug)`, `genre_children(conn, slug)` (both over `genre_pages`), `genre_tree(conn, audience)` (over `genre_tree`). The `parent_id` try/except fallbacks go with them — the works-absence 503 covers the deploy window now |
 | `browse_summary` | drop the mirror-the-collapse branch and the `has_edition` EXISTS pair; `SUM(w.has_ebook) AS ebooks, SUM(w.has_audiobook) AS audiobooks, SUM(w.ereader) AS ereader`; author breakdown joins `work_authors` and groups by `wa.author_id` — the `name_fold <> ''` exclusion can go (it existed because fold-grouping fused unrelated non-Latin names; persons keep them separate rows) |
 | `similar_books` | reads `work_similar s JOIN works w ON w.work_id = s.other_work_id`; select `w.work_id AS ppn, w.title, w.author, w.cover_url, w.has_ebook, w.has_audiobook, s.score` |
 | `lists_overview`, `list_row`, `list_items` | `list_items` joins `works w ON w.work_id = li.ppn`; expose `w.cover_url AS bcover, w.has_ebook AS bebook, w.has_audiobook AS baudio` (template updated in step 4) |
@@ -515,13 +559,27 @@ def ebooks_page(request, conn=Depends(get_conn)):
    `"no such table: works_fts"` (keep the `books` entries — harmless, and they
    cover a pre-rename DB during the window).
 7. `/stats` context unchanged; data via updated `web_stats`.
-7b. `_author_index` (the A-Z hub cache): the fold-merge loop shrinks — rows from
-   `author_index` are already one-per-person, so the `merged.setdefault(...)`
-   dance and its "first spelling seen carries the most titles" ordering trick
-   are deleted; what remains is bucketing by letter + the per-sort caching.
-   The `author_page` route no longer needs the display-name lookup as a separate
-   step (`author_display_name` is now a single-row read; keep the call, it's the
-   empty-result signal for 404s).
+7b. **Delete all four module-level caches and their locks** — `_facets_cache`,
+   `_authors_cache`, `_series_cache`, `_genres_cache`, the three `threading.Lock`s
+   and `import threading` if unused, plus the helper bodies that fed them
+   (`_facets`, `_author_index`'s merge loop, `_series_index`, `_genre_data`).
+   The build stamped their results (step 2.7b); the routes read tables:
+   - facets: call `queries.compute_facets(conn)` per request — it is `LIMIT`ed
+     index reads now;
+   - authors hub: fetch persons (`author_index`), bucket by letter in the route
+     from `surname_sort`/`first_sort` (the `_author_letter` helper survives,
+     applied to the stamped sort key — per-request work is one pass over ~10k
+     tiny rows, only on the two hub pages);
+   - series page: `series_row(slug)` + `series_books(slug)`;
+   - genre hub/page: `genre_tree(audience)` / `genre_page(slug)` +
+     `genre_children(slug)`; `sitemap_browse` reads `genre_pages.titles`,
+     `series.titles` and `authors.n_works` against `MIN_INDEXABLE_TITLES`.
+   `tests/conftest.py` drops its `_facets_cache` reset lines. The genre-taxonomy
+   invariant tests in `test_web.py` (tree-vs-parent consistency, audience
+   isolation) move against `genre_tree`/`genre_pages` built by the fixture
+   catalog — the rules they pin are unchanged, only where the rules run.
+   `author_page` keeps calling `author_display_name` (single-row read; doubles
+   as the 404 signal).
 8. **URL migration — both spaces, one canonical** (owner decision, confirmed):
    - Canonical book URL: **`/boek/{title-slug}--{author-slug}--{work_id}`**,
      e.g. `/boek/de-ontdekking--anna-vrij--001`. Built from our own
@@ -753,4 +811,8 @@ once and never equals the source" (structurally guaranteed; keep the assertion).
 5. Fixture truth used everywhere: **9 editions / 5 works**; work 001 =
    {001, 002, 007}; 004 = {004, 009} (via `related_ppns`); 005 = {005, 008} (via
    `strip_format_noise`).
-6. `pytest`, `ruff check .`, `ty check` green; no new dependencies added.
+6. **No derived state in the web process**: `grep -n "threading.Lock\|_cache" src/obc/web/app.py`
+   returns nothing — every route is request-parse → indexed reads → render. The
+   build owns all derivation (facet counts, sort keys, series map, genre
+   taxonomy, work identity).
+7. `pytest`, `ruff check .`, `ty check` green; no new dependencies added.

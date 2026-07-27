@@ -168,6 +168,43 @@ key there, and we currently throw it away the same way we threw away the
 edition cross-links. But it is a separate change with its own data question, not
 a rider on this one.
 
+### The build owns derivation (principle, owner-stated)
+
+The DB is a build artifact: normalize rebuilds it nightly from `data/raw` and
+swaps it in atomically. So the rule is — **anything deterministically derivable
+from the catalog is derived at build time; the read path does indexed lookups
+only.** The works and persons changes apply that rule to *identity*; this PR
+finishes the job on *derivation* too.
+
+The tell for where derivation still lives on the wrong side is `app.py`'s four
+module-level cache+lock structures (`_facets_cache`, `_authors_cache`,
+`_series_cache`, `_genres_cache`). They rebuild per *process* what the catalog
+already determined per *rebuild*, and they have caused a real incident: eight
+concurrent cold `/genres` requests each walked 157k rows, took 23s apiece and
+pushed a 512 MB machine to 606 MB — the locks were the patch. All four are
+deleted, replaced by build-time tables and columns:
+
+- facet counts: `authors.n_works`, `genres.n_works` (publishers/languages
+  already carried `n`) — the facet panel and autocomplete become `ORDER BY
+  n_works DESC LIMIT n` on an index;
+- the A-Z hub: `authors.surname_sort` / `authors.first_sort` stamped at build
+  (the same post-pass that picks the display spelling);
+- series: a `series` table (slug, display spelling, work count) plus
+  `works.series_slug` — the read side stops re-deriving the slug↔spellings map;
+- the genre taxonomy: the slug merge, the per-audience parent votes and the hub
+  trees — today ~90 lines of web-layer machinery — run once per rebuild into
+  `genre_pages` and `genre_tree`. The *logic* is ported verbatim, with its
+  tests; only where it runs changes.
+
+Scope note: this moves genre/series **derivation** to the build; their
+**identity model** (name/slug-keyed, per the table above) is unchanged — the
+(audience, facet-code) redesign remains future work with its own data question.
+
+Deleting the caches also deletes their locks, the double-checked-locking
+subtlety, and the cold-start stampede class they existed to contain. After this
+PR the web process holds no derived state at all: kill the process, the next
+request is exactly as fast.
+
 ## 4. Work identity
 
 One new module, `src/obc/work.py`, owning the whole question. Two evidence
