@@ -71,6 +71,41 @@ def test_ereader_author_genre_list_filters(ro_conn):
     assert _ppns(Q.search(ro_conn, Q.SearchFilters(lists=("test-top",)), 1, 50)) == {"001", "003"}
 
 
+def test_multi_value_filters_are_a_union(ro_conn):
+    """Two genres mean "either", not "both" — the joins that replaced the ppn-IN
+    subqueries must stay one join per *filter*, never one per value."""
+    res = Q.search(ro_conn, Q.SearchFilters(
+        genres=("Spanning & Thrillers", "Gezin & Gezondheid")), 1, 50)
+    assert _ppns(res) == {"003", "004", "005"}
+    assert res.total == 3
+    # 003 carries both of these authors: a DISTINCT join counts it once, a plain
+    # one would list the book twice and inflate the total to 3.
+    res = Q.search(ro_conn, Q.SearchFilters(authors=("Cara Licht", "Bob de Wit")), 1, 50)
+    assert _ppns(res) == {"003", "004"}
+    assert res.total == 2
+
+
+def test_filters_combine_as_and(ro_conn):
+    """Different filters still narrow each other: this author *within* that genre."""
+    both = Q.SearchFilters(authors=("Cara Licht",), genres=("Spanning & Thrillers",))
+    assert _ppns(Q.search(ro_conn, both, 1, 50)) == {"003"}
+    miss = Q.SearchFilters(authors=("Cara Licht",), genres=("Gezin & Gezondheid",))
+    assert Q.search(ro_conn, miss, 1, 50).total == 0
+
+
+def test_query_plus_filter_leaves_the_fts_index_driving(ro_conn):
+    """A search term is the selective thing; the genre filter must stay a
+    membership test. Joined instead, SQLite re-scans the derived table for every
+    FTS hit — 86s for ?q=thriller&genre=Thrillers on the real catalog."""
+    f = Q.SearchFilters(q="thriller", genres=("Spanning & Thrillers",))
+    joins, _jparams, where, _params = Q._build_from(f, fts=True)
+    assert joins == ""
+    assert any("b.ppn IN" in c for c in where)
+    assert "JOIN" in Q._build_from(f)[0]                  # without a term: joined
+    # both fixture thrillers match the term through their indexed subjects
+    assert _ppns(Q.search(ro_conn, f, 1, 50)) == {"003", "004"}
+
+
 def test_pagination(ro_conn):
     page1 = Q.search(ro_conn, Q.SearchFilters(sort="title"), 1, 2)
     page2 = Q.search(ro_conn, Q.SearchFilters(sort="title"), 2, 2)

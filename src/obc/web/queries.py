@@ -115,10 +115,72 @@ class SearchResult:
     total: int
 
 
-def _build_where(f: SearchFilters) -> tuple[list[str], list]:
-    """Translate filters into WHERE clauses + bound parameters."""
+# What a result card actually renders (search.html + browse.html), and all
+# :func:`formats_map` / :func:`editions_map` / :func:`lists_map` need to key on.
+# ``SELECT b.*`` also carried ``raw_json`` (109MB across the catalog) and
+# ``summary`` (39MB) — ~2.2KB per row that nothing on the page reads, dragged
+# through the temp B-tree the ORDER BY builds over *every* matching row before the
+# LIMIT applies. A browse page sorts thousands of rows to show 24. Anything needing
+# the full record has :func:`book_detail`.
+CARD_COLS = "b.ppn, b.title, b.author, b.format, b.language, b.year, b.cover_url"
+
+
+# The many-to-many filters (author / list / genre), as a derived table each. They
+# used to read ``b.ppn IN (SELECT ...)``, which leaves SQLite free to drive the
+# query off ``books`` and test each row against the list. Without ``sqlite_stat1``
+# it does exactly that, picking ``idx_books_primary`` — an index on a *boolean*
+# where ~55k of 65k rows match — so a genre page walked the whole catalog no matter
+# how small the genre: /genre/valentijnsdag (2 titles) cost the same 0.7s as
+# /genre/thrillers (4.490). A join states the direction instead: collect the handful
+# of ppns first, then look each one up by primary key. Same rows and the same
+# semantics (DISTINCT keeps a book carrying two of the requested genres from
+# appearing twice), but the plan no longer depends on ANALYZE having run — which
+# matters because statistics only land during a full rebuild and go stale after.
+# The one query that already has a better driver is full-text search; see
+# :func:`_build_from`.
+_M2M = (
+    ("authors", "a.name",
+     "SELECT DISTINCT ba.book_ppn AS ppn FROM book_authors ba "
+     "JOIN authors a ON a.id = ba.author_id", "f_au"),
+    ("lists", "l.slug",
+     "SELECT DISTINCT bl.book_ppn AS ppn FROM book_lists bl "
+     "JOIN lists l ON l.id = bl.list_id", "f_li"),
+    ("genres", "g.name",
+     "SELECT DISTINCT bg.book_ppn AS ppn FROM book_genres bg "
+     "JOIN genres g ON g.id = bg.genre_id", "f_ge"),
+)
+
+
+def _build_from(f: SearchFilters, *, fts: bool = False) -> tuple[str, list, list[str], list]:
+    """Translate filters into JOIN + WHERE fragments with their bound parameters.
+
+    Returns ``(join_sql, join_params, where, where_params)``. Both queries that use
+    this put the joins straight after ``FROM books b``, so callers must bind the
+    join parameters *before* the where ones.
+
+    Pass ``fts=True`` when the caller adds a ``books_fts MATCH`` clause. The
+    full-text index is then the one thing that *should* drive the query, and the
+    many-to-many filters go back to being membership tests: as a join, SQLite makes
+    the derived table the innermost loop and re-scans it for every hit the FTS index
+    yields — ``?q=thriller&genre=Thrillers`` took 86s that way against 0.2s as an
+    ``IN``. Directing the query is only the right call when nothing else does.
+    """
+    joins: list[str] = []
+    jparams: list = []
     where: list[str] = []
     params: list = []
+    for attr, col, sub, alias in _M2M:
+        values = getattr(f, attr)
+        if not values:
+            continue
+        clause, vals = _in(col, values)
+        if fts:
+            where.append(f"b.ppn IN ({sub} WHERE {clause})")
+            params += vals
+        else:
+            joins.append(f"JOIN ({sub} WHERE {clause}) {alias} ON {alias}.ppn = b.ppn")
+            jparams += vals
+
     if f.format:
         where.append("b.format = ?")
         params.append(f.format)
@@ -130,16 +192,6 @@ def _build_where(f: SearchFilters) -> tuple[list[str], list]:
         clause, vals = _in("b.publisher", f.publishers)
         where.append(clause)
         params += vals
-    if f.authors:
-        clause, vals = _in("a.name", f.authors)
-        where.append("b.ppn IN (SELECT ba.book_ppn FROM book_authors ba "
-                     f"JOIN authors a ON a.id = ba.author_id WHERE {clause})")
-        params += vals
-    if f.lists:
-        clause, vals = _in("l.slug", f.lists)
-        where.append("b.ppn IN (SELECT bl.book_ppn FROM book_lists bl "
-                     f"JOIN lists l ON l.id = bl.list_id WHERE {clause})")
-        params += vals
     if f.ereader:
         where.append("b.ereader = 1")
     if f.year_from is not None:
@@ -148,12 +200,7 @@ def _build_where(f: SearchFilters) -> tuple[list[str], list]:
     if f.year_to is not None:
         where.append("b.year <= ?")
         params.append(f.year_to)
-    if f.genres:
-        clause, vals = _in("g.name", f.genres)
-        where.append("b.ppn IN (SELECT bg.book_ppn FROM book_genres bg "
-                     f"JOIN genres g ON g.id = bg.genre_id WHERE {clause})")
-        params += vals
-    return where, params
+    return " ".join(joins), jparams, where, params
 
 
 def search(conn: sqlite3.Connection, f: SearchFilters, page: int,
@@ -166,16 +213,17 @@ def search(conn: sqlite3.Connection, f: SearchFilters, page: int,
     twice. (Skipped when the user filters to a specific format: every work then has
     only that one edition anyway.) The card still shows both format badges via
     :func:`formats_map`. When a format filter *is* set we keep the plain per-edition
-    path (cheaper, and there is nothing to merge)."""
-    where, params = _build_where(f)
+    path (cheaper, and there is nothing to merge).
 
-    joins = ""
-    order = SORTS.get(f.sort) or "b.title COLLATE NOCASE ASC"
+    Rows carry :data:`CARD_COLS`, not whole books — see there."""
     match = fts_match(f.q) if f.q else ""
+    joins, params, where, wparams = _build_from(f, fts=bool(match))
+
+    order = SORTS.get(f.sort) or "b.title COLLATE NOCASE ASC"
     if match:
-        joins = "JOIN books_fts ft ON ft.ppn = b.ppn"
+        joins += " JOIN books_fts ft ON ft.ppn = b.ppn"
         where.append("books_fts MATCH ?")
-        params.append(match)
+        wparams.append(match)
         if f.sort == "relevance":
             # first weight = the UNINDEXED ppn column (bm25 weights are positional
             # over ALL declared columns): ppn, title, author, subjects, summary.
@@ -189,12 +237,13 @@ def search(conn: sqlite3.Connection, f: SearchFilters, page: int,
     if not f.format and _has_primary_edition(conn):
         where.append("b.primary_edition = 1")
 
+    params += wparams
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     total = conn.execute(
         f"SELECT COUNT(*) FROM books b {joins} {where_sql}", params).fetchone()[0]
     offset = (page - 1) * page_size
     rows = conn.execute(
-        f"SELECT b.* FROM books b {joins} {where_sql} "
+        f"SELECT {CARD_COLS} FROM books b {joins} {where_sql} "
         f"ORDER BY {order} LIMIT ? OFFSET ?",
         [*params, page_size, offset]).fetchall()
     return SearchResult(rows=rows, total=total)
@@ -583,13 +632,14 @@ def browse_summary(conn: sqlite3.Connection, f: SearchFilters,
     Authors with an empty fold are excluded: several unrelated non-Latin names
     fold to "" and would otherwise be grouped into one person with a summed count.
     """
-    where, params = _build_where(f)
+    joins, params, where, wparams = _build_from(f)
     # Mirror search(): a format filter turns the collapse off there, so applying
     # it here regardless made the summary describe a different set than the shelf
     # below it — A.C. Baantjer vanished from /luisterboeken because his primary
     # edition is an e-book.
     if not f.format:
         where.append("b.primary_edition = 1" if _has_primary_edition(conn) else "1=1")
+    params += wparams
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     # Availability, not representation. With editions collapsed each work is
     # counted through whichever edition happens to represent it, so a genre whose
@@ -610,9 +660,10 @@ def browse_summary(conn: sqlite3.Connection, f: SearchFilters,
         f"SELECT SUM({as_ebook}) AS ebooks, SUM({as_audio}) AS audiobooks, "
         f"       SUM({on_ereader}) AS ereader, "
         "       MIN(NULLIF(b.year, 0)) AS year_min, MAX(b.year) AS year_max "
-        f"FROM books b {where_sql}", params).fetchone()
+        f"FROM books b {joins} {where_sql}", params).fetchone()
     authors = conn.execute(
         "SELECT a.name AS name, COUNT(DISTINCT ba.book_ppn) AS titles FROM books b "
+        f"{joins} "
         "JOIN book_authors ba ON ba.book_ppn = b.ppn "
         "JOIN authors a ON a.id = ba.author_id "
         f"{where_sql}{' AND' if where_sql else 'WHERE'} a.name_fold <> '' "

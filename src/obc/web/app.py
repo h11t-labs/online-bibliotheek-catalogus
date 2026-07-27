@@ -696,6 +696,36 @@ def _genres(conn: sqlite3.Connection) -> dict[str, dict]:
 # replacement for the search UI — the "filter in zoeken" link opens the rest.
 BROWSE_PREVIEW = 120
 
+# The lead paragraph's numbers are the most expensive query on a landing page:
+# three correlated EXISTS per matching row over the work key — ~67k index probes
+# for Literatuur & Romans, and the shelf above it costs a fraction of that. They
+# are also the same for every visitor until the catalog changes, and the pages
+# asking for them are a fixed set (one per genre), so the key space is bounded by
+# the taxonomy rather than by whatever a visitor types. Same DB-mtime trick as the
+# facet cache; unlike that one the build happens outside the lock, because these
+# keys are independent and one cold genre must not hold up the other 363.
+_summary_cache: dict = {"key": None, "data": {}}
+_summary_cache_lock = threading.Lock()
+
+
+def _browse_summary(conn: sqlite3.Connection,
+                    filters: queries.SearchFilters) -> dict:
+    try:
+        key = DB_PATH.stat().st_mtime_ns
+    except OSError:
+        key = None
+    with _summary_cache_lock:
+        if _summary_cache["key"] != key:
+            _summary_cache.update(key=key, data={})
+        hit = _summary_cache["data"].get(filters)
+    if hit is not None:
+        return hit
+    data = queries.browse_summary(conn, filters)
+    with _summary_cache_lock:
+        if _summary_cache["key"] == key:   # a refresh mid-build invalidates this
+            _summary_cache["data"][filters] = data
+    return data
+
 
 def _browse_page(request: Request, conn: sqlite3.Connection, *, heading: str,
                  lead: str, filters: queries.SearchFilters, search_url: str,
@@ -704,7 +734,7 @@ def _browse_page(request: Request, conn: sqlite3.Connection, *, heading: str,
                  children: list[dict] | None = None) -> Response:
     """Render a browse landing page (a genre or a format) from ``filters``."""
     result = queries.search(conn, filters, page=1, page_size=BROWSE_PREVIEW)
-    summary = queries.browse_summary(conn, filters)
+    summary = _browse_summary(conn, filters)
     # Only mention the split when there is one — a format page would otherwise
     # advertise "50.398 e-books en 0 luisterboeken".
     split = (f" {_nlnum(summary['ebooks'])} e-books en "
