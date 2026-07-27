@@ -146,6 +146,25 @@ edition. The format facet stays, because readers genuinely search for
 book is available as an audiobook"*. And the borrow button stays per edition: you
 borrow an edition, never a work.
 
+### Satellite entities: what this PR deliberately leaves alone
+
+Works had the identity disease in seven scattered places with real bugs. The
+satellites each have it in **one centralised, working place** — which is why they
+only get re-linked to the work here, not remodelled. For the record, per entity:
+
+| Entity | After this PR | Identity handling (unchanged) | Greenfield shape, if it ever hurts |
+| --- | --- | --- | --- |
+| Authors | `authors` + `work_authors` | spelling variants merged at read time via `name_fold` (~359 cases) | a `persons` grain stamped at normalize, like works over editions |
+| Genres | `genres` + `work_genres` (parent still on the link) | slug-merge of spelling variants + per-audience trees derived in the web cache with most-common-parent voting | key genres by the source's own **(audience, facet code)** with `parent_id` on the genre row — kills the voting machinery. Blocked today: facet-harvested genres (`genres.json`) carry names without codes, so a code-keyed table has data gaps to answer first |
+| Series | free text on `works.series` + `series_no` (no table) | spellings share a page via slug at read time (18 cases) | a `series` table, only once series get their own metadata |
+| Publishers, languages | strings on works/editions + counted autocomplete tables | canonicalised at normalize (`PUBLISHER_ALIASES`, `valid_language`) | none planned — no entity pages, so nothing needs an FK |
+| Lists | `lists` + `list_items` + `work_lists` | already entity-modelled | done |
+
+Genres are the strongest future candidate — the source actually publishes a real
+key there, and we currently throw it away the same way we threw away the
+edition cross-links. But it is a separate change with its own data question, not
+a rider on this one.
+
 ## 4. Work identity
 
 One new module, `src/obc/work.py`, owning the whole question. Two evidence
