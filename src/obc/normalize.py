@@ -265,7 +265,7 @@ def _build_similar(conn: sqlite3.Connection) -> None:
     """Precompute the "meer zoals dit" recommendations into the *temp* DB, before the
     atomic swap.
 
-    ``book_similar`` is not part of the base schema — it is derived from the finished
+    ``work_similar`` is not part of the base schema — it is derived from the finished
     catalog — so a fresh rebuild never carries it over. Building it here (rather than
     as a separate step afterwards) means the swap publishes the catalog and its
     recommendations together: readers never see a new catalog with the strip missing,

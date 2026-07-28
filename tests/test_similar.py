@@ -13,7 +13,7 @@ from obc.web import queries as Q
 
 
 def test_similar_books_absent_table_is_graceful(ro_conn):
-    """A catalog without book_similar (feature not built yet) must not error — the
+    """A catalog without work_similar (feature not built yet) must not error — the
     book page just omits the strip."""
     assert Q.similar_books(ro_conn, "001") == []
 
@@ -33,7 +33,7 @@ def _built_db(tmp_path, name="sim.db"):
     return path
 
 
-def test_build_similar_populates_and_dedups(tmp_path):
+def test_build_similar_recommends_works(tmp_path):
     import pytest
     pytest.importorskip("sklearn")
     from obc import similar
@@ -44,17 +44,27 @@ def test_build_similar_populates_and_dedups(tmp_path):
     written = similar.build_similar(conn, method="lsa", min_score=0.0)
     assert written >= 1
 
-    def neighbours(ppn):
-        return [r["other_ppn"] for r in conn.execute(
-            "SELECT other_ppn FROM book_similar WHERE book_ppn = ? AND method='lsa' "
-            "ORDER BY rank", (ppn,))]
+    works = {r["work_id"] for r in conn.execute("SELECT work_id FROM works")}
 
-    # 001 and 002 are the same work (e-book + audiobook) -> the twin is never
-    # recommended, and no two neighbours are editions of one work
-    assert "002" not in neighbours("001")
-    for src in ("001", "002", "003", "004"):
+    def neighbours(work_id):
+        return [r["other_work_id"] for r in conn.execute(
+            "SELECT other_work_id FROM work_similar WHERE work_id = ? AND method='lsa' "
+            "ORDER BY rank", (work_id,))]
+
+    # Vectorising works instead of editions makes the old post-hoc de-duplication
+    # unnecessary — but the property it protected still has to hold: a recommended
+    # work appears at most once and is never the source itself.
+    for src in works:
         nb = neighbours(src)
-        assert len(nb) == len(set(nb))
+        assert len(nb) == len(set(nb)), src
+        assert src not in nb, src
+        assert set(nb) <= works, src
+    # only works are recommended, so no edition PPN can leak into the strip
+    assert not neighbours("002")
+    # a stale pre-works table is cleaned up rather than left to confuse
+    assert not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='book_similar'"
+    ).fetchone()
     conn.close()
 
 
@@ -65,4 +75,6 @@ def test_similar_books_query_returns_display_rows(tmp_path):
     ro.close()
     assert rows, "expected at least one recommendation for 003"
     r = rows[0]
-    assert set(r.keys()) >= {"ppn", "title", "author", "cover_url", "format", "score"}
+    # both availability flags, so the strip badges every format the book has
+    assert set(r.keys()) >= {"work_id", "title", "author", "slug", "cover_url",
+                             "has_ebook", "has_audiobook", "score"}

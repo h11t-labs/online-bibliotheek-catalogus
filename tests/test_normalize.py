@@ -52,7 +52,7 @@ def raw(tmp_path, monkeypatch):
 
 
 def test_normalize_publishes_recommendations_with_the_swap(tmp_path, monkeypatch):
-    """``book_similar`` is derived from the finished catalog, so it is not in the base
+    """``work_similar`` is derived from the finished catalog, so it is not in the base
     schema and a rebuild never carries it over — and normalize swaps a freshly built
     temp DB over the live file. It must therefore build the recommendations *before*
     that swap: otherwise every nightly refresh would silently publish a catalog whose
@@ -85,10 +85,10 @@ def test_normalize_publishes_recommendations_with_the_swap(tmp_path, monkeypatch
 
     conn = db.connect(db_path)
     try:
-        rows = conn.execute("SELECT COUNT(*) FROM book_similar").fetchone()[0]
+        rows = conn.execute("SELECT COUNT(*) FROM work_similar").fetchone()[0]
     finally:
         conn.close()
-    assert rows > 0, "normalize must publish book_similar together with the catalog"
+    assert rows > 0, "normalize must publish work_similar together with the catalog"
 
 
 def _enrich(raw):
