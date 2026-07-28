@@ -20,7 +20,6 @@
   .info .author .flink{color:var(--ink-soft)}
   .info .author .flink:hover{color:var(--accent)}
   .poster .cover img{width:100%;height:100%;object-fit:cover}
-  .poster .btn{width:100%;justify-content:center;margin-top:18px}
   .info h1{font-family:var(--serif);font-size:clamp(26px,4vw,38px);line-height:1.1;margin:6px 0 8px;letter-spacing:-.4px}
   .info .author{font-size:18px;color:var(--ink-soft);margin:0 0 16px}
   .info .author a:hover{color:var(--accent)}
@@ -30,6 +29,14 @@
   .meta .r{display:grid;grid-template-columns:170px 1fr;gap:16px;padding:11px 0;border-bottom:1px solid var(--line)}
   .meta .k{color:var(--ink-soft);font-size:14px}
   .meta .v{font-size:15px}
+  /* One block per edition: shared facts sit above, and what actually differs
+     between the e-book and the luisterboek — pages vs duration, narrator, file
+     type, and each one's own borrow link — sits under its own heading. */
+  .edition{margin-top:34px;scroll-margin-top:90px}
+  .edition h2{font-family:var(--serif);font-size:20px;margin:0 0 4px;
+    display:flex;align-items:center;gap:9px}
+  .edition h2 .fmt-ic{position:static}
+  .edition .btn{margin-top:16px}
   /* "Meer zoals dit" — LSA content-based recommendations (obc.similar), a
      horizontally-scrolling strip of small covers (images lazy-load as you scroll). */
   .similar{margin-top:56px;border-top:1px solid var(--line);padding-top:28px}
@@ -77,10 +84,10 @@
   .sima{font-size:11px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   @media (max-width:720px){
     .detail{grid-template-columns:1fr;gap:24px}
-    /* hero pattern: cover + CTA centered as a group; reading content below stays left-aligned */
+    /* hero pattern: the cover centered as a group; reading content below stays left-aligned */
     .poster{position:static;max-width:none;display:flex;flex-direction:column;align-items:center}
     .poster .cover{width:200px;max-width:55vw;flex:none}
-    .poster .btn{width:100%;max-width:420px;margin:16px 0 0;justify-content:center}
+    .edition .btn{width:100%;max-width:420px;justify-content:center}
     .meta .r{grid-template-columns:120px 1fr}
   }
 {% endblock %}
@@ -91,22 +98,23 @@
     <div class="poster">
       <div class="cover">
         <div class="fmt-icons">
-          {% if 'ebook' in editions %}<span class="fmt-ic ebook" title="E-book"><svg width="15" height="15"><use href="#ic-book"/></svg></span>{% endif %}
-          {% if 'audiobook' in editions %}<span class="fmt-ic audio" title="Luisterboek"><svg width="15" height="15"><use href="#ic-audio"/></svg></span>{% endif %}
+          {% if b['has_ebook'] %}<span class="fmt-ic ebook" title="E-book"><svg width="15" height="15"><use href="#ic-book"/></svg></span>{% endif %}
+          {% if b['has_audiobook'] %}<span class="fmt-ic audio" title="Luisterboek"><svg width="15" height="15"><use href="#ic-audio"/></svg></span>{% endif %}
         </div>
         <img src="{{ b['cover_url']|coverw(600) }}" alt="Omslag van {{ b['title'] }}">
       </div>
-      {% if b['url'] %}<a class="btn" href="{{ b['url'] }}" target="_blank" rel="noopener">Lenen op onlinebibliotheek.nl ↗</a>{% endif %}
+      {# the borrow button lives in each edition block below: you borrow an
+         edition, never a work, and the two have different links #}
     </div>
     <div class="info">
+      {# the formats this book exists in. The badge that used to link to the twin's
+         own page is an anchor into its block on this page now. #}
       <div class="editions">
-        {% for fmt in ['ebook','audiobook'] if fmt in editions %}
-          {% if editions[fmt] == b['ppn'] %}
-          <span class="badge {{ 'audio' if fmt=='audiobook' }}">{{ 'Luisterboek' if fmt=='audiobook' else 'E-book' }}</span>
-          {% else %}
-          <a class="badge linkbadge {{ 'audio' if fmt=='audiobook' }}" href="/book/{{ editions[fmt] }}">Ook als {{ 'luisterboek' if fmt=='audiobook' else 'e-book' }} →</a>
-          {% endif %}
-        {% endfor %}
+        {% if b['has_ebook'] %}<span class="badge">E-book</span>{% endif %}
+        {% if b['has_audiobook'] %}
+          {% if b['has_ebook'] %}<a class="badge linkbadge audio" href="#luisterboek">Ook als luisterboek →</a>
+          {% else %}<span class="badge audio">Luisterboek</span>{% endif %}
+        {% endif %}
       </div>
       <h1>{{ b['title'] or '—' }}</h1>
       {% if authors %}<p class="author">door
@@ -119,9 +127,9 @@
       </div>
       {% endif %}
 
-      {% if book_lists %}
+      {% if work_lists %}
       <div class="editions">
-        {% for l in book_lists %}<a class="badge listbadge" href="/?list={{ l.slug }}"><svg width="12" height="12" style="vertical-align:-2px"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% elif l.position %} #{{ l.position }}{% endif %}{% if l.won == 1 %} · gewonnen{% elif l.won == 0 %} · genomineerd{% endif %}</a>{% endfor %}
+        {% for l in work_lists %}<a class="badge listbadge" href="/?list={{ l.slug }}"><svg width="12" height="12" style="vertical-align:-2px"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% elif l.position %} #{{ l.position }}{% endif %}{% if l.won == 1 %} · gewonnen{% elif l.won == 0 %} · genomineerd{% endif %}</a>{% endfor %}
       </div>
       {% endif %}
 
@@ -139,28 +147,53 @@
         {{ rlink('Taal', b['language'], 'language') }}
         {{ r('Verschenen', b['year']) }}
         {{ rlink('Uitgever', b['publisher'], 'publisher') }}
-        {{ r('ISBN', b['isbn']) }}
-        {{ r("Aantal pagina's", b['pages']) }}
-        {{ r('Speelduur', b['duration']) }}
-        {{ r('Verteller', b['narrator']) }}
-        {{ r('Omvang', b['size']) }}
-        {{ r('Bestandstype', b['features']) }}
-        {% if b['format']=='ebook' and b['ereader'] is not none %}{{ r('Voor e-reader', 'Ja' if b['ereader'] else 'Nee (alleen in de app)') }}{% endif %}
         {{ r('Doelgroep', b['audience']) }}
         {{ r('Leeftijd', b['age']) }}
         {{ r('Trefwoorden', b['keywords']) }}
-        {{ r('Ook beschikbaar als', b['also_available_as']) }}
       </div>
+
+      {# One block per edition, e-book first. This is the honest answer to "each
+         item also has its own properties sometimes": don't merge the fields, show
+         them side by side under one heading, each with its own borrow link. Only
+         the first edition of a format carries the anchor id — a book can hold
+         several audiobook editions. #}
+      {% set ns = namespace(seen=[]) %}
+      {% for e in editions %}
+      {% set audio = e['format'] == 'audiobook' %}
+      {% set anchor = 'luisterboek' if audio else 'e-book' %}
+      {% set first = anchor not in ns.seen %}
+      {% if first %}{% set ns.seen = ns.seen + [anchor] %}{% endif %}
+      <section class="edition"{% if first %} id="{{ anchor }}"{% endif %}>
+        <h2>
+          <span class="fmt-ic {{ 'audio' if audio else 'ebook' }}" aria-hidden="true">
+            <svg width="15" height="15"><use href="#ic-{{ 'audio' if audio else 'book' }}"/></svg>
+          </span>
+          {{ 'Luisterboek' if audio else 'E-book' }}{% if not first %} · andere uitvoering{% endif %}
+        </h2>
+        <div class="meta">
+          {{ r('ISBN', e['isbn']) }}
+          {% if audio %}{{ r('Speelduur', e['duration']) }}{{ r('Verteller', e['narrator']) }}
+          {% else %}{{ r("Aantal pagina's", e['pages']) }}{% endif %}
+          {{ r('Omvang', e['size']) }}
+          {{ r('Bestandstype', e['features']) }}
+          {% if not audio and e['ereader'] is not none %}{{ r('Voor e-reader', 'Ja' if e['ereader'] else 'Nee (alleen in de app)') }}{% endif %}
+          {# only what this edition says differently from the book as a whole #}
+          {% if e['publisher'] and e['publisher'] != b['publisher'] %}{{ rlink('Uitgever', e['publisher'], 'publisher') }}{% endif %}
+          {% if e['year'] and e['year'] != b['year'] %}{{ r('Verschenen', e['year']) }}{% endif %}
+        </div>
+        {% if e['url'] %}<a class="btn" href="{{ e['url'] }}" target="_blank" rel="noopener">Lenen op onlinebibliotheek.nl ↗</a>{% endif %}
+      </section>
+      {% endfor %}
     </div>
   </article>
 
   {% macro simcard(s) %}
-  <a class="simcard" href="/book/{{ s['ppn'] }}" title="{{ s['title'] }}{% if s['author'] %} — {{ s['author'] }}{% endif %}">
+  <a class="simcard" href="{{ book_path(s) }}" title="{{ s['title'] }}{% if s['author'] %} — {{ s['author'] }}{% endif %}">
     <div class="simcover">
+      {# every format the recommended book has, not the one edition it came from #}
       <div class="fmt-icons">
-        <span class="fmt-ic {{ 'audio' if s['format']=='audiobook' else 'ebook' }}" title="{{ 'Luisterboek' if s['format']=='audiobook' else 'E-book' }}">
-          <svg width="15" height="15"><use href="#ic-{{ 'audio' if s['format']=='audiobook' else 'book' }}"/></svg>
-        </span>
+        {% if s['has_ebook'] %}<span class="fmt-ic ebook" title="E-book"><svg width="15" height="15"><use href="#ic-book"/></svg></span>{% endif %}
+        {% if s['has_audiobook'] %}<span class="fmt-ic audio" title="Luisterboek"><svg width="15" height="15"><use href="#ic-audio"/></svg></span>{% endif %}
       </div>
       <img loading="lazy" src="{{ s['cover_url']|coverw(300) }}" alt="Omslag van {{ s['title'] }}">
     </div>

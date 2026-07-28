@@ -10,6 +10,7 @@ endpoint, which calls :func:`trigger_refresh`. The work (incremental sync + list
 from __future__ import annotations
 
 import os
+import sqlite3
 import subprocess
 import threading
 
@@ -35,6 +36,22 @@ def _seeded() -> bool:
         return False
 
 
+def _schema_stale() -> bool:
+    """True when the live DB predates the works schema — then a normalize from
+    the records already on disk fixes the shape in minutes, instead of the site
+    503ing behind a full sync pipeline."""
+    from .. import db
+    try:
+        conn = sqlite3.connect(f"file:{db.DEFAULT_DB}?mode=ro", uri=True)
+        try:
+            return not conn.execute("SELECT 1 FROM sqlite_master "
+                                    "WHERE type='table' AND name='works'").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False   # no DB at all -> the full-harvest path handles it
+
+
 def _default_cmds() -> list[list[str]]:
     """The refresh pipeline: harvest (full on an empty volume, else incremental),
     optionally enrich detail-only fields (age/series/keywords + the per-title
@@ -49,6 +66,11 @@ def _default_cmds() -> list[list[str]]:
     seeded = _seeded()
     harvest = ["scrape", "--sync"] if seeded else ["scrape", "--full"]
     cmds = [harvest]
+    if seeded and _schema_stale():
+        # The deploy that renames the tables finds the old DB on the volume, and
+        # the site 503s until the shape matches. Rebuilding from the records
+        # already there is minutes; waiting out sync -> lists -> normalize is not.
+        cmds.insert(0, ["normalize"])
     if os.environ.get("OBC_ENRICH") == "1":
         cmds.append(["scrape", "--enrich"])
     if seeded:  # --full already ranks recency; the incremental path must refresh it

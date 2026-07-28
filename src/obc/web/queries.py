@@ -277,7 +277,7 @@ def suggest(conn: sqlite3.Connection, q: str, limit: int = 7) -> dict | None:
     # first weight = the UNINDEXED work_id column (work_id, title, author, subjects,
     # summary).
     title_rows = conn.execute(
-        "SELECT w.work_id AS ppn, w.title, w.author, w.slug, w.cover_url, "
+        "SELECT w.work_id, w.title, w.author, w.slug, w.cover_url, "
         "       w.ebook_ppn, w.audiobook_ppn, "
         "       CASE WHEN w.has_ebook THEN 'ebook' ELSE 'audiobook' END AS format "
         "FROM works_fts ft JOIN works w ON w.work_id = ft.work_id "
@@ -369,6 +369,22 @@ def book_detail(conn: sqlite3.Connection, ppn: str) -> dict | None:
             "authors": authors, "work_lists": work_lists}
 
 
+def work_ref(conn: sqlite3.Connection, ppn: str) -> tuple[str, str] | None:
+    """``(work_id, slug)`` for a work id *or* any of its editions' PPNs.
+
+    All a redirect needs: ``/book/{ppn}`` is redirect-only now, and a canonical
+    ``/boek/…`` URL carrying a stale slug has to find the current one without
+    fetching the whole page's data.
+    """
+    row = conn.execute(
+        "SELECT work_id, slug FROM works WHERE work_id = ?", (ppn,)).fetchone()
+    if row is None:
+        row = conn.execute(
+            "SELECT w.work_id, w.slug FROM editions e "
+            "JOIN works w ON w.work_id = e.work_id WHERE e.ppn = ?", (ppn,)).fetchone()
+    return (row["work_id"], row["slug"] or "") if row else None
+
+
 def author_books(conn: sqlite3.Connection, name: str) -> list[sqlite3.Row]:
     """Books by the exact author name — the fallback for names that don't slug."""
     return conn.execute(
@@ -457,6 +473,19 @@ def genre_page(conn: sqlite3.Connection, slug: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM genre_pages WHERE slug = ?", (slug,)).fetchone()
 
 
+def genre_spellings(conn: sqlite3.Connection, slug: str) -> list[str]:
+    """Every genre spelling that shares this page's slug.
+
+    The catalog holds "Biografieën" twice — precomposed and with a combining
+    diaeresis — and both fold to ``biografieen``, so the page has to filter on all
+    of them or it would show fewer titles than its own heading claims. A slug
+    round-trips into a fold by swapping dashes for spaces (that is how
+    :func:`obc.textnorm.slugify` is built), so this is a lookup, not a re-derivation.
+    """
+    return [r["name"] for r in conn.execute(
+        "SELECT name FROM genres WHERE fold(name) = ?", (slug.replace("-", " "),))]
+
+
 def genre_children(conn: sqlite3.Connection, slug: str) -> list[sqlite3.Row]:
     """The subgenres filed under ``slug``, largest first."""
     return conn.execute(
@@ -543,7 +572,7 @@ def similar_books(conn: sqlite3.Connection, work_id: str, method: str = "lsa",
     limit = _limit(limit, 20, 30)
     try:
         return conn.execute(
-            "SELECT w.work_id AS ppn, w.title, w.author, w.slug, w.cover_url, "
+            "SELECT w.work_id, w.title, w.author, w.slug, w.cover_url, "
             "       w.has_ebook, w.has_audiobook, s.score "
             "FROM work_similar s JOIN works w ON w.work_id = s.other_work_id "
             "WHERE s.work_id = ? AND s.method = ? ORDER BY s.rank LIMIT ?",

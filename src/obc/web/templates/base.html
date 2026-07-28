@@ -200,7 +200,6 @@
     .fmt-ic.audio{background:rgba(184,137,59,.9)}
     /* "this work also exists as X" hint — dim so it reads as secondary, not the
        card's own format (which keeps the solid colour above) */
-    .fmt-ic.alt{background:rgba(20,15,10,.35);opacity:.65;box-shadow:none}
 
     /* segmented control (format) */
     .seg{display:flex;gap:3px;background:var(--bg-soft);border:1px solid var(--line-strong);
@@ -578,7 +577,7 @@
       .toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')
       || encodeURIComponent(n));
     function go(it){
-      if(it.kind==='title') location.href='/book/'+encodeURIComponent(it.ppn);
+      if(it.kind==='title') location.href=it.url;
       else if(it.kind==='author') location.href=authorPath(it.value);
       else if(it.kind==='publisher') location.href='/?publisher='+encodeURIComponent(it.value);
       else if(it.kind==='genre') location.href='/?genre='+encodeURIComponent(it.value);
@@ -591,12 +590,12 @@
       items=[]; let html='';
       if(d.titles&&d.titles.length){
         html+=group('Titels');
-        d.titles.forEach(t=>{ items.push({kind:'title',ppn:t.ppn});
+        d.titles.forEach(t=>{ items.push({kind:'title',ppn:t.ppn,url:t.url});
           const ed=t.editions||{};
           const fmts=['ebook','audiobook'].map(f=>{ const audio=f==='audiobook';
             return ed[f]
-              ? `<span class="ac-fmt-btn ${audio?'audio':'ebook'}" data-ppn="${ed[f]}"
-                  title="${audio?'Luisterboek':'E-book'} — open deze editie">
+              ? `<span class="ac-fmt-btn ${audio?'audio':'ebook'}" data-url="${t.url}#${audio?'luisterboek':'e-book'}"
+                  title="${audio?'Luisterboek':'E-book'} — bekijk deze uitvoering">
                   <svg width="14" height="14"><use href="#ic-${audio?'audio':'book'}"/></svg></span>`
               : `<span class="ac-fmt-btn na ${audio?'audio':'ebook'}" title="Niet als ${audio?'luisterboek':'e-book'} beschikbaar">
                   <svg width="14" height="14"><use href="#ic-${audio?'audio':'book'}"/></svg></span>`; }).join('');
@@ -641,10 +640,10 @@
       panel.querySelectorAll('.ac-item').forEach(el=>{
         el.addEventListener('mousedown',e=>{e.preventDefault();go(items[+el.dataset.i]);});
       });
-      // available-edition icons open their own edition (greyed 'na' ones aren't clickable)
-      panel.querySelectorAll('.ac-fmt-btn[data-ppn]').forEach(btn=>{
+      // available-format icons jump to that format's block (greyed 'na' ones aren't clickable)
+      panel.querySelectorAll('.ac-fmt-btn[data-url]').forEach(btn=>{
         btn.addEventListener('mousedown',e=>{e.preventDefault();e.stopPropagation();
-          location.href='/book/'+btn.dataset.ppn;});
+          location.href=btn.dataset.url;});
       });
     }
     function highlight(){ panel.querySelectorAll('.ac-item').forEach((el,i)=>{

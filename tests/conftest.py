@@ -50,7 +50,7 @@ def client(catalog_db, monkeypatch):
 
     monkeypatch.setattr(appmod, "DB_PATH", catalog_db)
     monkeypatch.setattr(appmod, "author_bio", lambda name: None)
-    appmod._facets_cache.update(key=None, data=None)
+    # Nothing to reset between tests: the web process holds no derived state any
+    # more, so every route reads the catalog on every request.
     # No `with`: skip the lifespan so the optional refresh scheduler never starts.
     yield TestClient(appmod.app)
-    appmod._facets_cache.update(key=None, data=None)

@@ -74,3 +74,41 @@ def test_default_cmds_refreshes_recency_on_incremental_path(tmp_path, monkeypatc
     # incremental path can't re-derive recency from --sync, so it runs --recent
     (records / "1.json").write_text("{}", encoding="utf-8")
     assert ["scrape", "--recent"] in scheduler._default_cmds()
+
+
+def test_default_cmds_normalizes_first_when_the_schema_is_stale(tmp_path, monkeypatch):
+    """The deploy that renames the tables finds the old DB on the volume, and the
+    site 503s until the shape matches. Rebuilding from the records already there is
+    minutes; waiting out sync -> lists -> normalize is not."""
+    import sqlite3
+
+    from obc import db
+
+    records = tmp_path / "records"
+    records.mkdir()
+    (records / "1.json").write_text("{}", encoding="utf-8")   # seeded volume
+    monkeypatch.setattr(scrape, "RECORDS_DIR", records)
+    monkeypatch.delenv("OBC_ENRICH", raising=False)
+
+    stale = tmp_path / "stale.db"
+    conn = sqlite3.connect(stale)
+    conn.executescript("CREATE TABLE books (ppn TEXT PRIMARY KEY)")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(db, "DEFAULT_DB", stale)
+    assert scheduler._schema_stale() is True
+    assert scheduler._default_cmds()[0] == ["normalize"]
+
+    current = tmp_path / "current.db"
+    conn = sqlite3.connect(current)
+    conn.executescript("CREATE TABLE works (work_id TEXT PRIMARY KEY)")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(db, "DEFAULT_DB", current)
+    assert scheduler._schema_stale() is False
+    assert scheduler._default_cmds()[0] == ["scrape", "--sync"]
+
+    # no DB at all is the fresh-volume case: the full-harvest path handles it
+    monkeypatch.setattr(db, "DEFAULT_DB", tmp_path / "absent.db")
+    assert scheduler._schema_stale() is False
+    assert ["normalize"] not in scheduler._default_cmds()[:1]

@@ -102,7 +102,7 @@ def test_compute_facets(ro_conn):
 def test_suggest(ro_conn):
     titles = Q.suggest(ro_conn, "ontdek", 7)["title_rows"]
     assert len(titles) == 1                      # one row per work, never a twin
-    assert titles[0]["ppn"] == "001"
+    assert titles[0]["work_id"] == "001"
     assert titles[0]["ebook_ppn"] == "001" and titles[0]["audiobook_ppn"] == "002"
     assert titles[0]["slug"] == "de-ontdekking--anna-vrij"
     assert "Anna Vrij" in Q.suggest(ro_conn, "anna", 7)["authors"]  # author autocomplete
@@ -114,7 +114,7 @@ def test_suggest_matches_keywords_not_just_title(ro_conn):
     # The live search-bar dropdown used to only match the title column, so a keyword-only
     # term showed nothing there even though the full search page found it.
     titles = Q.suggest(ro_conn, "italiaans", 7)["title_rows"]
-    assert any(r["ppn"] == "005" for r in titles)
+    assert any(r["work_id"] == "005" for r in titles)
     assert titles[0]["format"] in ("ebook", "audiobook")  # format is available to render
 
 

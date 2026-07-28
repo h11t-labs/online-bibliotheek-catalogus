@@ -266,28 +266,28 @@
       </div>
       {% endif %}
 
-      {# a format icon: a link when the edition exists, else a greyed 'not available'
-         placeholder so the e-book / audiobook columns line up down the list. #}
-      {% macro fmt_ic(fmt, ppn) %}{% set audio = fmt == 'audiobook' %}{% if ppn %}<a class="fmt-ic {{ 'audio' if audio else 'ebook' }}" href="/book/{{ ppn }}" title="{{ 'Luisterboek' if audio else 'E-book' }} — open deze editie"><svg width="15" height="15"><use href="#ic-{{ 'audio' if audio else 'book' }}"/></svg></a>{% else %}<span class="fmt-ic {{ 'audio' if audio else 'ebook' }} na" title="Niet als {{ 'luisterboek' if audio else 'e-book' }} beschikbaar"><svg width="15" height="15"><use href="#ic-{{ 'audio' if audio else 'book' }}"/></svg></span>{% endif %}{% endmacro %}
+      {# a format icon: when the book is available in that format it links to its
+         block on the one book page; otherwise a greyed 'not available' placeholder,
+         so the e-book / audiobook columns line up down the list view. #}
+      {% macro fmt_ic(fmt, available, path) %}{% set audio = fmt == 'audiobook' %}{% if available %}<a class="fmt-ic {{ 'audio' if audio else 'ebook' }}" href="{{ path }}#{{ 'luisterboek' if audio else 'e-book' }}" title="{{ 'Luisterboek' if audio else 'E-book' }} — bekijk deze uitvoering"><svg width="15" height="15"><use href="#ic-{{ 'audio' if audio else 'book' }}"/></svg></a>{% else %}<span class="fmt-ic {{ 'audio' if audio else 'ebook' }} na" title="Niet als {{ 'luisterboek' if audio else 'e-book' }} beschikbaar"><svg width="15" height="15"><use href="#ic-{{ 'audio' if audio else 'book' }}"/></svg></span>{% endif %}{% endmacro %}
 
       {% if books %}
       <div class="grid{{ ' list' if view == 'list' }}">
         {% for b in books %}
-        {# editions of this work; the card (cover + title) opens the e-book by default,
-           and each format icon links straight to that edition. #}
-        {% set ed = editions_map.get(b['ppn'], {b['format']: b['ppn']}) %}
-        {% set primary_ppn = ed.get('ebook') or b['ppn'] %}
-        {% set bl = lists_map.get(b['ppn']) %}
+        {# one card per book: the cover + title open its page, and each format icon
+           jumps to that format's block on the same page. #}
+        {% set path = book_path(b) %}
+        {% set bl = lists_map.get(b['work_id']) %}
         <div class="book">
           <div class="cover">
             <img loading="lazy" src="{{ b['cover_url']|coverw(400) }}" alt="">
-            <a class="cover-link" href="/book/{{ primary_ppn }}" aria-label="{{ b['title'] }}"></a>
-            {# grid view: icons overlaid top-right of the cover #}
-            <div class="fmt-icons">{% for fmt in ['ebook', 'audiobook'] if fmt in ed %}{{ fmt_ic(fmt, ed[fmt]) }}{% endfor %}</div>
+            <a class="cover-link" href="{{ path }}" aria-label="{{ b['title'] }}"></a>
+            {# grid view: icons overlaid top-right of the cover — available formats only #}
+            <div class="fmt-icons">{% if b['has_ebook'] %}{{ fmt_ic('ebook', true, path) }}{% endif %}{% if b['has_audiobook'] %}{{ fmt_ic('audiobook', true, path) }}{% endif %}</div>
             {% if bl %}<span class="list-ribbon"><svg><use href="#ic-award"/></svg>{{ bl[0].name }}{% if bl[0].year %} {{ bl[0].year }}{% elif bl[0].position %} #{{ bl[0].position }}{% endif %}</span>{% endif %}
           </div>
           <div class="binfo">
-            <a class="t" href="/book/{{ primary_ppn }}">{{ b['title'] or '—' }}</a>
+            <a class="t" href="{{ path }}">{{ b['title'] or '—' }}</a>
             {% if b['author'] %}<span class="a">{{ b['author'] }}</span>{% endif %}
             {% if b['year'] or b['language'] or bl %}
             <div class="brow">
@@ -297,8 +297,8 @@
             {% endif %}
           </div>
           {# list view: e-book + audiobook, each in its own column (greyed when the
-             work has no such edition) so the icons line up down the list #}
-          <div class="book-fmts">{% for fmt in ['ebook', 'audiobook'] %}{{ fmt_ic(fmt, ed.get(fmt)) }}{% endfor %}</div>
+             book has no such edition) so the icons line up down the list #}
+          <div class="book-fmts">{{ fmt_ic('ebook', b['has_ebook'], path) }}{{ fmt_ic('audiobook', b['has_audiobook'], path) }}</div>
         </div>
         {% endfor %}
       </div>
