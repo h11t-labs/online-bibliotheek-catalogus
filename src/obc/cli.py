@@ -5,6 +5,7 @@ Commands
   initdb              create the SQLite schema
   normalize           load data/raw/*.json into the catalog
   stats               print catalog counts
+  works --report      audit the edition -> work grouping
   serve               run the search UI (uvicorn)
   scrape ...          harvest the catalog (see obc.scrape)
 """
@@ -45,10 +46,17 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--host", default="127.0.0.1")
     sp.add_argument("--port", type=int, default=8000)
     sp.add_argument("--reload", action="store_true")
-    sub.add_parser("scrape", help="harvest the catalog (see obc.scrape --help)")
+    # add_help=False so `obc scrape --help` reaches scrape's own parser (which owns
+    # the flags) instead of printing this empty stub's help and exiting.
+    sub.add_parser("scrape", help="harvest the catalog (see obc scrape --help)",
+                   add_help=False)
     lp = sub.add_parser("lists", help="update curated lists (bestsellers, prizes)")
     lp.add_argument("args", nargs="*",
                     help="optional 'update' action and/or specific list slugs")
+    wp = sub.add_parser("works", help="audit the edition -> work grouping")
+    wp.add_argument("--report", action="store_true",
+                    help="print works/editions totals, group sizes, false splits "
+                         "and suspicious merges")
     simp = sub.add_parser("similar",
                           help="precompute 'meer zoals dit' (LSA) recommendations")
     simp.add_argument("-k", type=int, default=24,
@@ -82,6 +90,9 @@ def main(argv: list[str] | None = None) -> int:
         from . import lists
         slugs = [a for a in args.args if a != "update"]  # 'update' is the implied action
         lists.update(slugs or None)
+    elif args.cmd == "works":
+        from . import db, work
+        return work.report(db.DEFAULT_DB)
     elif args.cmd == "similar":
         from . import similar
         similar.main(k=args.k, lsa_dim=args.lsa_dim)

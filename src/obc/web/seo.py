@@ -60,6 +60,27 @@ def genre_path(name: str) -> str:
     return f"/genre/{slugify(name) or quote(name, safe='')}"
 
 
+def book_href(slug: str | None, work_id: str) -> str:
+    """``/boek/de-ontdekking--anna-vrij--001`` — the one canonical URL per book.
+
+    The id is the truth and the slug is cosmetic: the route reads the id as
+    everything after the **last** ``--``, and our slugs never contain a double
+    hyphen (the library's own edition slugs sometimes end in one, which is why
+    they are not used here). An empty slug drops with its separator, so a book
+    whose title and author both hold no Latin characters still has a URL.
+    """
+    return f"/boek/{slug}--{work_id}" if slug else f"/boek/{work_id}"
+
+
+def book_path(row) -> str:
+    """The canonical path for a work row (or any row carrying work_id + slug).
+
+    One helper, so a link, a breadcrumb, a sitemap entry and the suggest JSON can
+    never disagree about where a book lives.
+    """
+    return book_href(row["slug"], row["work_id"])
+
+
 def origin(request: Request) -> str:
     """The absolute origin to build URLs on: the configured one, else this request's."""
     return SITE_URL or str(request.base_url).rstrip("/")
@@ -133,7 +154,7 @@ def robots_txt(request: Request):
 @router.get("/sitemap.xml")
 def sitemap_index(request: Request,
                   conn: sqlite3.Connection = Depends(indexes.get_conn)):
-    total = queries.total_books(conn)
+    total = queries.total_works(conn)
     base = origin(request)
     pages = max(1, (total + SITEMAP_PAGE - 1) // SITEMAP_PAGE)
     maps = [f"{base}/sitemap-static.xml", f"{base}/sitemap-browse.xml",
@@ -169,7 +190,7 @@ def sitemap_browse(request: Request,
     """
     index = indexes.authors_by_letter(conn)
     letters = indexes.letter_order(index)
-    paths = ["/authors", "/genres"]
+    paths = ["/authors", "/genres", "/e-books", "/luisterboeken"]
     paths += [f"/authors/{letter.lower()}" for letter in letters]
     # The hubs list everything; the sitemap only nominates pages that aggregate
     # something, so single-title pages stay reachable without being advertised as
@@ -178,16 +199,20 @@ def sitemap_browse(request: Request,
     paths += [author_path(row["name"])
               for letter in letters for row in index[letter]
               if row["titles"] >= queries.MIN_INDEXABLE_TITLES]
-    paths += [f"/series/{slug}" for slug, entry in sorted(indexes.series(conn).items())
-              if entry["titles"] >= queries.MIN_INDEXABLE_TITLES]
-    paths += [f"/genre/{slug}" for slug, entry in sorted(indexes.genres(conn).items())
-              if entry["titles"] >= queries.MIN_INDEXABLE_TITLES]
+    paths += [f"/series/{r['slug']}" for r in sorted(
+        queries.series_index(conn), key=lambda r: r["slug"])
+        if r["titles"] >= queries.MIN_INDEXABLE_TITLES]
+    paths += [f"/genre/{r['slug']}" for r in queries.genre_pages(conn)
+              if r["titles"] >= queries.MIN_INDEXABLE_TITLES]
     return _sitemap(origin(request), paths)
 
 
 @router.get("/sitemap-books-{n}.xml")
 def sitemap_books(request: Request, n: int,
                   conn: sqlite3.Connection = Depends(indexes.get_conn)):
-    rows = conn.execute("SELECT ppn FROM books ORDER BY ppn LIMIT ? OFFSET ?",
+    # One URL per book. The old sitemap listed both editions of every twinned
+    # title — ~12k URLs whose content duplicated another page, split link equity
+    # and spent crawl budget on one small VM for nothing.
+    rows = conn.execute("SELECT work_id, slug FROM works ORDER BY work_id LIMIT ? OFFSET ?",
                         (SITEMAP_PAGE, (max(n, 1) - 1) * SITEMAP_PAGE)).fetchall()
-    return _sitemap(origin(request), [f"/book/{r['ppn']}" for r in rows])
+    return _sitemap(origin(request), [book_path(r) for r in rows])

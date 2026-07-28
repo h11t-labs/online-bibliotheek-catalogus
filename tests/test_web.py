@@ -5,6 +5,8 @@ derived indexes behind the hubs in test_indexes.py."""
 
 import re
 
+from helpers import jsonld
+
 
 def test_home_and_filters(client):
     for path in ["/", "/?q=ontdekking", "/?format=ebook", "/?format=audiobook",
@@ -14,21 +16,24 @@ def test_home_and_filters(client):
         assert client.get(path).status_code == 200, path
 
 
-def test_format_filter_renders_only_matches(client):
+def test_format_filter_shows_books_available_in_that_format(client):
+    # 3 of the 5 works are available as an audiobook. The cards link the *book*,
+    # never the audiobook edition's old URL — that whole second URL space is gone.
     body = client.get("/?format=audiobook").text
-    assert "/book/002" in body  # the audiobook edition is shown
+    assert body.count('class="book"') == 3
+    assert "/boek/de-ontdekking--anna-vrij--001" in body
+    assert "/book/002" not in body
 
 
-def test_merged_editions_one_card_links_each_edition(client):
-    # 001 (e-book) and 002 (audiobook) are the same work under different PPNs. Search
-    # collapses them into ONE card: the cover + title open the e-book by default, and
-    # each edition has its own clickable format icon on the right of the cover.
+def test_one_card_per_book_with_a_badge_per_format(client):
+    # 001, 002 and 007 are three editions of one book. There is one card, one URL,
+    # and a format icon per format — each jumping to that format's block on the page.
     body = client.get("/?q=ontdekking").text
-    assert body.count('class="book"') == 1                 # a single merged card
-    assert 'class="cover-link" href="/book/001"' in body   # default select -> e-book
-    assert 'class="fmt-ic ebook"' in body                  # e-book icon...
-    assert 'class="fmt-ic audio"' in body                  # ...and audiobook icon
-    assert 'href="/book/002"' in body                      # audiobook edition reachable
+    assert body.count('class="book"') == 1
+    assert 'class="cover-link" href="/boek/de-ontdekking--anna-vrij--001"' in body
+    assert 'class="fmt-ic ebook"' in body
+    assert 'class="fmt-ic audio"' in body
+    assert 'href="/boek/de-ontdekking--anna-vrij--001#luisterboek"' in body
 
 
 def test_suggest(client):
@@ -58,16 +63,150 @@ def test_facet_endpoint(client):
 
 
 def test_book_detail_and_404(client):
-    assert client.get("/book/001").status_code == 200
+    assert client.get("/boek/de-ontdekking--anna-vrij--001").status_code == 200
     assert client.get("/book/zzznope").status_code == 404
+    assert client.get("/boek/zzznope").status_code == 404
 
 
 def test_book_detail_mobile_layout(client):
-    # the cover + borrow button form a centered hero on phones (not a small left-aligned
-    # column with a tiny button), and the meta table keeps a usable label width
-    body = client.get("/book/001").text
+    # the cover forms a centered hero on phones (not a small left-aligned column),
+    # and the meta table keeps a usable label width
+    body = client.get("/boek/de-ontdekking--anna-vrij--001").text
     assert "align-items:center" in body
-    assert ".poster .btn{width:100%" in body
+    assert ".edition .btn{width:100%" in body
+
+
+CANON_001 = "/boek/de-ontdekking--anna-vrij--001"
+
+
+def test_old_book_urls_redirect_to_the_one_canonical_url(client):
+    """Both editions' /book/{ppn} URLs — ~68k of them indexed, ~12k of them
+    duplicates of another page — 301 to the book's single canonical URL. A stale or
+    wrong slug does too: the id is the truth, the slug is cosmetic."""
+    for old in ("/book/001", "/book/002", "/book/007",     # e-book + both audiobooks
+                "/boek/001",                              # bare id, no slug
+                "/boek/foute-slug--001",                  # a slug that has moved on
+                "/boek/de-ontdekking--anna-vrij--002"):   # right slug, edition id
+        r = client.get(old, follow_redirects=False)
+        assert r.status_code == 301, old
+        assert r.headers["location"] == CANON_001, old
+    assert client.get("/book/zzznope", follow_redirects=False).status_code == 404
+
+
+def test_canonical_book_page_has_one_block_per_edition(client):
+    """The honest answer to "each item has its own properties sometimes": shared
+    facts once, then a block per edition with its own fields and borrow link."""
+    body = client.get(CANON_001).text
+    assert 'id="e-book"' in body and 'id="luisterboek"' in body
+    # its own borrow button per edition, three editions
+    for ppn in ("001", "002", "007"):
+        assert f"/catalogus/{ppn}/" in body, ppn
+    # one primary CTA per *format* under the cover, carrying that format's colour…
+    assert body.count('class="borrow-btn ebook"') == 1
+    assert body.count('class="borrow-btn audio"') == 1
+    # …and a button in the block only for the edition the CTA cannot offer: the
+    # second audiobook. No link is ever shown twice.
+    assert body.count("lenen ↗") == 1
+    assert 'class="borrow-more"' in body             # points at that leftover edition
+    # a narrator is an audiobook fact: it must not appear above the e-book block
+    assert "Jan Stem" in body
+    assert "Jan Stem" not in body[:body.index('id="e-book"')]
+    assert "Piet Stem" in body                       # the second audiobook's narrator
+    # one work with two editions, so neither format is the other's afterthought
+    assert "Ook als luisterboek" not in body
+    assert body.count('class="badge"') == 1 and body.count('class="badge audio"') == 1
+
+
+def test_book_page_without_authors_gets_a_title_only_slug(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from obc import db
+    from obc.web import app as appmod
+    from obc.web import indexes as indexmod
+    path = tmp_path / "noauthor.db"
+    conn = db.connect(path)
+    db.bulk_load(conn, [{"ppn": "1", "title": "Zonder Auteur", "format": "ebook"}])
+    db.build_genre_taxonomy(conn)
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+    monkeypatch.setattr(indexmod, "DB_PATH", path)
+    monkeypatch.setattr(appmod, "author_bio", lambda name: None)
+    client = TestClient(appmod.app)
+    # the empty author piece drops together with its separator
+    assert client.get("/boek/zonder-auteur--1").status_code == 200
+    r = client.get("/boek/1", follow_redirects=False)
+    assert r.status_code == 301 and r.headers["location"] == "/boek/zonder-auteur--1"
+
+
+def test_sitemap_books_lists_only_canonical_work_urls(client):
+    body = client.get("/sitemap-books-1.xml").text
+    locs = re.findall(r"<loc>(.*?)</loc>", body)
+    assert len(locs) == 5                            # five books, not nine editions
+    assert all("/boek/" in loc for loc in locs)
+    assert not [loc for loc in locs if "/book/" in loc]
+    assert any(loc.endswith(CANON_001) for loc in locs)
+
+
+def test_format_landing_pages_are_honest_now(client):
+    """#27 removed /e-books and /luisterboeken because they counted editions as
+    titles and showed one work up to four times. ?format= is a work-level flag, so
+    the counts and the cards below them are the same books."""
+    ebooks = client.get("/e-books")
+    assert ebooks.status_code == 200
+    assert ebooks.text.count('class="book"') == 5
+    audio = client.get("/luisterboeken")
+    assert audio.status_code == 200
+    assert audio.text.count('class="book"') == 3
+    browse = client.get("/sitemap-browse.xml").text
+    assert "/e-books<" in browse and "/luisterboeken<" in browse
+
+
+def test_suggest_carries_the_canonical_url_and_both_editions(client):
+    data = client.get("/suggest?q=ontdek").json()
+    assert len(data["titles"]) == 1                  # never a twin in the dropdown
+    title = data["titles"][0]
+    assert title["ppn"] == "001"
+    assert title["editions"] == {"ebook": "001", "audiobook": "002"}
+    # new: the row click uses this instead of composing /book/{ppn} and eating a 301
+    assert title["url"] == CANON_001
+
+
+def test_book_jsonld_carries_one_workexample_per_edition(client):
+    """One Book for the work with a workExample per edition — the pattern
+    schema.org documents for this — replacing two competing Book entities that each
+    claimed the same title."""
+    book = [d for d in jsonld(client.get(CANON_001).text)
+            if d.get("@type") == "Book"][0]
+    assert book["url"].endswith(CANON_001)
+    assert "bookFormat" not in book                  # that is per example now
+    assert "isbn" not in book
+    examples = book["workExample"]
+    assert len(examples) == 3
+    assert examples[0]["bookFormat"] == "https://schema.org/EBook"
+    assert examples[1]["bookFormat"] == "https://schema.org/AudiobookFormat"
+    assert {e["isbn"] for e in examples} == {"9789021400001", "9789021400002",
+                                             "9789021400007"}
+
+
+def test_old_schema_db_serves_the_bootstrap_503(tmp_path, monkeypatch):
+    """The deploy window: the volume still holds the pre-works DB until the refresh
+    completes. That must render "de catalogus wordt opgebouwd", not a stack trace."""
+    import sqlite3
+
+    from fastapi.testclient import TestClient
+
+    from obc.web import app as appmod
+    from obc.web import indexes as indexmod
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript("CREATE TABLE books (ppn TEXT PRIMARY KEY, title TEXT);"
+                       "INSERT INTO books VALUES ('001', 'De Ontdekking');")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(indexmod, "DB_PATH", path)
+    resp = TestClient(appmod.app).get("/")
+    assert resp.status_code == 503
+    assert "wordt opgebouwd" in resp.text
 
 
 def test_author_page(client):
@@ -167,7 +306,7 @@ def test_genre_and_format_pages(client):
     genre = client.get("/genre/spanning-thrillers")
     assert genre.status_code == 200
     assert "<h1>Spanning &amp; Thrillers</h1>" in genre.text
-    assert "/book/003" in genre.text                     # a thriller from the fixture
+    assert "/boek/thriller-in-de-nacht--bob-de-wit--003" in genre.text  # a fixture thriller
     assert 'href="/?genre=Spanning%20%26%20Thrillers"' in genre.text
     assert client.get("/genre/bestaat-niet").status_code == 404
     # one canonical spelling, as with the author letters
@@ -188,6 +327,8 @@ def test_browse_pages_carry_more_than_a_wall_of_covers(client):
     assert "titels" in desc and len(desc) <= 300
 
 
+
+
 def test_authors_hub(client):
     hub = client.get("/authors")
     assert hub.status_code == 200
@@ -203,6 +344,19 @@ def test_authors_hub(client):
     assert client.get("/authors/zzz").status_code == 404
     # and it's linked from the shared header, not just the sitemap
     assert 'href="/authors"' in client.get("/").text
+
+
+def test_borrow_button_duration_reads_as_a_length(client):
+    from obc.web.app import _dur_short
+    # the catalog stores speelduur in both shapes; the button shows one
+    assert _dur_short("3:17:19") == "3 u 17 min"
+    assert _dur_short("9 uur 1 minuut") == "9 u 1 min"
+    assert _dur_short("0:42:10") == "42 min"
+    assert _dur_short("8:00:00") == "8 u"
+    assert _dur_short("7 uur") == "7 u"
+    # unparseable and empty pass through rather than guessing
+    assert _dur_short("onbekend") == "onbekend"
+    assert _dur_short(None) == ""
 
 
 def test_goatcounter_snippet_present(client):
@@ -276,9 +430,7 @@ def test_missing_db_shows_friendly_bootstrap_page(catalog_db, monkeypatch):
 
     monkeypatch.setattr(indexmod, "DB_PATH", catalog_db.parent / "does-not-exist.db")
     monkeypatch.setattr(appmod, "author_bio", lambda name: None)
-    indexmod.catalog_cache.clear()
     resp = TestClient(appmod.app).get("/stats")
-    indexmod.catalog_cache.clear()
     assert resp.status_code == 503
     assert "wordt opgebouwd" in resp.text
 
@@ -291,7 +443,7 @@ def test_version_matches_package_metadata():
 
 
 def test_security_headers_on_every_response(client):
-    for path in ("/", "/book/001"):
+    for path in ("/", "/boek/de-ontdekking--anna-vrij--001"):
         r = client.get(path)
         assert r.status_code == 200
         assert r.headers["X-Content-Type-Options"] == "nosniff"
@@ -316,7 +468,7 @@ def test_connect_ro_usable_across_threads(catalog_db):
 
     def use():
         try:
-            out["n"] = conn.execute("SELECT count(*) FROM books").fetchone()[0]
+            out["n"] = conn.execute("SELECT count(*) FROM works").fetchone()[0]
         except Exception as exc:  # noqa: BLE001 — capture to assert in main thread
             out["err"] = exc
 

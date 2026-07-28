@@ -3,7 +3,7 @@
 Each *provider* is a callable returning one or more list dicts
 (``{slug, name, url, description, items:[{position,title,author,isbn,cover_url}]}``).
 Lists are written to ``data/raw/lists/{slug}.json``; :func:`obc.normalize` then
-matches items to catalog PPNs and fills ``lists`` / ``list_items`` / ``book_lists``.
+matches items to catalog PPNs and fills ``lists`` / ``list_items`` / ``work_lists``.
 
 Add an automated list: write a ``fetch_all()`` provider and append it to PROVIDERS.
 Add a one-off / manually curated list: just drop a JSON file with the same shape

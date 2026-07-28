@@ -111,20 +111,19 @@ def test_unsluggable_authors_are_not_merged_into_one_entry(client, ro_conn):
     assert all(slugify(e["name"]) for e in entries), "an entry has no slug to link to"
 
 
-def test_colliding_genre_spellings_share_one_page(client, ro_conn):
+def test_colliding_genre_spellings_share_one_page(ro_conn):
     # the catalog holds "Biografieën" twice — combining diaeresis and precomposed —
-    # and both fold to `biografieen`. Keyed on the slug, a plain dict dropped one
-    # spelling and its books with it.
+    # and both fold to `biografieen`. Every spelling has to end up on that one page,
+    # or a genre (and its books) silently vanishes. The merge runs at build time now;
+    # what the page reads back is genre_pages.
     from obc.textnorm import slugify
-    from obc.web import indexes as indexmod
     from obc.web import queries
-    rows = queries.genre_index(ro_conn)
-    merged = indexmod.genres(ro_conn)
-    assert sum(len(e["names"]) for e in merged.values()) == len(rows), "a genre vanished"
-    for slug, entry in merged.items():
-        assert slugify(entry["name"]) == slug
-        assert entry["titles"] == sum(
-            r["titles"] for r in rows if slugify(r["name"]) == slug)
+    pages = queries.genre_pages(ro_conn)
+    covered = {name for p in pages for name in queries.genre_spellings(ro_conn, p["slug"])}
+    all_genres = {r["name"] for r in ro_conn.execute("SELECT name FROM genres")}
+    assert covered == all_genres, "a genre spelling reaches no page"
+    for page in pages:
+        assert slugify(page["name"]) == page["slug"]
 
 
 def test_genre_slugs_are_unique_and_stable(client, ro_conn):
@@ -132,13 +131,13 @@ def test_genre_slugs_are_unique_and_stable(client, ro_conn):
     from obc.web import queries
     assert slugify("Spanning & Thrillers") == "spanning-thrillers"
     assert slugify("Poëzie & Theater") == "poezie-theater"
-    rows = queries.genre_index(ro_conn)
-    slugs = [slugify(r["name"]) for r in rows]
+    rows = queries.genre_pages(ro_conn)
+    slugs = [r["slug"] for r in rows]
     assert all(slugs) and len(set(slugs)) == len(slugs)   # no blanks, no collisions
     browse = client.get("/sitemap-browse.xml").text
     # the hub lists every genre; the sitemap nominates the ones that aggregate
     for r in rows:
-        promoted = f"/genre/{slugify(r['name'])}<" in browse
+        promoted = f"/genre/{r['slug']}<" in browse
         assert promoted == (r["titles"] >= queries.MIN_INDEXABLE_TITLES), r["name"]
     assert "/genres<" in browse
 
@@ -162,17 +161,19 @@ def _catalog_with_genre_parents(tmp_path):
     if sub not in ids:
         conn.execute("INSERT INTO genres(name) VALUES (?)", (sub,))
         ids[sub] = conn.execute("SELECT id FROM genres WHERE name = ?", (sub,)).fetchone()[0]
-        ppn = conn.execute(
-            "SELECT book_ppn FROM book_genres WHERE genre_id = ? LIMIT 1",
+        wid = conn.execute(
+            "SELECT work_id FROM work_genres WHERE genre_id = ? LIMIT 1",
             (ids[top],)).fetchone()[0]
-        conn.execute("INSERT INTO book_genres(book_ppn, genre_id) VALUES (?, ?)",
-                     (ppn, ids[sub]))
-    conn.execute("UPDATE book_genres SET parent_id = ? WHERE genre_id = ?",
+        conn.execute("INSERT INTO work_genres(work_id, genre_id) VALUES (?, ?)",
+                     (wid, ids[sub]))
+    conn.execute("UPDATE work_genres SET parent_id = ? WHERE genre_id = ?",
                  (ids[top], ids[sub]))
     # one jeugd title, so the hub has two audiences to switch between — the live
     # catalog files 5.762 books that way and gives them their own taxonomy
-    conn.execute("UPDATE books SET audience = 'Jeugd' WHERE ppn = '005'")
+    conn.execute("UPDATE works SET audience = 'Jeugd' WHERE work_id = '005'")
     conn.commit()
+    # the taxonomy is a build artifact, so rebuild it now that the parents are set
+    db.build_genre_taxonomy(conn)
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")   # so mode=ro readers see it
     conn.close()
     return path
@@ -187,13 +188,13 @@ def test_genre_hierarchy(tmp_path, monkeypatch):
     path = _catalog_with_genre_parents(tmp_path)
     monkeypatch.setattr(indexmod, "DB_PATH", path)
     monkeypatch.setattr(appmod, "author_bio", lambda name: None)
-    indexmod.catalog_cache.clear()
     conn = queries.connect_ro(path)
-    index = indexmod.genres(conn)
 
-    assert index["thrillers"]["parent"] == "spanning-thrillers"
-    assert "thrillers" in index["spanning-thrillers"]["children"]
-    assert index["spanning-thrillers"]["parent"] == ""      # a top genre has none
+    assert queries.genre_page(conn, "thrillers")["parent_slug"] == "spanning-thrillers"
+    assert [c["slug"] for c in queries.genre_children(conn, "spanning-thrillers")] == \
+        ["thrillers"]
+    # a top genre has no parent
+    assert queries.genre_page(conn, "spanning-thrillers")["parent_slug"] == ""
 
     client = TestClient(appmod.app)
     hub = client.get("/genres").text
@@ -203,24 +204,23 @@ def test_genre_hierarchy(tmp_path, monkeypatch):
     # jeugd and volwassenen are separate taxonomies, switched rather than stacked
     # A tree may only state what its own audience files: every parent it shows
     # must be one this audience's own rows actually name.
-    data = indexmod.genre_data(conn)
-    for aud, tops in data["trees"].items():
-        for top in tops:
+    for aud, _label in appmod.AUDIENCES:
+        for top in queries.genre_tree(conn, aud):
             for kid in top["children"]:
-                # books with an unknown audience land on the default shelf, so the
-                # check has to resolve the audience the way the app does
-                known = [a for a, _ in indexmod.AUDIENCES]
+                # works with an unknown audience land on the default shelf, so the
+                # check has to resolve the audience the way the build does
+                known = [a for a, _ in appmod.AUDIENCES]
                 marks = ",".join("?" * len(known))
                 named = conn.execute(
-                    "SELECT COUNT(*) FROM book_genres bg "
-                    "JOIN genres g ON g.id = bg.genre_id "
-                    "JOIN genres p ON p.id = bg.parent_id "
-                    "JOIN books b ON b.ppn = bg.book_ppn "
+                    "SELECT COUNT(*) FROM work_genres wg "
+                    "JOIN genres g ON g.id = wg.genre_id "
+                    "JOIN genres p ON p.id = wg.parent_id "
+                    "JOIN works w ON w.work_id = wg.work_id "
                     "WHERE g.name = ? AND p.name = ? AND ? = (CASE WHEN "
-                    f"  lower(COALESCE(b.audience, '')) IN ({marks}) "
-                    "  THEN lower(COALESCE(b.audience, '')) ELSE ? END)",
+                    f"  lower(COALESCE(w.audience, '')) IN ({marks}) "
+                    "  THEN lower(COALESCE(w.audience, '')) ELSE ? END)",
                     (kid["name"], top["name"], aud, *known,
-                     indexmod.AUDIENCES[0][0])).fetchone()[0]
+                     appmod.AUDIENCES[0][0])).fetchone()[0]
                 assert named, f"{aud}: {kid['name']} under {top['name']}"
     assert 'class="audbar"' in hub
     assert 'href="/genres?publiek=jeugd"' in hub
@@ -239,44 +239,5 @@ def test_genre_hierarchy(tmp_path, monkeypatch):
     parent = client.get("/genre/spanning-thrillers").text
     assert 'class="subgenres"' in parent and 'href="/genre/thrillers"' in parent
     conn.close()
-    indexmod.catalog_cache.clear()
 
 
-def test_catalog_cache_rebuilds_when_the_catalog_does(tmp_path, monkeypatch):
-    """A rebuild must invalidate every derived index at once.
-
-    `normalize` publishes a rebuild by swapping the file in, so the version is
-    the file's mtime. Everything derived from the catalog hangs off that single
-    key — which is the point of having one cache rather than four.
-    """
-    import sampledata
-
-    from obc import db
-    from obc.web import indexes as indexmod
-    from obc.web import queries
-
-    path = tmp_path / "catalog.db"
-
-    def build(records):
-        conn = db.connect(path)
-        db.bulk_load(conn, records, [])
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        conn.close()
-
-    records = sampledata.records()
-    build(records)
-    monkeypatch.setattr(indexmod, "DB_PATH", path)
-    indexmod.catalog_cache.clear()
-
-    conn = queries.connect_ro(path)
-    before = len(indexmod.genres(conn))
-    conn.close()
-
-    # a second build with one genre fewer, published the way normalize does
-    stripped = [{**r, "subjects": []} for r in records]
-    path.unlink()
-    build(stripped)
-    conn = queries.connect_ro(path)
-    assert len(indexmod.genres(conn)) < before, "the cache outlived its catalog"
-    conn.close()
-    indexmod.catalog_cache.clear()

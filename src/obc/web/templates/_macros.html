@@ -1,22 +1,18 @@
-{% macro fmt_icons(own_format, all_formats=[]) -%}
-{# own_format = this card's actual edition; all_formats = every format the work has
-   (a title can have separate e-book/audiobook PPNs). The card's own format gets the
-   solid badge; another format the work also has (but this card isn't) gets a dim
-   "also available" badge — so two cards for the same work look visibly different
-   instead of identical. #}
+{% macro fmt_icons(w) -%}
+{# Availability badges for a WORK card: one solid badge per format the book has.
+   There is one card per book now, so there is no "this card's own edition" to
+   distinguish from "also available as" — the dim alt badge existed only to tell
+   two cards for the same work apart. #}
 <div class="fmt-icons">
-  {% for f in ['ebook', 'audiobook'] %}
-    {% if f == own_format %}
-    <span class="fmt-ic {{ 'audio' if f == 'audiobook' else 'ebook' }}"
-          title="{{ 'Luisterboek' if f == 'audiobook' else 'E-book' }}">
-      <svg width="15" height="15"><use href="#ic-{{ 'audio' if f == 'audiobook' else 'book' }}"/></svg>
-    </span>
-    {% elif f in all_formats %}
-    <span class="fmt-ic alt"
-          title="Ook beschikbaar als {{ 'luisterboek' if f == 'audiobook' else 'e-book' }}">
-      <svg width="15" height="15"><use href="#ic-{{ 'audio' if f == 'audiobook' else 'book' }}"/></svg>
-    </span>
-    {% endif %}
-  {% endfor %}
+  {% if w['has_ebook'] %}
+  <span class="fmt-ic ebook" title="E-book">
+    <svg width="15" height="15"><use href="#ic-book"/></svg>
+  </span>
+  {% endif %}
+  {% if w['has_audiobook'] %}
+  <span class="fmt-ic audio" title="Luisterboek">
+    <svg width="15" height="15"><use href="#ic-audio"/></svg>
+  </span>
+  {% endif %}
 </div>
 {%- endmacro %}

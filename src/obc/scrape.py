@@ -12,7 +12,8 @@ Two enumeration modes:
 
 * ``--from-file PATH`` — fetch + parse individual detail pages from a list of
   catalog URLs / ``ppn,slug`` lines / JSON. Also used by ``--enrich`` to add
-  detail-only fields (ISBN, full subjects, narrator) to browsed records.
+  detail-only fields (ISBN, full subjects, narrator) to browsed records, and by
+  ``--relink`` to capture the cross-edition links that decide work identity.
 """
 
 from __future__ import annotations
@@ -299,6 +300,51 @@ def enrich(rate: float, limit=None) -> None:
     logger.info(f"Enriched {n} record(s)")
 
 
+def relink(rate: float, limit=None) -> None:
+    """Re-fetch detail pages to capture the ``related_ppns`` cross-links.
+
+    Targeted, not a full re-enrich: an absent ``also_available_as`` label means the
+    page had no twin block when it was enriched, so refetching it would yield
+    nothing — the label is a free oracle for which pages carry a link. Twins
+    licensed *after* a record was enriched are covered anyway, because the newer
+    edition's own enrich captures the link and ``work.group_editions`` unions in
+    both directions. So this reaches the same grouping evidence as re-scraping all
+    ~68k detail pages at roughly a third of the requests.
+
+    ``enrich()`` can't do this: it skips records that already have an ISBN, which
+    is nearly all of them. Self-resuming like every other pass — a merged record
+    gains ``related_ppns`` and drops out of the selector.
+    """
+    write = _writer()
+    todo = []
+    for path in sorted(RECORDS_DIR.glob("*.json")):
+        rec = read_json(path)
+        if not isinstance(rec, dict):
+            continue
+        if not rec.get("also_available_as") or rec.get("related_ppns"):
+            continue
+        if not rec.get("slug"):
+            continue
+        todo.append(rec)
+    logger.info(f"Relinking {len(todo)} record(s) whose label names a twin but "
+                "carry no captured link")
+    n = 0
+    # cache=False: the merged record is the persistent result, so there is no
+    # reason to accumulate detail HTML on the volume.
+    with Client(per_second=rate, cache=False) as client:
+        for rec in todo:
+            detail = client.fetch_detail(rec["ppn"], rec["slug"])
+            if detail:
+                merged = _merge(rec, detail)
+                write(merged)
+                n += 1
+                if n % 50 == 0:
+                    logger.info(f"  …{n} relinked")
+            if limit and n >= limit:
+                break
+    logger.info(f"Relinked {n} record(s)")
+
+
 def harvest_details(pairs: Iterable[tuple[str, str]], rate: float, limit):
     write = _writer()
     n = 0
@@ -398,6 +444,9 @@ def main(argv: list[str] | None = None) -> int:
     src.add_argument("--from-file", type=Path, help="detail pages from a URL list")
     src.add_argument("--enrich", action="store_true",
                      help="add detail fields (ISBN, genres) to browsed records")
+    src.add_argument("--relink", action="store_true",
+                     help="re-fetch detail pages whose 'ook beschikbaar als' label "
+                          "names a twin but whose cross-link was never captured")
     p.add_argument("--formats", default="ebook,audiobook",
                    help="comma list: ebook,audiobook")
     p.add_argument("--rate", type=float, default=3.0, help="requests/second")
@@ -409,6 +458,8 @@ def main(argv: list[str] | None = None) -> int:
         harvest_details(enumerate_from_file(args.from_file), args.rate, args.limit)
     elif args.enrich:
         enrich(args.rate, args.limit)
+    elif args.relink:
+        relink(args.rate, args.limit)
     elif args.ereader:
         with Client(per_second=args.rate) as client:
             collect_ereader(client)

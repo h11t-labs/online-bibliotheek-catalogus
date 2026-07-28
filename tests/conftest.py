@@ -15,6 +15,10 @@ from obc import db
 def _build_catalog(path) -> None:
     conn = db.connect(path)
     db.bulk_load(conn, sampledata.records(), sampledata.lists())
+    # The genre taxonomy is a post-pass because it reads work_genres.parent_id,
+    # which normalize stamps after the rebuild — the fixture mirrors that order so
+    # the genre hub and pages have the same tables to read as production.
+    db.build_genre_taxonomy(conn)
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")  # so mode=ro readers see it
     conn.close()
 
@@ -47,7 +51,7 @@ def client(catalog_db, monkeypatch):
 
     monkeypatch.setattr(indexmod, "DB_PATH", catalog_db)
     monkeypatch.setattr(appmod, "author_bio", lambda name: None)
-    indexmod.catalog_cache.clear()
+    # Nothing to reset between tests: the web process holds no derived state any
+    # more, so every route reads the catalog on every request.
     # No `with`: skip the lifespan so the optional refresh scheduler never starts.
     yield TestClient(appmod.app)
-    indexmod.catalog_cache.clear()

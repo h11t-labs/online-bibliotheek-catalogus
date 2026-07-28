@@ -123,14 +123,43 @@ def _nlnum(n: int) -> str:
     return f"{n:,}".replace(",", ".")
 
 
+_DUR_CLOCK = re.compile(r"^(\d+):([0-5]\d)(?::[0-5]\d)?$")
+_DUR_WORDS = re.compile(r"(?:(\d+)\s*uur)?(?:\D*?(\d+)\s*minu)?", re.I)
+
+
+def _dur_short(value) -> str:
+    """Speelduur in one shape: '3:17:19' and '9 uur 1 minuut' both -> '3 u 17 min'.
+
+    The catalog stores both spellings, which the meta rows can carry unnoticed but
+    the borrow button cannot: there it sits one line below the e-book's page count,
+    where a raw 'h:mm:ss' reads as a timestamp rather than a length. Anything
+    matching neither shape passes through untouched.
+    """
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    if m := _DUR_CLOCK.match(s):
+        hours, minutes = int(m[1]), int(m[2])
+    else:
+        m = _DUR_WORDS.match(s)
+        if not m or not (m[1] or m[2]):
+            return s
+        hours, minutes = int(m[1] or 0), int(m[2] or 0)
+    if hours and minutes:
+        return f"{hours} u {minutes} min"
+    return f"{hours} u" if hours else f"{minutes} min"
+
+
 _templates.env.filters["coverw"] = _coverw
 _templates.env.filters["nldate"] = _nldate
 _templates.env.filters["author_path"] = seo.author_path
 _templates.env.filters["series_path"] = seo.series_path
 _templates.env.filters["genre_path"] = seo.genre_path
 _templates.env.filters["nlnum"] = _nlnum
+_templates.env.filters["dur_short"] = _dur_short
 _templates.env.globals["url_with"] = _url_with
 _templates.env.globals["url_without"] = _url_without
+_templates.env.globals["book_path"] = seo.book_path
 _templates.env.globals["data_updated"] = indexes.data_updated
 _templates.env.globals["site_url"] = seo.SITE_URL
 _templates.env.globals["site_name"] = seo.SITE_NAME
@@ -166,8 +195,9 @@ app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan
 # Pages with no per-user state and a catalog that only changes on the daily rebuild,
 # so they're safe to cache publicly — this offloads repeat hits and crawler traffic
 # from the single small VM. Detail pages cache an hour; the browse home a few minutes.
-_CACHE_PREFIXES = ("/book/", "/author", "/series/", "/list", "/stats", "/about",
-                   "/genre")
+# "/book/" stays: those are permanent redirects now, and a redirect is cacheable too.
+_CACHE_PREFIXES = ("/boek/", "/book/", "/author", "/series/", "/list", "/stats",
+                   "/about", "/genre", "/e-books", "/luisterboeken")
 
 
 # Templates use inline <script>/<style> blocks (base.html), GoatCounter loads its
@@ -251,8 +281,13 @@ async def _db_unavailable(request: Request, exc: sqlite3.OperationalError):
     development and monitoring instead of hiding behind "catalogus wordt opgebouwd".
     """
     msg = str(exc).lower()
+    # The `books`/`books_fts` entries stay alongside the new names: on the deploy
+    # that renames the tables the volume still holds the old DB until the refresh
+    # completes, and either shape's absence is the same bootstrap state.
     bootstrap_errors = (
         "unable to open database file",
+        "no such table: works",
+        "no such table: works_fts",
         "no such table: books",
         "no such table: books_fts",
     )
@@ -346,7 +381,7 @@ def _near_matches(term: str, limit: int = 6, titles: bool = True) -> list[dict]:
              "url": f"/?genre={quote(name, safe='')}"} for name in data["genres"]]
     if titles:
         out += [{"kind": "book", "icon": "book", "label": row["title"] or "—",
-                 "sub": row["author"] or "", "url": f"/book/{row['ppn']}"}
+                 "sub": row["author"] or "", "url": seo.book_path(row)}
                 for row in data["title_rows"]]
     return out[:limit]
 
@@ -441,7 +476,6 @@ def _browse_page(request: Request, conn: sqlite3.Connection, *, heading: str,
         "heading": heading, "lead": lead, "books": result.rows,
         "total": result.total, "summary": summary, "search_url": search_url,
         "shown": len(result.rows),
-        "formats_map": queries.formats_map(conn, result.rows),
         "lists_map": queries.lists_map(conn, result.rows),
         "parent": parent, "children": children or [],
         "breadcrumbs": seo.breadcrumbs(
@@ -495,10 +529,9 @@ def search(
 
     result = queries.search(conn, filters, page, page_size)
     rows = result.rows
-    facets = indexes.facets(conn)
-    editions_map = queries.editions_map(conn, rows)
+    facets = queries.compute_facets(conn)
     lists_map = queries.lists_map(conn, rows)
-    total_indexed = queries.total_books(conn)
+    total_indexed = queries.total_works(conn)
 
     total = result.total
     pages = max(1, (total + page_size - 1) // page_size)
@@ -561,7 +594,7 @@ def search(
         "view": view, "per_page_options": list(PER_PAGE_OPTIONS),
         "chips": chips, "has_filters": bool(q or chips), "state": state,
         "robots": "noindex,follow" if (q or chips) else "index,follow",
-        "editions_map": editions_map, "lists_map": lists_map,
+        "lists_map": lists_map,
         "list_options": [lst["slug"] for lst in facets["lists"]],
         "list_labels": list_labels,
     })
@@ -577,19 +610,16 @@ def series_page(request: Request, name: str, conn: sqlite3.Connection = Depends(
     Like the author pages, the encoded-name URLs keep working and redirect.
     """
     slug = slugify(name)
-    entry = indexes.series(conn).get(slug)
+    entry = queries.series_row(conn, slug)
     if entry:
         if name != slug:
             return RedirectResponse(f"/series/{slug}", status_code=301)
-        rows = queries.series_books(conn, tuple(entry["names"]))
         name = entry["name"]
-    else:
-        rows = queries.series_books(conn, (name,))
+    rows = queries.series_books(conn, slug)
     if not rows:
         return _not_found(request, "series", _slug_words(name))
-    formats_map = queries.formats_map(conn, rows)
     return _templates.TemplateResponse(request, "series.html", {
-        "name": name, "books": rows, "total": len(rows), "formats_map": formats_map,
+        "name": name, "books": rows, "total": len(rows),
         "breadcrumbs": seo.breadcrumbs(request, (f"Reeks {name}", "")),
         "meta_description": f"Alle {len(rows)} delen van de reeks {name} in de online "
                             f"Bibliotheek — op volgorde, met e-book en luisterboek."})
@@ -629,8 +659,8 @@ def genres_index(request: Request, publiek: str = AUDIENCES[0][0],
     as the author hub's sort toggle: the clean path stays canonical, and the
     ?-variant is robots-disallowed, so it adds no crawlable duplicate.
     """
-    data = indexes.genre_data(conn)
-    index, trees = data["flat"], data["trees"]
+    trees = {key: queries.genre_tree(conn, key) for key, _ in AUDIENCES}
+    total = len(queries.genre_pages(conn))
     # One section per audience: a subgenre sits under the parent that is right for
     # *that* shelf, so "Avontuur" appears under Spanning & Avontuur for jeugd and
     # under Spanning & Thrillers for volwassenen — as the catalog actually files it.
@@ -642,9 +672,9 @@ def genres_index(request: Request, publiek: str = AUDIENCES[0][0],
     shown = next((a for a in audiences if a["key"] == publiek), None)
     return _templates.TemplateResponse(request, "genres.html", {
         "audiences": audiences, "publiek": publiek, "shown": shown,
-        "genres": trees.get(publiek, []), "total": len(index),
+        "genres": trees.get(publiek, []), "total": total,
         "breadcrumbs": seo.breadcrumbs(request, ("Genres", "")),
-        "meta_description": f"Alle {_nlnum(len(index))} genres in de online "
+        "meta_description": f"Alle {_nlnum(total)} genres in de online "
                             f"Bibliotheek, apart voor volwassenen en jeugd — met "
                             f"het aantal e-books en luisterboeken per genre."})
 
@@ -652,24 +682,46 @@ def genres_index(request: Request, publiek: str = AUDIENCES[0][0],
 @app.get("/genre/{slug}", response_class=HTMLResponse)
 def genre_page(request: Request, slug: str,
                conn: sqlite3.Connection = Depends(get_conn)):
-    entry = indexes.genres(conn).get(slugify(slug))
+    entry = queries.genre_page(conn, slugify(slug))
     if entry is None:
         return _not_found(request, "genre", _slug_words(slug))
     if slug != slugify(slug):   # one canonical spelling per genre
         return RedirectResponse(f"/genre/{slugify(slug)}", status_code=301)
-    index = indexes.genres(conn)
     name = entry["name"]
-    parent = index.get(entry["parent"]) if entry["parent"] else None
+    parent = queries.genre_page(conn, entry["parent_slug"]) if entry["parent_slug"] else None
     return _browse_page(
         request, conn, heading=name,
         lead=f"Alle titels in het genre {name} uit de collectie van de online "
              f"Bibliotheek.",
-        filters=queries.SearchFilters(genres=tuple(entry["names"]), sort="year_desc"),
+        filters=queries.SearchFilters(
+            genres=tuple(queries.genre_spellings(conn, slugify(slug))), sort="year_desc"),
         search_url=f"/?genre={quote(name, safe='')}",
         crumb=("Genres", "/genres"),
-        parent=({"name": parent["name"], "slug": entry["parent"]} if parent else None),
-        children=[{"name": index[c]["name"], "slug": c, "titles": index[c]["titles"]}
-                  for c in entry["children"]])
+        parent=({"name": parent["name"], "slug": entry["parent_slug"]} if parent else None),
+        children=[{"name": c["name"], "slug": c["slug"], "titles": c["titles"]}
+                  for c in queries.genre_children(conn, slugify(slug))])
+
+
+# The format landing pages, back and honest this time. They were removed in #27
+# because they counted editions as titles and showed the same work up to four
+# times; ``?format=`` is a work-level flag now ("available as"), so the count on
+# the page and the cards below it are the same books.
+@app.get("/e-books", response_class=HTMLResponse)
+def ebooks_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    return _browse_page(
+        request, conn, heading="E-books",
+        lead="Alle e-books uit de collectie van de online Bibliotheek.",
+        filters=queries.SearchFilters(format="ebook", sort="year_desc"),
+        search_url="/?format=ebook", crumb=None)
+
+
+@app.get("/luisterboeken", response_class=HTMLResponse)
+def audiobooks_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    return _browse_page(
+        request, conn, heading="Luisterboeken",
+        lead="Alle luisterboeken uit de collectie van de online Bibliotheek.",
+        filters=queries.SearchFilters(format="audiobook", sort="year_desc"),
+        search_url="/?format=audiobook", crumb=None)
 
 
 @app.get("/authors", response_class=HTMLResponse)
@@ -742,7 +794,6 @@ def author_page(request: Request, name: str, conn: sqlite3.Connection = Depends(
         rows = queries.author_books(conn, name)
     if not rows:
         return _not_found(request, "author", _slug_words(name))
-    formats_map = queries.formats_map(conn, rows)
     lists_map = queries.lists_map(conn, rows)
     # distinct lists/awards across this author's books (newest year first)
     seen, author_lists = set(), []
@@ -753,8 +804,7 @@ def author_page(request: Request, name: str, conn: sqlite3.Connection = Depends(
                 author_lists.append(e)
     author_lists.sort(key=lambda e: -(e.get("year") or 0))
     return _templates.TemplateResponse(request, "author.html", {
-        "name": name, "books": rows, "total": len(rows),
-        "formats_map": formats_map, "lists_map": lists_map,
+        "name": name, "books": rows, "total": len(rows), "lists_map": lists_map,
         "author_lists": author_lists, "bio": author_bio(name),
         "breadcrumbs": seo.breadcrumbs(request, (name, "")),
         "meta_description": f"Alle {len(rows)} titels van {name} in de online "
@@ -794,35 +844,56 @@ def list_detail(request: Request, slug: str, show: str = "",
                             + f" — {available} van {total} titels in de bibliotheek."})
 
 
-@app.get("/book/{ppn}", response_class=HTMLResponse)
-def book(request: Request, ppn: str, conn: sqlite3.Connection = Depends(get_conn)):
-    detail = queries.book_detail(conn, ppn)
+# One canonical URL per book: /boek/{titel}--{auteur}--{id}. Both old
+# /book/{ppn} URLs — the e-book's and the audiobook's — 301 here, and a stale slug
+# 301s to the current one, because the id is the truth and the slug is cosmetic.
+@app.get("/boek/{rest:path}", response_class=HTMLResponse)
+def book_page(request: Request, rest: str, conn: sqlite3.Connection = Depends(get_conn)):
+    """The book page. ``rest`` is ``{title}--{author}--{id}``; the id is everything
+    after the **last** ``--`` (a bare id has none), which is unambiguous because our
+    own slugs never contain a double hyphen."""
+    work_id = rest.rsplit("--", 1)[-1]
+    detail = queries.book_detail(conn, work_id)
     if detail is None:
         # A PPN carries no readable words, so nothing seeds the search box here.
         return _not_found(request, "book")
-    b = detail["row"]
+    if "redirect" in detail:   # an edition's PPN used as the id
+        ref = queries.work_ref(conn, detail["redirect"])
+        if ref is None:
+            return _not_found(request, "book")
+        return RedirectResponse(seo.book_href(ref[1], ref[0]), status_code=301)
+    b = detail["work"]
+    canonical = seo.book_path(b)
+    if rest != canonical.removeprefix("/boek/"):   # wrong or stale slug
+        return RedirectResponse(canonical, status_code=301)
+
+    editions = detail["editions"]
     summary = (b["summary"] or "").strip()
     cover = _coverw(b["cover_url"], 400)
     # schema.org/Book structured data. Google itself only reads Book markup from
     # an onboarded feed, but Bing and LLM crawlers parse this, so it's worth
     # keeping correct: a BCP 47 code rather than the Dutch language name, and a
     # tidied blurb instead of the raw quote-wrapped, line-broken catalog text.
+    #
+    # One Book for the work with a workExample per edition — the pattern
+    # schema.org documents for exactly this — replacing the two competing Book
+    # entities that each claimed the same title. No duration: the catalog stores it
+    # as "6 uur", schema.org wants ISO-8601, and a guessed value is worse than none.
     jsonld = {"@context": "https://schema.org", "@type": "Book", "name": b["title"],
               "author": [{"@type": "Person", "name": a} for a in detail["authors"]] or None,
               "inLanguage": language_code(b["language"]),
-              "isbn": b["isbn"], "publisher": b["publisher"],
+              "publisher": b["publisher"],
               "datePublished": str(b["year"]) if b["year"] else None,
               "image": cover or None, "description": _snippet(summary, 1000) or None,
-              "bookFormat": ("https://schema.org/AudiobookFormat"
-                             if b["format"] == "audiobook" else "https://schema.org/EBook"),
-              "url": f"{seo.origin(request)}/book/{ppn}"}
+              "url": seo.origin(request) + canonical,
+              "workExample": [_edition_jsonld(e) for e in editions]}
     jsonld = {k: v for k, v in jsonld.items() if v}
     # "meer zoals dit": LSA content-based recommendations (see obc.similar), shown as
     # a horizontal scroll strip on the book page.
-    similar = queries.similar_books(conn, ppn, limit=20)
+    similar = queries.similar_books(conn, b["work_id"], limit=20)
     return _templates.TemplateResponse(request, "book.html", {
-        "b": b, "genres": detail["genres"], "editions": detail["editions"],
-        "authors": detail["authors"], "book_lists": detail["book_lists"],
+        "b": b, "editions": editions, "genres": detail["genres"],
+        "authors": detail["authors"], "work_lists": detail["work_lists"],
         "similar": similar,
         "meta_description": _snippet(summary) or f"{b['title']} in de online Bibliotheek.",
         "og_image": cover, "jsonld": jsonld,
@@ -831,6 +902,30 @@ def book(request: Request, ppn: str, conn: sqlite3.Connection = Depends(get_conn
             *([(detail["authors"][0], seo.author_path(detail["authors"][0]))]
               if detail["authors"] else []),
             (b["title"], ""))})
+
+
+def _edition_jsonld(edition) -> dict:
+    """One ``workExample``: what distinguishes this edition from its twin."""
+    data = {
+        "@type": "Book",
+        "bookFormat": ("https://schema.org/AudiobookFormat"
+                       if edition["format"] == "audiobook" else "https://schema.org/EBook"),
+        "isbn": edition["isbn"],
+        "numberOfPages": edition["pages"],
+        "url": edition["url"],
+    }
+    return {k: v for k, v in data.items() if v}
+
+
+# Kept forever: ~68k of these URLs are indexed, and both editions of a twinned
+# title point at one of them.
+@app.get("/book/{ppn}", include_in_schema=False)
+def book_legacy(request: Request, ppn: str, conn: sqlite3.Connection = Depends(get_conn)):
+    ref = queries.work_ref(conn, ppn)
+    if ref is None:
+        return _not_found(request, "book")
+    work_id, slug = ref
+    return RedirectResponse(seo.book_href(slug, work_id), status_code=301)
 
 
 # --------------------------------------------------------------------------- #
@@ -843,13 +938,17 @@ def suggest(q: str = "", limit: int = Query(7, ge=1, le=20),
     data = queries.suggest(conn, q.strip(), limit)
     if data is None:
         return {"titles": [], "authors": []}
-    # editions per suggested work, so the dropdown can show an e-book / audiobook icon
-    # that links straight to that edition (the row itself opens the e-book).
-    emap = queries.editions_map(conn, data["title_rows"])
+    # editions per suggested work, so the dropdown can show an e-book / audiobook
+    # badge per format the book exists in — the flags ride on the work row now, so
+    # no extra query. The JSON shape is unchanged (base.html's dropdown JS is
+    # untouched); ``url`` is new, so a dropdown click lands on the canonical path
+    # instead of eating a 301 on the way.
     titles = [
-        {"ppn": r["ppn"], "title": r["title"], "author": r["author"],
+        {"ppn": r["work_id"], "title": r["title"], "author": r["author"],
          "cover_url": _coverw(r["cover_url"], 80), "format": r["format"],
-         "editions": emap.get(r["ppn"], {r["format"]: r["ppn"]})}
+         "url": seo.book_path(r),
+         "editions": {fmt: ppn for fmt, ppn in (("ebook", r["ebook_ppn"]),
+                                                ("audiobook", r["audiobook_ppn"])) if ppn}}
         for r in data["title_rows"]
     ]
     return {"titles": titles, "authors": data["authors"],

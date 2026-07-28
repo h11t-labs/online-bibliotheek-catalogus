@@ -52,12 +52,14 @@
     {% for it in items %}
     {% set label = it['year'] or it['position'] %}
     {% if it['ppn'] %}
-    <a class="row" href="/book/{{ it['ppn'] }}">
+    <a class="row" href="{{ book_path(it) }}">
       <span class="badge-n">{{ label or '·' }}</span>
       <span class="thumb"><img loading="lazy" src="{{ (it['bcover'] or it['cover_url'])|coverw(120) }}" alt=""></span>
       <span class="meta"><div class="t">{{ it['title'] or '—' }}</div><div class="a">{{ it['author'] or '' }}</div>{% if it['won'] == 1 %}<div class="a" style="color:var(--accent);font-weight:700">✓ Gewonnen</div>{% elif it['won'] == 0 %}<div class="a">Genomineerd</div>{% endif %}</span>
       <span class="right">
-        <svg width="15" height="15"><use href="#ic-{{ 'audio' if it['bformat']=='audiobook' else 'book' }}"/></svg>
+        {# every format the book exists in, not the one edition it was matched from #}
+        {% if it['bebook'] %}<svg width="15" height="15"><use href="#ic-book"/></svg>{% endif %}
+        {% if it['baudio'] %}<svg width="15" height="15"><use href="#ic-audio"/></svg>{% endif %}
         <span class="pill in">beschikbaar</span>
       </span>
     </a>

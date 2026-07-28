@@ -52,7 +52,7 @@ def test_robots_and_sitemaps(client):
     stat = client.get("/sitemap-static.xml")
     assert stat.status_code == 200 and "/about" in stat.text
     books = client.get("/sitemap-books-1.xml")
-    assert books.status_code == 200 and "/book/001" in books.text
+    assert books.status_code == 200 and "/boek/de-ontdekking--anna-vrij--001" in books.text
 
 
 def test_sitemap_lists_the_aggregation_pages(client):

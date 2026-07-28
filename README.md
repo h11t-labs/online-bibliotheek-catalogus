@@ -64,9 +64,12 @@ uv run obc scrape --recent    # rank recently-added titles (for the 'Recent toeg
 uv run obc scrape --ereader   # refresh only the e-reader-available flag set
 uv run obc scrape --enrich    # detail pages: ISBN, full genres, narrator, doelgroep,
                               # leeftijd, reeks, trefwoorden
+uv run obc scrape --relink    # re-fetch only the pages whose 'ook beschikbaar als'
+                              # label names a twin but whose link wasn't captured
 uv run obc lists update       # refresh curated lists (Bestseller 60, NYT, prizes)
 uv run obc similar            # rebuild only the "meer zoals dit" recommendations
 uv run obc stats
+uv run obc works --report     # audit the edition -> work grouping (see below)
 ```
 
 `obc normalize` already precomputes the recommendations, so `obc similar` is only
@@ -163,31 +166,46 @@ unchanged titles (usually a few pages). It can't see removals, so `--reconcile`
   language, year, publisher, format, pages/duration, size, cover. `--enrich`
   then fetches **detail pages** (`/catalogus/{ppn}/{slug}.html`,
   `detail.parse_detail`) to add ISBN, the full subject/genre list, narrator,
-  audience (doelgroep), age band, series and keywords. `client.Client` fetches
-  politely (descriptive UA, configurable rate, backoff, on-disk HTML cache in
-  `data/raw/html/`).
-- **Storage** (`db.py`): `books` + `genres`/`book_genres` + an FTS5 table
-  (`unicode61 remove_diacritics 2`) over title/author/subjects/summary. The DB is
-  written by **full rebuild**, never per-row: `normalize` streams the records into
-  a temporary DB and atomically swaps it over the live file, so readers keep
-  seeing the old catalog until the swap.
+  audience (doelgroep), age band, series, keywords and the "ook beschikbaar als"
+  cross-links. `client.Client` fetches politely (descriptive UA, configurable
+  rate, backoff, on-disk HTML cache in `data/raw/html/`).
+- **Storage** (`db.py`): two grains, because the library has two. `editions` holds
+  one row per PPN — the faithful per-item mirror, and what you actually borrow.
+  `works` holds one row per *book*: an e-book and its audiobook are two editions of
+  one work, and the work owns everything a reader searches, filters, sorts or links
+  to (`genres`/`work_genres`, `work_authors`, `work_lists`, and an FTS5 table over
+  the *pooled* text of its editions, so a summary carried only by the audiobook
+  still finds the book). Which PPNs are one book is decided by `work.py` — the
+  library's own "ook beschikbaar als" cross-links first, then a conservative
+  title + surname + language key, then `data/raw/work_overrides.json` — and audited
+  with `obc works --report`. Each book has exactly **one URL**,
+  `/boek/{titel}--{auteur}--{work_id}`; every old `/book/{ppn}` 301s to it.
+  The DB is written by **full rebuild**, never per-row: `normalize` streams the
+  records into a temporary DB and atomically swaps it over the live file, so
+  readers keep seeing the old catalog until the swap.
 - **Recommendations** (`similar.py`): "meer zoals dit" is content-based — an LSA
-  (TF-IDF + truncated SVD) over each book's text, with the nearest neighbours
-  stored in `book_similar`. Built inside `normalize`, into the temp DB, so the
+  (TF-IDF + truncated SVD) over each work's text, with the nearest neighbours
+  stored in `work_similar`. Built inside `normalize`, into the temp DB, so the
   swap publishes a catalog and its recommendations together.
 - **UI** (`web/app.py` + `web/queries.py`): FTS5 `bm25` ranking weighted toward
   title/author, plus facet filters (format, language, genre, year) and sorting.
-  Routes stay thin — every SQL statement lives in `queries.py`.
-- **Derived indexes** (`web/indexes.py`): the facet values, the A-Z author index,
-  the series slug map and the genre tree are the same for every visitor and only
-  change when a rebuild is swapped in, so they are memoised on the catalog file's
-  mtime and rebuilt once per catalog, not per request (`web/cache.py` holds the
-  small memoisation primitive they share).
-- **SEO**: canonical slug URLs with 301s from the older ones, a paginated sitemap
-  (`/sitemap.xml` → static / browse / book children), schema.org `Book` +
-  `BreadcrumbList` + `WebSite` markup, `HEAD` on every route, and public
-  `Cache-Control` on the pages that only change on a rebuild. Filtered search URLs
-  are `noindex` and robots-disallowed — that URL space is effectively infinite.
+  `?format=` means "available as", so it counts books rather than files — which is
+  what makes the `/e-books` and `/luisterboeken` landing pages honest. Routes stay
+  thin: every SQL statement lives in `queries.py`. Pages: the search/browse home,
+  `/boek/…`, `/e-books`, `/luisterboeken`, `/genres` + `/genre/{slug}`, `/authors`
+  + `/author/{slug}`, `/series/{slug}`, `/lists` + `/list/{slug}`, `/stats`,
+  `/about`.
+- **No derived state in the web process** (`web/indexes.py`): everything derivable
+  from the catalog is derived in the rebuild — facet counts, author sort keys, the
+  series map, the genre taxonomy — so the read path does indexed lookups only.
+  What is left in `indexes.py` is the connection and the A-Z letter bucketing,
+  which is shaping rather than counting.
+- **SEO** (`web/seo.py`): canonical slug URLs with 301s from the older ones, a
+  paginated sitemap (`/sitemap.xml` → static / browse / book children), schema.org
+  `Book` (one per work, a `workExample` per edition) + `BreadcrumbList` + `WebSite`
+  markup, `HEAD` on every route, and public `Cache-Control` on the pages that only
+  change on a rebuild. Filtered search URLs are `noindex` and robots-disallowed —
+  that URL space is effectively infinite.
 
 ### Notes & limits
 
@@ -213,24 +231,29 @@ hammering. No login/borrow actions are automated.
 
 ## Layout
 
+The modules layer by domain — *acquire* (`client`/`listing`/`detail`/`scrape`) →
+*build* (`work`/`textnorm`/`normalize`/`db`/`similar`) → *read* (`web/queries`) →
+*present* (`web/app` + templates) — and each layer only depends on the ones to its
+left.
+
 ```
 src/obc/
   client.py       polite fetcher + get_listing_html() + fetch_detail()
   listing.py      results-page HTML -> record dicts + pager size
   detail.py       detail-page HTML -> record dict (enrichment)
-  scrape.py       browse/enrich enumerate -> data/raw/records/*.json (resumable)
+  scrape.py       browse/enrich/relink -> data/raw/records/*.json (resumable)
+  work.py         which PPNs are one book (+ `obc works --report`)
   normalize.py    raw records -> SQLite (temp build + atomic swap)
-  db.py           schema + FTS5 + bulk load + indexes
-  similar.py      "meer zoals dit": LSA neighbours -> book_similar
+  db.py           schema + the whole build: works, FTS5, every derived table
+  similar.py      "meer zoals dit": LSA neighbours -> work_similar
   textnorm.py     folding, slugs, surname keys, publisher/author canonicalisation
   htmlutil.py     shared BeautifulSoup helpers
   config.py       data paths + user agent      log.py  loguru setup
   lists/          curated-list providers (bestseller60, nyt, wikiprize)
   web/app.py      page routes + presentation (+ templates/, static/)
   web/queries.py  every read-only SQL statement the UI runs
-  web/indexes.py  the connection, and the indexes derived once per rebuild
+  web/indexes.py  the connection, and the A-Z author bucketing
   web/seo.py      canonical URLs, breadcrumbs, robots.txt, sitemaps
-  web/cache.py    the per-catalog memoisation those indexes are built on
   web/bio.py      best-effort Wikipedia author blurb
   web/scheduler.py  the refresh POST /admin/refresh kicks off
   cli.py          `obc` entry point

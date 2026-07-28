@@ -29,7 +29,8 @@
 
   {% macro fmt(n) %}{{ "{:,}".format(n).replace(",", ".") }}{% endmacro %}
   <div class="cards">
-    <div class="stat-card"><div class="v">{{ fmt(s.total) }}</div><div class="k">titels totaal</div></div>
+    <div class="stat-card"><div class="v">{{ fmt(s.total) }}</div><div class="k">boeken</div></div>
+    <div class="stat-card"><div class="v">{{ fmt(s.editions) }}</div><div class="k">edities</div></div>
     <div class="stat-card"><div class="v">{{ fmt(s.ebooks) }}</div><div class="k">e-books</div></div>
     <div class="stat-card"><div class="v">{{ fmt(s.audiobooks) }}</div><div class="k">luisterboeken</div></div>
     <div class="stat-card"><div class="v">{{ fmt(s.ereader) }}</div><div class="k">voor e-reader</div></div>

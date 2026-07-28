@@ -9,8 +9,6 @@
     box-shadow:var(--shadow);border:1px solid var(--line);
     background:linear-gradient(145deg,var(--line),var(--bg-soft))}
   .editions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
-  .linkbadge{cursor:pointer;border:1px dashed currentColor;background:transparent}
-  .linkbadge:hover{background:var(--accent-soft)}
   .listbadge{background:var(--accent);color:var(--accent-ink)}
   .listbadge:hover{filter:brightness(1.07)}
   /* clickable filter links: dotted underline affordance */
@@ -20,7 +18,6 @@
   .info .author .flink{color:var(--ink-soft)}
   .info .author .flink:hover{color:var(--accent)}
   .poster .cover img{width:100%;height:100%;object-fit:cover}
-  .poster .btn{width:100%;justify-content:center;margin-top:18px}
   .info h1{font-family:var(--serif);font-size:clamp(26px,4vw,38px);line-height:1.1;margin:6px 0 8px;letter-spacing:-.4px}
   .info .author{font-size:18px;color:var(--ink-soft);margin:0 0 16px}
   .info .author a:hover{color:var(--accent)}
@@ -30,6 +27,44 @@
   .meta .r{display:grid;grid-template-columns:170px 1fr;gap:16px;padding:11px 0;border-bottom:1px solid var(--line)}
   .meta .k{color:var(--ink-soft);font-size:14px}
   .meta .v{font-size:15px}
+  /* One block per edition: shared facts sit above, and what actually differs
+     between the e-book and the luisterboek — pages vs duration, narrator, file
+     type, and each one's own borrow link — sits under its own heading. */
+  .edition{margin-top:34px;scroll-margin-top:90px}
+  .edition h2{font-family:var(--serif);font-size:20px;margin:0 0 4px;
+    display:flex;align-items:center;gap:9px}
+  .edition h2 .fmt-ic{position:static}
+  .edition.ebook{--fmt:var(--fmt-ebook)}
+  .edition.audio{--fmt:var(--fmt-audio)}
+  /* Only the extra editions of a format carry a button here (the lead edition's
+     link is the CTA under the cover). Outlined rather than filled: it opens the
+     same kind of thing as the CTA, but it is not the page's primary action. */
+  .edition .btn{margin-top:16px;background:transparent;box-shadow:none;color:var(--fmt);
+    border:1px solid color-mix(in oklab,var(--fmt) 45%,transparent)}
+  .edition .btn:hover{filter:none;background:color-mix(in oklab,var(--fmt) 12%,transparent)}
+
+  /* Borrow CTAs — the page's primary action, so they sit under the cover in the
+     sticky column instead of at the foot of each edition block. You borrow an
+     edition, never a work, so there is one button per format, each carrying that
+     format's own colour and icon: the button says which edition it opens before
+     you read the label. */
+  .borrow{display:flex;flex-direction:column;gap:9px;margin-top:18px;width:100%}
+  .borrow-btn{display:flex;align-items:center;gap:12px;padding:12px 15px;border-radius:14px;
+    background:var(--fmt);color:var(--fmt-ink);box-shadow:var(--shadow);
+    transition:transform .12s ease,filter .12s ease}
+  .borrow-btn.ebook{--fmt:var(--fmt-ebook);--fmt-ink:var(--fmt-ebook-ink)}
+  .borrow-btn.audio{--fmt:var(--fmt-audio);--fmt-ink:var(--fmt-audio-ink)}
+  .borrow-btn:hover{filter:brightness(1.07);transform:translateY(-1px)}
+  /* the icon chip tints with the ink, so it reads whether the fill is dark
+     (light theme, white ink) or light (dark theme, near-black ink) */
+  .borrow-btn .b-ic{width:31px;height:31px;flex:none;display:grid;place-items:center;
+    border-radius:9px;background:color-mix(in oklab,var(--fmt-ink) 16%,transparent)}
+  .borrow-btn .b-tx{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
+  .borrow-btn .b-t{font-size:15px;font-weight:700;letter-spacing:-.1px}
+  .borrow-btn .b-s{font-size:12px;opacity:.82;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .borrow-btn .b-go{flex:none;opacity:.8}
+  .borrow-more{display:block;text-align:center;font-size:13px;color:var(--ink-soft);padding-top:2px}
+  .borrow-more:hover{color:var(--accent)}
   /* "Meer zoals dit" — LSA content-based recommendations (obc.similar), a
      horizontally-scrolling strip of small covers (images lazy-load as you scroll). */
   .similar{margin-top:56px;border-top:1px solid var(--line);padding-top:28px}
@@ -77,36 +112,80 @@
   .sima{font-size:11px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   @media (max-width:720px){
     .detail{grid-template-columns:1fr;gap:24px}
-    /* hero pattern: cover + CTA centered as a group; reading content below stays left-aligned */
+    /* hero pattern: the cover centered as a group; reading content below stays left-aligned */
     .poster{position:static;max-width:none;display:flex;flex-direction:column;align-items:center}
     .poster .cover{width:200px;max-width:55vw;flex:none}
-    .poster .btn{width:100%;max-width:420px;margin:16px 0 0;justify-content:center}
+    .borrow{max-width:420px}
+    .edition .btn{width:100%;max-width:420px;justify-content:center}
     .meta .r{grid-template-columns:120px 1fr}
   }
 {% endblock %}
 {% block body %}
+{# The first edition of each format leads: it is the one the primary CTA offers
+   and the one whose block carries the anchor. `editions` arrives e-book first,
+   so `lead` is ordered the same way the badges and blocks are. #}
+{% set ns = namespace(fmts=[], lead=[]) %}
+{% for e in editions %}
+  {% if e['format'] not in ns.fmts %}
+    {% set ns.fmts = ns.fmts + [e['format']] %}
+    {% set ns.lead = ns.lead + [e] %}
+  {% endif %}
+{% endfor %}
 <main>
   <a class="back" href="javascript:history.back()">‹ Terug</a>
   <article class="detail">
     <div class="poster">
       <div class="cover">
         <div class="fmt-icons">
-          {% if 'ebook' in editions %}<span class="fmt-ic ebook" title="E-book"><svg width="15" height="15"><use href="#ic-book"/></svg></span>{% endif %}
-          {% if 'audiobook' in editions %}<span class="fmt-ic audio" title="Luisterboek"><svg width="15" height="15"><use href="#ic-audio"/></svg></span>{% endif %}
+          {% if b['has_ebook'] %}<span class="fmt-ic ebook" title="E-book"><svg width="15" height="15"><use href="#ic-book"/></svg></span>{% endif %}
+          {% if b['has_audiobook'] %}<span class="fmt-ic audio" title="Luisterboek"><svg width="15" height="15"><use href="#ic-audio"/></svg></span>{% endif %}
         </div>
         <img src="{{ b['cover_url']|coverw(600) }}" alt="Omslag van {{ b['title'] }}">
       </div>
-      {% if b['url'] %}<a class="btn" href="{{ b['url'] }}" target="_blank" rel="noopener">Lenen op onlinebibliotheek.nl ↗</a>{% endif %}
+      {# One borrow button per format, in the format's own colour: which edition
+         you are about to open is the thing to be unambiguous about, so it is
+         said in the label, the icon and the fill. Further editions of the same
+         format keep their button in their own block below. #}
+      <div class="borrow">
+        {% for e in ns.lead %}
+        {% set audio = e['format'] == 'audiobook' %}
+        {% if e['url'] %}
+        <a class="borrow-btn {{ 'audio' if audio else 'ebook' }}" href="{{ e['url'] }}"
+           target="_blank" rel="noopener">
+          <span class="b-ic" aria-hidden="true">
+            <svg width="17" height="17"><use href="#ic-{{ 'audio' if audio else 'book' }}"/></svg>
+          </span>
+          <span class="b-tx">
+            <span class="b-t">{{ 'Luisterboek' if audio else 'E-book' }} lenen</span>
+            {% if audio %}{% set detail = e['duration']|dur_short %}
+            {# a catalogued page count of 1 is an artefact, not a book: 327 editions
+               carry it. Harmless in a meta row, but this is the primary CTA. #}
+            {% elif e['pages'] and e['pages'] > 1 %}{% set detail = e['pages'] ~ " pagina's" %}
+            {% else %}{% set detail = e['features'] %}{% endif %}
+            {% if detail %}<span class="b-s">{{ detail }}</span>{% endif %}
+          </span>
+          <svg class="b-go" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M7 17 17 7M8 7h9v9"/>
+          </svg>
+        </a>
+        {% endif %}
+        {% endfor %}
+        {% if editions|length > ns.lead|length %}
+        <a class="borrow-more" href="#{{ 'luisterboek' if ns.lead[-1]['format'] == 'audiobook' else 'e-book' }}">
+          Nog {{ editions|length - ns.lead|length }} andere uitvoering{{ 'en' if editions|length - ns.lead|length > 1 }} ↓
+        </a>
+        {% endif %}
+      </div>
     </div>
     <div class="info">
+      {# The formats this book exists in, as equals. "Ook als luisterboek" made
+         sense when the two were separate records and one of them was the page
+         you happened to land on; this is one work with two editions, so neither
+         format is the visitor's default and neither is the afterthought. #}
       <div class="editions">
-        {% for fmt in ['ebook','audiobook'] if fmt in editions %}
-          {% if editions[fmt] == b['ppn'] %}
-          <span class="badge {{ 'audio' if fmt=='audiobook' }}">{{ 'Luisterboek' if fmt=='audiobook' else 'E-book' }}</span>
-          {% else %}
-          <a class="badge linkbadge {{ 'audio' if fmt=='audiobook' }}" href="/book/{{ editions[fmt] }}">Ook als {{ 'luisterboek' if fmt=='audiobook' else 'e-book' }} →</a>
-          {% endif %}
-        {% endfor %}
+        {% if b['has_ebook'] %}<span class="badge">E-book</span>{% endif %}
+        {% if b['has_audiobook'] %}<span class="badge audio">Luisterboek</span>{% endif %}
       </div>
       <h1>{{ b['title'] or '—' }}</h1>
       {% if authors %}<p class="author">door
@@ -119,9 +198,9 @@
       </div>
       {% endif %}
 
-      {% if book_lists %}
+      {% if work_lists %}
       <div class="editions">
-        {% for l in book_lists %}<a class="badge listbadge" href="/?list={{ l.slug }}"><svg width="12" height="12" style="vertical-align:-2px"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% elif l.position %} #{{ l.position }}{% endif %}{% if l.won == 1 %} · gewonnen{% elif l.won == 0 %} · genomineerd{% endif %}</a>{% endfor %}
+        {% for l in work_lists %}<a class="badge listbadge" href="/?list={{ l.slug }}"><svg width="12" height="12" style="vertical-align:-2px"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% elif l.position %} #{{ l.position }}{% endif %}{% if l.won == 1 %} · gewonnen{% elif l.won == 0 %} · genomineerd{% endif %}</a>{% endfor %}
       </div>
       {% endif %}
 
@@ -139,28 +218,57 @@
         {{ rlink('Taal', b['language'], 'language') }}
         {{ r('Verschenen', b['year']) }}
         {{ rlink('Uitgever', b['publisher'], 'publisher') }}
-        {{ r('ISBN', b['isbn']) }}
-        {{ r("Aantal pagina's", b['pages']) }}
-        {{ r('Speelduur', b['duration']) }}
-        {{ r('Verteller', b['narrator']) }}
-        {{ r('Omvang', b['size']) }}
-        {{ r('Bestandstype', b['features']) }}
-        {% if b['format']=='ebook' and b['ereader'] is not none %}{{ r('Voor e-reader', 'Ja' if b['ereader'] else 'Nee (alleen in de app)') }}{% endif %}
         {{ r('Doelgroep', b['audience']) }}
         {{ r('Leeftijd', b['age']) }}
         {{ r('Trefwoorden', b['keywords']) }}
-        {{ r('Ook beschikbaar als', b['also_available_as']) }}
       </div>
+
+      {# One block per edition, e-book first. This is the honest answer to "each
+         item also has its own properties sometimes": don't merge the fields, show
+         them side by side under one heading, each with its own borrow link. Only
+         the first edition of a format carries the anchor id — a book can hold
+         several audiobook editions. #}
+      {% set blocks = namespace(seen=[]) %}
+      {% for e in editions %}
+      {% set audio = e['format'] == 'audiobook' %}
+      {% set anchor = 'luisterboek' if audio else 'e-book' %}
+      {% set first = anchor not in blocks.seen %}
+      {% if first %}{% set blocks.seen = blocks.seen + [anchor] %}{% endif %}
+      <section class="edition {{ 'audio' if audio else 'ebook' }}"{% if first %} id="{{ anchor }}"{% endif %}>
+        <h2>
+          <span class="fmt-ic {{ 'audio' if audio else 'ebook' }}" aria-hidden="true">
+            <svg width="15" height="15"><use href="#ic-{{ 'audio' if audio else 'book' }}"/></svg>
+          </span>
+          {{ 'Luisterboek' if audio else 'E-book' }}{% if not first %} · andere uitvoering{% endif %}
+        </h2>
+        <div class="meta">
+          {{ r('ISBN', e['isbn']) }}
+          {% if audio %}{{ r('Speelduur', e['duration']) }}{{ r('Verteller', e['narrator']) }}
+          {% else %}{{ r("Aantal pagina's", e['pages']) }}{% endif %}
+          {{ r('Omvang', e['size']) }}
+          {{ r('Bestandstype', e['features']) }}
+          {% if not audio and e['ereader'] is not none %}{{ r('Voor e-reader', 'Ja' if e['ereader'] else 'Nee (alleen in de app)') }}{% endif %}
+          {# only what this edition says differently from the book as a whole #}
+          {% if e['publisher'] and e['publisher'] != b['publisher'] %}{{ rlink('Uitgever', e['publisher'], 'publisher') }}{% endif %}
+          {% if e['year'] and e['year'] != b['year'] %}{{ r('Verschenen', e['year']) }}{% endif %}
+        </div>
+        {# no button for the lead edition of a format: the CTA under the cover is
+           already this exact link, and repeating it reads as a second, different
+           action. Only the extra editions — the ones the CTA can't offer — carry
+           their own. #}
+        {% if e['url'] and not first %}<a class="btn" href="{{ e['url'] }}" target="_blank" rel="noopener">Deze uitvoering lenen ↗</a>{% endif %}
+      </section>
+      {% endfor %}
     </div>
   </article>
 
   {% macro simcard(s) %}
-  <a class="simcard" href="/book/{{ s['ppn'] }}" title="{{ s['title'] }}{% if s['author'] %} — {{ s['author'] }}{% endif %}">
+  <a class="simcard" href="{{ book_path(s) }}" title="{{ s['title'] }}{% if s['author'] %} — {{ s['author'] }}{% endif %}">
     <div class="simcover">
+      {# every format the recommended book has, not the one edition it came from #}
       <div class="fmt-icons">
-        <span class="fmt-ic {{ 'audio' if s['format']=='audiobook' else 'ebook' }}" title="{{ 'Luisterboek' if s['format']=='audiobook' else 'E-book' }}">
-          <svg width="15" height="15"><use href="#ic-{{ 'audio' if s['format']=='audiobook' else 'book' }}"/></svg>
-        </span>
+        {% if s['has_ebook'] %}<span class="fmt-ic ebook" title="E-book"><svg width="15" height="15"><use href="#ic-book"/></svg></span>{% endif %}
+        {% if s['has_audiobook'] %}<span class="fmt-ic audio" title="Luisterboek"><svg width="15" height="15"><use href="#ic-audio"/></svg></span>{% endif %}
       </div>
       <img loading="lazy" src="{{ s['cover_url']|coverw(300) }}" alt="Omslag van {{ s['title'] }}">
     </div>

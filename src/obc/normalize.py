@@ -1,12 +1,14 @@
 """Load cached records from ``data/raw/`` into the SQLite catalog (fast rebuild).
 
-Besides loading book records it also:
+Besides loading edition records it also:
+* groups the editions into works (an e-book and its audiobook are one book), so
+  every record carries the ``work_id`` the whole read model hangs off;
 * resolves the e-reader flag, preferring a per-title detail-page flag, then the
   ``data/raw/ereader.json`` side-file, then the value already in the live DB (so
   a missing side-file never silently blanks the whole facet);
 * canonicalises publisher spellings to the most-common variant;
 * splits multi-author strings into individual authors;
-* matches curated lists (``data/raw/lists/*.json``) to catalog PPNs.
+* matches curated lists (``data/raw/lists/*.json``) to catalog works.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ import sqlite3
 from collections import Counter
 from pathlib import Path
 
-from . import db
+from . import db, work
 
 # Data paths live in obc.config; imported (and rebindable) at module level so
 # `normalize.EREADER_FILE` etc. stay monkeypatchable by tests and the scheduler.
@@ -65,12 +67,16 @@ def _load_aux(db_path: Path | None = None) -> tuple[set, bool, dict, dict, dict]
 
 
 def _transform(r: dict, ereader: set, have_ereader: bool, genres_map: dict,
-               recent_map: dict, canon: dict, prior_ereader: dict) -> dict | None:
+               recent_map: dict, canon: dict, prior_ereader: dict,
+               work_of: dict | None = None) -> dict | None:
     """Enrich one raw record in place; return it, or None to drop it. Files are
     named ``{ppn}.json`` (one record per ppn), so no cross-file dedup is needed."""
     ppn = r.get("ppn")
     if not ppn or r.get("removed_at"):  # drop removed / id-less titles
         return None
+    # The grouping was decided in the prepass over every record; a record the
+    # prepass never saw is its own work.
+    r["work_id"] = (work_of or {}).get(ppn, ppn)
     if r.get("format") == "ebook" and r.get("ereader") is None:
         # precedence: a per-title detail flag (set upstream, freshest — covers new
         # titles not yet in the side-file) already won by being non-None; else the
@@ -105,20 +111,30 @@ def _transform(r: dict, ereader: set, have_ereader: bool, genres_map: dict,
     return r
 
 
-def _prepass(paths: list[Path]) -> tuple[dict, dict, dict, tuple]:
+def _prepass(paths: list[Path]) -> tuple[dict, dict, dict, tuple, dict]:
     """One streaming pass to build the publisher-canon map, the isbn/title lookup
-    maps for list matching, and the genre name->facet-code map (for the hierarchy)
-    — without holding records in RAM."""
+    maps for list matching, the genre name->facet-code map (for the hierarchy) and
+    the work grouping — without holding records in RAM.
+
+    Work identity has to be decided here rather than per record: whether two PPNs
+    are one book is a fact about the *pair*, so it needs every record's title,
+    author, language and cross-links in hand before any of them is written. The
+    slice each decision needs is small, and this pass already reads every file."""
     groups: dict[str, Counter] = {}
     by_isbn: dict[str, str] = {}
     by_key: dict[str, str] = {}
     genre_code: dict[tuple[str, str], str] = {}
     genre_count: Counter = Counter()
+    meta: dict[str, work.EditionMeta] = {}
     for path in paths:
         for r in _read(path):
             ppn = r.get("ppn")
             if not ppn or r.get("removed_at"):
                 continue
+            meta[ppn] = work.EditionMeta(
+                title=r.get("title"), author=r.get("author"),
+                language=valid_language(r.get("language")), format=r.get("format"),
+                related_ppns=tuple(r.get("related_ppns") or ()))
             p = r.get("publisher")
             if p:
                 groups.setdefault(publisher_key(p), Counter())[p] += 1
@@ -138,10 +154,14 @@ def _prepass(paths: list[Path]) -> tuple[dict, dict, dict, tuple]:
                     genre_code.setdefault((aud, g["name"]), g["code"])
                     genre_count[(aud, g["name"])] += 1
     canon = {k: ctr.most_common(1)[0][0] for k, ctr in groups.items()}
-    return canon, by_isbn, by_key, (genre_code, genre_count)
+    work_of = work.group_editions(
+        meta, work.load_overrides(RAW_DIR / "work_overrides.json"))
+    logger.info(f"[normalize] {len(meta)} edition(s) in "
+                f"{len(set(work_of.values()))} work(s)")
+    return canon, by_isbn, by_key, (genre_code, genre_count), work_of
 
 
-def iter_records(paths: list[Path], aux: tuple, canon: dict):
+def iter_records(paths: list[Path], aux: tuple, canon: dict, work_of: dict):
     """Yield enriched records one at a time (constant memory)."""
     ereader, have_ereader, genres_map, recent_map, prior_ereader = aux
     total = len(paths)
@@ -150,14 +170,19 @@ def iter_records(paths: list[Path], aux: tuple, canon: dict):
             logger.info(f"[normalize] loading records: {seen}/{total}")
         for r in _read(path):
             t = _transform(r, ereader, have_ereader, genres_map, recent_map,
-                           canon, prior_ereader)
+                           canon, prior_ereader, work_of)
             if t is not None:
                 yield t
 
 
-def match_lists(by_isbn: dict, by_key: dict) -> list[dict]:
-    """Match curated-list items (data/raw/lists/*.json) to catalog PPNs using the
-    isbn/title maps from :func:`_prepass`."""
+def match_lists(by_isbn: dict, by_key: dict, work_of: dict) -> list[dict]:
+    """Match curated-list items (data/raw/lists/*.json) to catalog works using the
+    isbn/title maps from :func:`_prepass`.
+
+    A slot resolves to whichever edition's ISBN or title-key was seen first, then
+    is mapped onto that edition's work — so a list whose ISBN happens to be the
+    audiobook's still lands on the book, and the dedupe below is per *work*: two
+    slots can no longer land on two editions of one title."""
     files = sorted(LISTS_DIR.glob("*.json")) if LISTS_DIR.exists() else []
     if not files:
         return []
@@ -175,6 +200,8 @@ def match_lists(by_isbn: dict, by_key: dict) -> list[dict]:
                 ppn = by_isbn[isbn]
             if not ppn:
                 ppn = by_key.get(match_key(it.get("title"), it.get("author")))
+            if ppn:
+                ppn = work_of.get(ppn, ppn)
             if ppn and ppn in seen:
                 ppn = None  # avoid mapping two list slots to the same book
             if ppn:
@@ -238,7 +265,7 @@ def _build_similar(conn: sqlite3.Connection) -> None:
     """Precompute the "meer zoals dit" recommendations into the *temp* DB, before the
     atomic swap.
 
-    ``book_similar`` is not part of the base schema — it is derived from the finished
+    ``work_similar`` is not part of the base schema — it is derived from the finished
     catalog — so a fresh rebuild never carries it over. Building it here (rather than
     as a separate step afterwards) means the swap publishes the catalog and its
     recommendations together: readers never see a new catalog with the strip missing,
@@ -263,15 +290,17 @@ def normalize(raw_dir: Path = RAW_DIR, db_path: Path = db.DEFAULT_DB) -> dict:
     _reclaim_disk(db_path, raw_dir)
     paths = sorted((raw_dir / "records").rglob("*.json"))
     aux = _load_aux(db_path)  # reads the live DB's e-reader flags before the swap
-    canon, by_isbn, by_key, genre_info = _prepass(paths)  # canon + match maps + genre codes
-    lists = match_lists(by_isbn, by_key)
+    # canon + match maps + genre codes + the edition->work grouping
+    canon, by_isbn, by_key, genre_info, work_of = _prepass(paths)
+    lists = match_lists(by_isbn, by_key, work_of)
     # Build into a temp DB, then swap it in atomically — the web app keeps serving
     # the old, complete catalog throughout the rebuild (no "wordt opgebouwd" window).
     tmp = db_path.with_name(db_path.name + ".tmp")
     conn = db.connect(tmp)
     # stream records in batches — constant memory, no full in-RAM load
-    n = db.stream_rebuild(conn, iter_records(paths, aux, canon), lists)
-    db.set_book_genre_parents(conn, genre_info)  # per-book genre-hierarchy parent
+    n = db.stream_rebuild(conn, iter_records(paths, aux, canon, work_of), lists)
+    db.set_work_genre_parents(conn, genre_info)  # per-work genre-hierarchy parent
+    db.build_genre_taxonomy(conn)  # reads parent_id, so it runs after the stamp
     _build_similar(conn)  # into the temp DB, so the swap publishes both at once
     s = db.stats(conn)
     conn.close()

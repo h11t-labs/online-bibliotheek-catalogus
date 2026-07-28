@@ -1,10 +1,14 @@
 """Content-based "meer boeken zoals dit" via TF-IDF cosine similarity.
 
 This is an *offline precompute*: it reads the finished catalog, builds one TF-IDF
-vector per book from its text signal (summary + genres + keywords + title +
-author), finds each book's nearest neighbours by cosine similarity, and stores the
-top-K into a ``book_similar`` table. The web app then only does a cheap indexed
+vector per **work** from its text signal (summary + genres + keywords + title +
+author), finds each work's nearest neighbours by cosine similarity, and stores the
+top-K into a ``work_similar`` table. The web app then only does a cheap indexed
 lookup per book page — no ML at request time.
+
+Vectorising works rather than editions means better signal from the pooled text,
+fewer documents, and no post-hoc de-duplication: an e-book and its audiobook are
+one document, so there is no way for the strip to recommend a book's own twin.
 
 Why TF-IDF and not collaborative filtering: we have rich *content* per title
 (99% of books carry a ~600-char summary, 96% carry genres) but **no behavioural
@@ -60,11 +64,11 @@ def _words(text: str | None) -> list[str]:
 def _doc_tokens(row: sqlite3.Row, genres: list[str], *,
                 w_genre: int = 3, w_keyword: int = 2, w_author: int = 1,
                 w_title: int = 2) -> list[str]:
-    """The weighted token bag for one book.
+    """The weighted token bag for one work.
 
     Categorical fields live in their own token namespace (``g·``/``k·``/``a·``) so a
     genre "Oorlog" never matches the summary word "oorlog"; repetition sets the
-    weight (higher = stronger pull towards books sharing that value).
+    weight (higher = stronger pull towards works sharing that value).
     """
     toks: list[str] = []
     for g in genres:
@@ -80,36 +84,28 @@ def _doc_tokens(row: sqlite3.Row, genres: list[str], *,
     return toks
 
 
-def _norm_key(title: str | None, author: str | None) -> str:
-    """Loose (title, author) key to fold other editions / reprints together, so the
-    e-book of an audiobook (or a reprint) is not recommended as a 'similar' title."""
-    return f"{(title or '').strip().lower()}|{(author or '').strip().lower()}"
-
-
 def _load_docs(conn: sqlite3.Connection,
-               w_author: int = 1) -> tuple[list[str], list[list[str]], list[str]]:
-    """Return ``(ppns, token_bags, dupe_keys)`` for every book, in one pass.
+               w_author: int = 1) -> tuple[list[str], list[list[str]]]:
+    """Return ``(work_ids, token_bags)`` for every work, in one pass.
 
     Genres are gathered via a single grouped query and joined in memory, so this is
     two queries total regardless of catalog size. ``w_author`` sets the author-token
     weight (0 drops it — the 'lsa' method uses 0 for more author diversity).
     """
-    genres_by_ppn: dict[str, list[str]] = {}
+    genres_by_work: dict[str, list[str]] = {}
     for r in conn.execute(
-            "SELECT bg.book_ppn AS ppn, g.name AS name "
-            "FROM book_genres bg JOIN genres g ON g.id = bg.genre_id"):
-        genres_by_ppn.setdefault(r["ppn"], []).append(r["name"])
+            "SELECT wg.work_id, g.name AS name "
+            "FROM work_genres wg JOIN genres g ON g.id = wg.genre_id"):
+        genres_by_work.setdefault(r["work_id"], []).append(r["name"])
 
-    ppns: list[str] = []
+    work_ids: list[str] = []
     bags: list[list[str]] = []
-    keys: list[str] = []
     for row in conn.execute(
-            "SELECT ppn, title, author, summary, keywords FROM books"):
-        ppns.append(row["ppn"])
-        bags.append(_doc_tokens(row, genres_by_ppn.get(row["ppn"], []),
+            "SELECT work_id, title, author, summary, keywords FROM works"):
+        work_ids.append(row["work_id"])
+        bags.append(_doc_tokens(row, genres_by_work.get(row["work_id"], []),
                                 w_author=w_author))
-        keys.append(_norm_key(row["title"], row["author"]))
-    return ppns, bags, keys
+    return work_ids, bags
 
 
 # Recommender used by the site:
@@ -124,31 +120,36 @@ _AUTHOR_WEIGHT = {"lsa": 0}  # 0 = drop the author token (more author diversity)
 
 
 def _ensure_table(conn: sqlite3.Connection) -> None:
-    """Create ``book_similar`` (keyed by method so both recommenders coexist), and
-    migrate a pre-``method`` table by dropping it (it is always rebuildable)."""
-    cols = [r[1] for r in conn.execute("PRAGMA table_info(book_similar)")]
+    """Create ``work_similar`` (keyed by method so both recommenders coexist), and
+    migrate a pre-``method`` table by dropping it (it is always rebuildable).
+
+    ``book_similar`` goes with it: a rebuild into a fresh temp DB can never carry
+    the old table over, but a local dev DB built before the works model can, and a
+    stale table of edition PPNs would be a confusing thing to find."""
+    conn.execute("DROP TABLE IF EXISTS book_similar")
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(work_similar)")]
     if cols and "method" not in cols:
-        conn.execute("DROP TABLE book_similar")
+        conn.execute("DROP TABLE work_similar")
     conn.executescript(
-        "CREATE TABLE IF NOT EXISTS book_similar ("
-        "  book_ppn  TEXT NOT NULL,"
-        "  method    TEXT NOT NULL,"
-        "  rank      INTEGER NOT NULL,"
-        "  other_ppn TEXT NOT NULL,"
-        "  score     REAL,"
-        "  PRIMARY KEY (book_ppn, method, rank));"
-        "CREATE INDEX IF NOT EXISTS idx_similar_book ON book_similar(book_ppn, method);")
+        "CREATE TABLE IF NOT EXISTS work_similar ("
+        "  work_id       TEXT NOT NULL,"
+        "  method        TEXT NOT NULL,"
+        "  rank          INTEGER NOT NULL,"
+        "  other_work_id TEXT NOT NULL,"
+        "  score         REAL,"
+        "  PRIMARY KEY (work_id, method, rank));"
+        "CREATE INDEX IF NOT EXISTS idx_similar_work ON work_similar(work_id, method);")
     conn.commit()
 
 
 def build_similar(conn: sqlite3.Connection, *, method: str = "lsa", k: int = 24,
                   min_score: float | None = None, lsa_dim: int = 300,
                   batch: int = 64) -> int:
-    """Compute top-``k`` cosine neighbours per book for one ``method`` and refill its
-    rows in ``book_similar``.
+    """Compute top-``k`` cosine neighbours per work for one ``method`` and refill its
+    rows in ``work_similar``.
 
     ``'lsa'`` drops the author token and reduces the genre-rich TF-IDF space with
-    Truncated SVD before cosine. Returns the number of books that got ≥1 neighbour.
+    Truncated SVD before cosine. Returns the number of works that got ≥1 neighbour.
     Raises ``ImportError`` if scikit-learn is absent.
     """
     if method not in METHODS:
@@ -166,9 +167,9 @@ def build_similar(conn: sqlite3.Connection, *, method: str = "lsa", k: int = 24,
 
     if min_score is None:
         min_score = _MIN_SCORE[method]
-    ppns, bags, keys = _load_docs(conn, w_author=_AUTHOR_WEIGHT[method])
-    n = len(ppns)
-    logger.info(f"[{method}] TF-IDF over {n} books…")
+    work_ids, bags = _load_docs(conn, w_author=_AUTHOR_WEIGHT[method])
+    n = len(work_ids)
+    logger.info(f"[{method}] TF-IDF over {n} works…")
 
     # analyzer=identity: we already produced the exact token list per doc, so the
     # vectorizer must not re-tokenize/lowercase. min_df=2 drops hapax terms (a word
@@ -198,16 +199,18 @@ def build_similar(conn: sqlite3.Connection, *, method: str = "lsa", k: int = 24,
 
     _ensure_table(conn)
     cur = conn.cursor()
-    cur.execute("DELETE FROM book_similar WHERE method = ?", (method,))
+    cur.execute("DELETE FROM work_similar WHERE method = ?", (method,))
 
     is_sparse = sparse.issparse(feats)
     # For the dense case keep .T as a *view*: BLAS handles a transposed operand, and
     # a contiguous copy would duplicate the whole (n, dim) matrix.
     ft = feats.T.tocsr() if is_sparse else feats.T
-    keys_arr = np.array(keys, dtype=object)
     written = 0
-    # over-fetch candidates so dropping other editions/reprints still leaves k
-    pool = min(k + 25, n - 1)
+    # Exactly k candidates, no over-fetch: nothing is skipped any more. The old
+    # pool existed to survive dropping edition twins from the candidate list, and
+    # at this grain a work has no twin to drop. min_score only ever truncates the
+    # list, so a short one is the honest answer rather than something to pad.
+    pool = max(1, min(k, n - 1))
     for start in range(0, n, batch):
         stop = min(start + batch, n)
         block = feats[start:stop] @ ft
@@ -215,28 +218,18 @@ def build_similar(conn: sqlite3.Connection, *, method: str = "lsa", k: int = 24,
         for i in range(stop - start):
             gi = start + i
             row_sims = sims[i]
-            row_sims[gi] = -1.0  # never recommend the book itself
-            # fetch a few extra candidates, then collapse editions of one work
+            row_sims[gi] = -1.0  # never recommend the work itself
             cand = np.argpartition(row_sims, -pool)[-pool:]
             cand = cand[np.argsort(row_sims[cand])[::-1]]
-            # seed with the source's own (title, author) so its e-book/audiobook
-            # twin is skipped; grows as we pick, so two editions of the *same*
-            # recommended work never both appear — an e-book and its audiobook are
-            # one book to a reader.
-            used_keys = {keys_arr[gi]}
             picked = 0
             for j in cand:
                 s = float(row_sims[j])
                 if s < min_score:
                     break
-                kj = keys_arr[j]
-                if kj in used_keys:
-                    continue  # same work as the source or an already-picked neighbour
-                used_keys.add(kj)
                 cur.execute(
-                    "INSERT INTO book_similar(book_ppn, method, rank, other_ppn, score) "
+                    "INSERT INTO work_similar(work_id, method, rank, other_work_id, score) "
                     "VALUES (?, ?, ?, ?, ?)",
-                    (ppns[gi], method, picked, ppns[j], round(s, 4)))
+                    (work_ids[gi], method, picked, work_ids[j], round(s, 4)))
                 picked += 1
                 if picked >= k:
                     break
@@ -245,7 +238,7 @@ def build_similar(conn: sqlite3.Connection, *, method: str = "lsa", k: int = 24,
         if start and start % (batch * 20) == 0:
             logger.info(f"  [{method}] neighbours: {stop}/{n}")
     conn.commit()
-    logger.info(f"[{method}] filled: {written}/{n} books have ≥1 recommendation")
+    logger.info(f"[{method}] filled: {written}/{n} works have ≥1 recommendation")
     return written
 
 
@@ -258,7 +251,7 @@ def main(db_path: str | Path = db.DEFAULT_DB, *, k: int = 24,
             build_similar(conn, method=m, k=k, lsa_dim=lsa_dim)
         # drop rows from any recommender no longer built (e.g. the retired 'tfidf')
         qs = ",".join("?" * len(METHODS))
-        conn.execute(f"DELETE FROM book_similar WHERE method NOT IN ({qs})", METHODS)
+        conn.execute(f"DELETE FROM work_similar WHERE method NOT IN ({qs})", METHODS)
         conn.commit()
     finally:
         conn.close()

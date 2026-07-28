@@ -166,6 +166,17 @@ def parse_detail(html: str, ppn: str | None = None) -> dict[str, Any]:
         field = _LABEL_MAP.get(low)
         if not field:
             continue
+        if field == "also_available_as":
+            # The block's <a href> points straight at the twin edition's PPN — the
+            # library asserting "these two items are one book" itself, which beats
+            # any title/author key. The label text is kept as well (it is what the
+            # audit report counts missed merges against).
+            rec.setdefault(field, value)
+            ppns = [m.group(1) for a in dd.find_all("a", href=True)
+                    if (m := _CANONICAL_RE.search(a["href"]))]
+            if ppns:
+                rec["related_ppns"] = ppns
+            continue
         if field == "year":
             ym = re.search(r"\d{4}", value)
             rec["year"] = int(ym.group()) if ym else None
