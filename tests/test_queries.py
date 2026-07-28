@@ -1,53 +1,46 @@
-"""Data-access layer (obc.web.queries) against the hermetic fixture catalog."""
+"""Data-access layer (obc.web.queries) against the hermetic fixture catalog.
+
+The fixture is 9 editions forming 5 works (see sampledata), so every assertion
+below is about *books* — which is the whole point of the model.
+"""
 
 from obc.web import queries as Q
 
 
 def _ppns(result):
-    return {r["ppn"] for r in result.rows}
-
-
-def test_book_detail_tolerates_pre_hierarchy_schema(tmp_path):
-    """A catalog built before the book_genres.parent_id column (the window right
-    after a schema-changing deploy) must not 503 the book page — book_detail falls
-    back to a flat genre list instead of raising OperationalError."""
-    import sampledata
-
-    from obc import db
-    path = tmp_path / "old.db"
-    conn = db.connect(path)
-    db.bulk_load(conn, sampledata.records(), sampledata.lists())
-    # rebuild book_genres without parent_id (the old schema)
-    conn.executescript(
-        "PRAGMA foreign_keys=OFF;"
-        "CREATE TABLE bg_old (book_ppn TEXT, genre_id INTEGER, PRIMARY KEY(book_ppn, genre_id));"
-        "INSERT INTO bg_old(book_ppn, genre_id) SELECT book_ppn, genre_id FROM book_genres;"
-        "DROP TABLE book_genres;"
-        "ALTER TABLE bg_old RENAME TO book_genres;")
-    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    conn.close()
-    ro = Q.connect_ro(path)
-    detail = Q.book_detail(ro, "001")
-    ro.close()
-    assert detail is not None
-    assert all(g["parent"] is None for g in detail["genres"])  # flat fallback
+    return {r["work_id"] for r in result.rows}
 
 
 def test_browse_all_newest_first(ro_conn):
-    # 6 editions but 001+002 are one work (e-book+audiobook) -> merged to 5 results
     res = Q.search(ro_conn, Q.SearchFilters(sort="year_desc"), 1, 50)
     assert res.total == 5
     years = [r["year"] for r in res.rows]
     assert years == sorted(years, reverse=True)
 
 
-def test_format_filter(ro_conn):
+def test_format_filter_counts_works_available_in_that_format(ro_conn):
+    """``?format=audiobook`` means "books you can listen to", not "audiobook rows".
+
+    The old model skipped its own collapse whenever a format filter was set, on
+    the assumption that a work then has only that one edition — false for work 001
+    (two audiobooks), and exactly why /luisterboeken was removed again.
+    """
     res = Q.search(ro_conn, Q.SearchFilters(format="audiobook"), 1, 50)
-    assert _ppns(res) == {"002"}
+    assert _ppns(res) == {"001", "004", "005"}
+    assert res.total == 3
+    assert _ppns(Q.search(ro_conn, Q.SearchFilters(format="ebook"), 1, 50)) == \
+        {"001", "003", "004", "005", "006"}
+
+
+def test_fts_finds_a_work_by_a_word_only_its_audiobook_carries(ro_conn):
+    """"walvisexpeditie" lives only in edition 007's summary. Per-edition FTS rows
+    plus a collapse-after-MATCH returned zero results for a book the catalog holds;
+    the work's FTS row pools its editions' text, so it is findable."""
+    res = Q.search(ro_conn, Q.SearchFilters(q="walvisexpeditie"), 1, 50)
+    assert _ppns(res) == {"001"}
 
 
 def test_fts_query_matches_title_and_summary(ro_conn):
-    # both editions match, but they are one work -> merged to the e-book representative
     res = Q.search(ro_conn, Q.SearchFilters(q="ontdekking", sort="relevance"), 1, 50)
     assert _ppns(res) == {"001"}
 
@@ -59,8 +52,9 @@ def test_fts_folds_diacritics(ro_conn):
 
 def test_language_and_year_filters(ro_conn):
     assert _ppns(Q.search(ro_conn, Q.SearchFilters(languages=("Engels",)), 1, 50)) == {"003"}
+    # work 001's year is the oldest of its editions (2020), not the audiobook's
     res = Q.search(ro_conn, Q.SearchFilters(year_from=2020, year_to=2021), 1, 50)
-    assert _ppns(res) == {"001"}  # 001+002 are one work -> merged
+    assert _ppns(res) == {"001"}
 
 
 def test_ereader_author_genre_list_filters(ro_conn):
@@ -71,36 +65,52 @@ def test_ereader_author_genre_list_filters(ro_conn):
     assert _ppns(Q.search(ro_conn, Q.SearchFilters(lists=("test-top",)), 1, 50)) == {"001", "003"}
 
 
+def test_author_filter_matches_a_variant_spelling(ro_conn):
+    """Only the canonical spelling survives as authors.name now, so an ?author= URL
+    carrying a variant — a link someone already has, or a stale crawl — has to keep
+    working. The filter matches on the fold."""
+    for spelling in ("Bob de Wit", "Bob De Wit", "BOB DE WIT"):
+        assert _ppns(Q.search(ro_conn, Q.SearchFilters(authors=(spelling,)), 1, 50)) == \
+            {"003", "004"}, spelling
+
+
 def test_pagination(ro_conn):
     page1 = Q.search(ro_conn, Q.SearchFilters(sort="title"), 1, 2)
     page2 = Q.search(ro_conn, Q.SearchFilters(sort="title"), 2, 2)
-    assert page1.total == 5  # 6 editions, 001+002 merged into one work
+    assert page1.total == 5
     assert len(page1.rows) == 2
     assert _ppns(page1).isdisjoint(_ppns(page2))
 
 
-def test_formats_map_links_both_editions(ro_conn):
-    res = Q.search(ro_conn, Q.SearchFilters(format="ebook"), 1, 50)
-    fmap = Q.formats_map(ro_conn, res.rows)
-    assert fmap["001"] == ["audiobook", "ebook"]  # the work exists in both
+def test_work_rows_carry_the_format_flags_and_edition_ppns(ro_conn):
+    """What formats_map / editions_map used to compute with two extra queries per
+    result page now rides along on the row the page already fetched."""
+    row = next(r for r in Q.search(ro_conn, Q.SearchFilters(), 1, 50).rows
+               if r["work_id"] == "001")
+    assert row["has_ebook"] == 1 and row["has_audiobook"] == 1
+    assert row["ebook_ppn"] == "001" and row["audiobook_ppn"] == "002"
 
 
 def test_compute_facets(ro_conn):
     f = Q.compute_facets(ro_conn)
     assert set(f["formats"]) == {"audiobook", "ebook"}
     assert "Nederlands" in f["languages"]
+    assert "Bob de Wit" in f["authors"]
     assert any(lst["slug"] == "test-top" for lst in f["lists"])
 
 
 def test_suggest(ro_conn):
     titles = Q.suggest(ro_conn, "ontdek", 7)["title_rows"]
-    assert any(r["ppn"] == "001" for r in titles)
+    assert len(titles) == 1                      # one row per work, never a twin
+    assert titles[0]["ppn"] == "001"
+    assert titles[0]["ebook_ppn"] == "001" and titles[0]["audiobook_ppn"] == "002"
+    assert titles[0]["slug"] == "de-ontdekking--anna-vrij"
     assert "Anna Vrij" in Q.suggest(ro_conn, "anna", 7)["authors"]  # author autocomplete
     assert Q.suggest(ro_conn, "", 7) is None
 
 
 def test_suggest_matches_keywords_not_just_title(ro_conn):
-    # "italiaans" is only in book 005's keywords (Trefwoorden), not its title/subjects.
+    # "italiaans" is only in work 005's keywords (Trefwoorden), not its title/subjects.
     # The live search-bar dropdown used to only match the title column, so a keyword-only
     # term showed nothing there even though the full search page found it.
     titles = Q.suggest(ro_conn, "italiaans", 7)["title_rows"]
@@ -130,12 +140,13 @@ def test_book_detail_hides_top_genre_shown_via_a_subgenre_chip(tmp_path):
     # likewise for Spanning & Thrillers) should not show the top-level genre as its own
     # separate chip — "Literatuur & Romans › Sociale romans" already conveys it. A
     # top-level genre with no child present ("Gezin & Gezondheid") must still show.
+    from collections import Counter
+
     from obc import db
     recs = [{"ppn": "1", "title": "x", "audience": "Volwassenen",
              "subjects": ["Literatuur & Romans", "Sociale romans",
                           "Spanning & Thrillers", "Historische spanning",
                           "Gezin & Gezondheid"]}]
-    from collections import Counter
     conn = db.connect(tmp_path / "g.db")
     db.bulk_load(conn, recs)
     genre_code = {
@@ -145,7 +156,7 @@ def test_book_detail_hides_top_genre_shown_via_a_subgenre_chip(tmp_path):
         ("volwassenen", "Historische spanning"): "4.1",
         ("volwassenen", "Gezin & Gezondheid"): "10.0",
     }
-    db.set_book_genre_parents(conn, (genre_code, Counter(dict.fromkeys(genre_code, 1))))
+    db.set_work_genre_parents(conn, (genre_code, Counter(dict.fromkeys(genre_code, 1))))
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     conn.close()
     ro = Q.connect_ro(tmp_path / "g.db")
@@ -159,26 +170,72 @@ def test_book_detail_hides_top_genre_shown_via_a_subgenre_chip(tmp_path):
 
 def test_book_detail(ro_conn):
     detail = Q.book_detail(ro_conn, "001")
-    assert detail["row"]["title"] == "De Ontdekking"
-    assert detail["editions"].get("audiobook") == "002"  # the audiobook edition
+    assert detail["work"]["title"] == "De Ontdekking"
+    # the summary is the longest non-empty across the work's three editions — the
+    # representative is chosen by format, so it is not always the fullest blurb
+    assert detail["work"]["summary"] == max(
+        (e["summary"] for e in detail["editions"] if e["summary"]), key=len)
+    assert [e["ppn"] for e in detail["editions"]] == ["001", "002", "007"]
+    assert detail["editions"][0]["format"] == "ebook"     # e-book first
+    assert detail["editions"][1]["narrator"] == "Jan Stem"
     assert "Anna Vrij" in detail["authors"]
-    bl = next(b for b in detail["book_lists"] if b["slug"] == "test-top")
+    bl = next(b for b in detail["work_lists"] if b["slug"] == "test-top")
     assert bl["won"] == 1  # carried through from the list item
+
+
+def test_book_detail_redirects_a_non_representative_edition(ro_conn):
+    """/book/{audiobook_ppn} used to render a near-identical duplicate page. It
+    resolves to its work now, so the route can 301 and the link keeps working."""
+    assert Q.book_detail(ro_conn, "002") == {"redirect": "001"}
+    assert Q.book_detail(ro_conn, "009") == {"redirect": "004"}
     assert Q.book_detail(ro_conn, "nope") is None
 
 
-def test_author_and_series(ro_conn):
-    # 001 (e-book) and 002 (audiobook) are one work, so the shelf shows one card
-    # with both format badges — the same collapse the results grid does
+def test_author_shelves_and_series(ro_conn):
+    # work 001 is three editions but one card — the shelf shows books
     assert len(Q.author_books(ro_conn, "Anna Vrij")) == 1
-    # both take the merged form now: a folded key for authors, every spelling of
-    # the series for series, because a slug URL can cover more than one of each
     assert len(Q.author_books_by_fold(ro_conn, "anna vrij")) == 1
-    assert Q.author_title_counts(ro_conn)["anna vrij"] == 1
+    # 003 + the merged 004/009: one shelf despite the two spellings of his name
+    assert {r["work_id"] for r in Q.author_books_by_fold(ro_conn, "bob de wit")} == \
+        {"003", "004"}
     assert Q.author_display_name(ro_conn, "anna vrij") == "Anna Vrij"
     assert Q.author_display_name(ro_conn, "niemand") is None
-    assert {r["ppn"] for r in Q.series_books(ro_conn, ("Het Mysterie",))} == {"004"}
-    assert Q.series_books(ro_conn, ()) == []
+    assert {r["work_id"] for r in Q.series_books(ro_conn, "het-mysterie")} == {"004"}
+    assert Q.series_books(ro_conn, "geen-reeks") == []
+    assert Q.series_row(ro_conn, "het-mysterie")["name"] == "Het Mysterie"
+    assert Q.series_row(ro_conn, "geen-reeks") is None
+
+
+def test_authors_are_persons_with_one_row_and_the_majority_spelling(ro_conn):
+    rows = Q.author_index(ro_conn)
+    assert len(rows) == 5                      # five people, not six spellings
+    wit = next(r for r in rows if r["name_fold"] == "bob de wit")
+    assert wit["name"] == "Bob de Wit"         # majority spelling, chosen at build
+    assert wit["titles"] == 2
+    assert wit["surname_sort"] == "wit" and wit["first_sort"] == "bob-de-wit"
+
+
+def test_browse_summary_counts_availability(ro_conn):
+    s = Q.browse_summary(ro_conn, Q.SearchFilters())
+    assert s["ebooks"] == 5
+    assert s["audiobooks"] == 3
+    assert s["ereader"] == 2
+    assert [a["name"] for a in s["authors"]][0] == "Bob de Wit"   # 2 works
+    # the summary describes the same set as the shelf below it, format filter or not
+    audio = Q.browse_summary(ro_conn, Q.SearchFilters(format="audiobook"))
+    assert audio["audiobooks"] == 3
+
+
+def test_genre_pages_and_tree_are_read_not_derived(ro_conn):
+    # the fixture catalog carries no facet codes, so every genre is top-level
+    page = Q.genre_page(ro_conn, "spanning-thrillers")
+    assert page["name"] == "Spanning & Thrillers"
+    assert page["titles"] == 2                 # works 003 and 004
+    assert Q.genre_page(ro_conn, "bestaat-niet") is None
+    assert Q.genre_children(ro_conn, "spanning-thrillers") == []
+    tree = Q.genre_tree(ro_conn, "volwassenen")
+    assert {g["slug"] for g in tree} == {s["slug"] for s in Q.genre_pages(ro_conn)}
+    assert Q.genre_tree(ro_conn, "jeugd") == []
 
 
 def test_lists_overview_counts(ro_conn):
@@ -187,13 +244,19 @@ def test_lists_overview_counts(ro_conn):
     assert row["available"] == 2
     items = Q.list_items(ro_conn, Q.list_row(ro_conn, "test-top")["id"])
     assert len(items) == 3
+    first = items[0]
+    assert first["work_id"] == "001" and first["slug"] == "de-ontdekking--anna-vrij"
+    # both availability flags, so a list row can badge every format the book has
+    assert first["bebook"] == 1 and first["baudio"] == 1
 
 
 def test_web_stats(ro_conn):
     s = Q.web_stats(ro_conn)
-    assert s["total"] == 6
+    assert s["total"] == 5          # boeken
+    assert s["editions"] == 9       # ...and the files you borrow them as
     assert s["ebooks"] == 5
-    assert s["audiobooks"] == 1
+    assert s["audiobooks"] == 3
+    assert ("Bob de Wit", 2) in [tuple(r) for r in s["top_authors"]]
 
 
 def test_web_stats_genres_carry_parent(tmp_path):
@@ -208,7 +271,7 @@ def test_web_stats_genres_carry_parent(tmp_path):
     db.bulk_load(conn, recs)
     genre_code = {("volwassenen", "Literatuur & Romans"): "2.0",
                   ("volwassenen", "Sociale romans"): "2.1"}
-    db.set_book_genre_parents(conn, (genre_code, Counter(dict.fromkeys(genre_code, 1))))
+    db.set_work_genre_parents(conn, (genre_code, Counter(dict.fromkeys(genre_code, 1))))
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     conn.close()
     ro = Q.connect_ro(tmp_path / "g.db")
@@ -218,36 +281,10 @@ def test_web_stats_genres_carry_parent(tmp_path):
     assert rows["Sociale romans"] == "Literatuur & Romans"
 
 
-def test_web_stats_tolerates_pre_hierarchy_schema(tmp_path):
-    """web_stats must keep /stats online against a catalog built before the
-    book_genres.parent_id column (the window right after a schema-changing deploy),
-    falling back to flat parent-less genre rows instead of raising."""
-    import sampledata
-
-    from obc import db
-    path = tmp_path / "old.db"
-    conn = db.connect(path)
-    db.bulk_load(conn, sampledata.records(), sampledata.lists())
-    # rebuild book_genres without parent_id (the old schema)
-    conn.executescript(
-        "PRAGMA foreign_keys=OFF;"
-        "CREATE TABLE bg_old (book_ppn TEXT, genre_id INTEGER, PRIMARY KEY(book_ppn, genre_id));"
-        "INSERT INTO bg_old(book_ppn, genre_id) SELECT book_ppn, genre_id FROM book_genres;"
-        "DROP TABLE book_genres;"
-        "ALTER TABLE bg_old RENAME TO book_genres;")
-    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    conn.close()
-    ro = Q.connect_ro(path)
-    s = Q.web_stats(ro)
-    ro.close()
-    assert s["total"] == 6
-    assert all(r["parent"] is None for r in s["genres"])  # flat fallback
-
-
 def test_relevance_weights_subjects_above_summary(tmp_path):
-    """bm25 weights are positional over ALL fts columns incl. the UNINDEXED ppn, so
-    the ranking needs 5 weights (0.0 for ppn). With the old 4-weight expression the
-    10.0 lands on ppn and subjects/summary both get 1.0 — a subjects-only hit and a
+    """bm25 weights are positional over ALL fts columns incl. the UNINDEXED work_id, so
+    the ranking needs 5 weights (0.0 for work_id). With the old 4-weight expression the
+    10.0 lands on the id and subjects/summary both get 1.0 — a subjects-only hit and a
     summary-only hit then score identically. The two books below are byte-identical
     except which column holds the unique term (so bm25 length-normalisation is the
     same for both); only the column weight can break the tie. New weights rank the
@@ -257,9 +294,9 @@ def test_relevance_weights_subjects_above_summary(tmp_path):
     filler_subj, filler_summ = "vulonderwerp", "vulsamenvatting korte zin"
     # SUM inserted first (lower rowid): on the tied old weights it sorts ahead,
     # which is exactly the wrong order the fix corrects.
-    # distinct authors (same token length) so the edition-merge keeps them as two
-    # separate works — the term lives in subjects/summary, never the author, so bm25
-    # length-normalisation stays identical and only the column weight breaks the tie.
+    # distinct authors (same token length) so the two stay separate works — the term
+    # lives in subjects/summary, never the author, so bm25 length-normalisation stays
+    # identical and only the column weight breaks the tie.
     recs = [
         {"ppn": "SUM", "title": "Zelfde titel", "author": "Auteur Aaa",
          "authors": ["Auteur Aaa"], "format": "ebook", "language": "Nederlands",
@@ -268,10 +305,12 @@ def test_relevance_weights_subjects_above_summary(tmp_path):
          "authors": ["Auteur Bbb"], "format": "ebook", "language": "Nederlands",
          "subjects": [filler_subj, term], "summary": filler_summ},
     ]
-    # ~20 fillers so the term isn't in every row (bm25 IDF is 0 otherwise).
+    # ~20 fillers so the term isn't in every row (bm25 IDF is 0 otherwise). They need
+    # distinct authors too: sharing one would make them a single work sharing a title,
+    # and 20 documents would collapse into 1.
     recs += [
-        {"ppn": f"F{i:02d}", "title": "Zelfde titel", "author": "Zelfde Auteur",
-         "authors": ["Zelfde Auteur"], "format": "ebook", "language": "Nederlands",
+        {"ppn": f"F{i:02d}", "title": "Zelfde titel", "author": f"Auteur F{i:02d}",
+         "authors": [f"Auteur F{i:02d}"], "format": "ebook", "language": "Nederlands",
          "subjects": [filler_subj], "summary": filler_summ}
         for i in range(20)
     ]
@@ -283,5 +322,5 @@ def test_relevance_weights_subjects_above_summary(tmp_path):
     ro = Q.connect_ro(path)
     res = Q.search(ro, Q.SearchFilters(q=term, sort="relevance"), 1, 50)
     ro.close()
-    order = [r["ppn"] for r in res.rows]
+    order = [r["work_id"] for r in res.rows]
     assert order == ["SUB", "SUM"]

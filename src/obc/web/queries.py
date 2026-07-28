@@ -10,6 +10,13 @@ Conventions
 * Functions return ``sqlite3.Row`` objects or plain Python containers — never
   rendered HTML. Cover-image sizing, URL building and templating stay in the
   route layer.
+* Reads go to ``works`` — one row per book — for every work-level fact, and to
+  ``editions`` only for what describes the file you borrow (format, pages,
+  duration, narrator, ISBN, borrow link). Nothing here re-derives "these two
+  rows are the same book": :mod:`obc.work` decided that at build time.
+* Nothing here counts, groups or sorts what the build already stamped
+  (``n_works``, ``surname_sort``, ``series_slug``, ``genre_pages``): the read
+  path is indexed lookups only.
 """
 
 from __future__ import annotations
@@ -77,10 +84,10 @@ def _in(col: str, values: list[str] | tuple[str, ...]) -> tuple[str, list]:
 # (then it becomes a bm25 expression); otherwise it falls back to title order.
 SORTS = {
     "relevance": None,
-    "added": "b.added_rank IS NULL, b.added_rank ASC",
-    "year_desc": "b.year DESC",
-    "year_asc": "b.year ASC",
-    "title": "b.title COLLATE NOCASE ASC",
+    "added": "w.added_rank IS NULL, w.added_rank ASC",
+    "year_desc": "w.year DESC",
+    "year_asc": "w.year ASC",
+    "title": "w.title COLLATE NOCASE ASC",
 }
 LIST_SORTS = {
     "name": "l.name COLLATE NOCASE ASC",
@@ -120,38 +127,45 @@ def _build_where(f: SearchFilters) -> tuple[list[str], list]:
     where: list[str] = []
     params: list = []
     if f.format:
-        where.append("b.format = ?")
-        params.append(f.format)
+        # "available as", not "this row is": a work-level flag is what makes the
+        # format facet mean the same thing as the format landing pages, and it is
+        # the whole reason the collapse-unless-format-filter branch is gone.
+        where.append("w.has_audiobook = 1" if f.format == "audiobook"
+                     else "w.has_ebook = 1")
     if f.languages:
-        clause, vals = _in("b.language", f.languages)
+        clause, vals = _in("w.language", f.languages)
         where.append(clause)
         params += vals
     if f.publishers:
-        clause, vals = _in("b.publisher", f.publishers)
+        clause, vals = _in("w.publisher", f.publishers)
         where.append(clause)
         params += vals
     if f.authors:
-        clause, vals = _in("a.name", f.authors)
-        where.append("b.ppn IN (SELECT ba.book_ppn FROM book_authors ba "
-                     f"JOIN authors a ON a.id = ba.author_id WHERE {clause})")
+        # Match on the fold, not the display name: only the canonical spelling
+        # survives as authors.name now, so an ?author= URL carrying a variant
+        # ("Bob De Wit") has to keep working. Folded here rather than with the
+        # SQL fold() function, which only exists on connect_ro connections.
+        clause, vals = _in("a.name_fold", [fold(v) for v in f.authors])
+        where.append("w.work_id IN (SELECT wa.work_id FROM work_authors wa "
+                     f"JOIN authors a ON a.id = wa.author_id WHERE {clause})")
         params += vals
     if f.lists:
         clause, vals = _in("l.slug", f.lists)
-        where.append("b.ppn IN (SELECT bl.book_ppn FROM book_lists bl "
-                     f"JOIN lists l ON l.id = bl.list_id WHERE {clause})")
+        where.append("w.work_id IN (SELECT wl.work_id FROM work_lists wl "
+                     f"JOIN lists l ON l.id = wl.list_id WHERE {clause})")
         params += vals
     if f.ereader:
-        where.append("b.ereader = 1")
+        where.append("w.ereader = 1")
     if f.year_from is not None:
-        where.append("b.year >= ?")
+        where.append("w.year >= ?")
         params.append(f.year_from)
     if f.year_to is not None:
-        where.append("b.year <= ?")
+        where.append("w.year <= ?")
         params.append(f.year_to)
     if f.genres:
         clause, vals = _in("g.name", f.genres)
-        where.append("b.ppn IN (SELECT bg.book_ppn FROM book_genres bg "
-                     f"JOIN genres g ON g.id = bg.genre_id WHERE {clause})")
+        where.append("w.work_id IN (SELECT wg.work_id FROM work_genres wg "
+                     f"JOIN genres g ON g.id = wg.genre_id WHERE {clause})")
         params += vals
     return where, params
 
@@ -161,145 +175,84 @@ def search(conn: sqlite3.Connection, f: SearchFilters, page: int,
     """Run a filtered + ranked search and return one page of rows plus the
     total match count. FTS5 ``bm25`` ranking is weighted toward title/author.
 
-    E-book and audiobook editions of the *same work* (shared title+author) are
-    collapsed into a single result — one row per work — so a title never appears
-    twice. (Skipped when the user filters to a specific format: every work then has
-    only that one edition anyway.) The card still shows both format badges via
-    :func:`formats_map`. When a format filter *is* set we keep the plain per-edition
-    path (cheaper, and there is nothing to merge)."""
+    One row per book by construction — ``works`` *is* the grain the reader is
+    searching — so there is no collapse to apply, and none to skip when a format
+    filter is set. That exception is what made ``?format=audiobook`` count
+    editions as titles and show one work four times.
+    """
     where, params = _build_where(f)
 
     joins = ""
-    order = SORTS.get(f.sort) or "b.title COLLATE NOCASE ASC"
+    order = SORTS.get(f.sort) or "w.title COLLATE NOCASE ASC"
     match = fts_match(f.q) if f.q else ""
     if match:
-        joins = "JOIN books_fts ft ON ft.ppn = b.ppn"
-        where.append("books_fts MATCH ?")
+        joins = "JOIN works_fts ft ON ft.work_id = w.work_id"
+        where.append("works_fts MATCH ?")
         params.append(match)
         if f.sort == "relevance":
-            # first weight = the UNINDEXED ppn column (bm25 weights are positional
-            # over ALL declared columns): ppn, title, author, subjects, summary.
-            order = "bm25(books_fts, 0.0, 10.0, 6.0, 2.0, 1.0)"
-
-    # Collapse editions by keeping only each work's primary edition (a flag stamped
-    # once at normalize time — see db.set_primary_editions). This is a plain indexed
-    # WHERE, so the hot browse query stays fast (no per-request window sort). A format
-    # filter turns it off: every work then has only that one edition anyway. Tolerate a
-    # catalog built before the column (the window right after a schema-changing deploy).
-    if not f.format and _has_primary_edition(conn):
-        where.append("b.primary_edition = 1")
+            # first weight = the UNINDEXED work_id column (bm25 weights are
+            # positional over ALL declared columns): work_id, title, author,
+            # subjects, summary.
+            order = "bm25(works_fts, 0.0, 10.0, 6.0, 2.0, 1.0)"
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     total = conn.execute(
-        f"SELECT COUNT(*) FROM books b {joins} {where_sql}", params).fetchone()[0]
+        f"SELECT COUNT(*) FROM works w {joins} {where_sql}", params).fetchone()[0]
     offset = (page - 1) * page_size
     rows = conn.execute(
-        f"SELECT b.* FROM books b {joins} {where_sql} "
+        f"SELECT w.* FROM works w {joins} {where_sql} "
         f"ORDER BY {order} LIMIT ? OFFSET ?",
         [*params, page_size, offset]).fetchall()
     return SearchResult(rows=rows, total=total)
 
 
-def _has_primary_edition(conn: sqlite3.Connection) -> bool:
-    """True if books.primary_edition exists (catalogs built before edition-merge lack
-    it — then search falls back to listing every edition until the next rebuild)."""
-    return any(r[1] == "primary_edition"
-               for r in conn.execute("PRAGMA table_info(books)"))
-
-
-def _collapse_editions(conn: sqlite3.Connection) -> str:
-    """WHERE fragment that keeps one row per work, or '' on a pre-column catalog.
-
-    The author and series shelves need the same collapse the results grid does:
-    an e-book and its audiobook are one work, and listing both turned a four-part
-    series into eight cards. ``formats_map`` still badges the card with both.
-    """
-    return " AND b.primary_edition = 1" if _has_primary_edition(conn) else ""
-
-
-def total_books(conn: sqlite3.Connection) -> int:
-    return conn.execute("SELECT COUNT(*) FROM books").fetchone()[0]
+def total_works(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COUNT(*) FROM works").fetchone()[0]
 
 
 # --------------------------------------------------------------------------- #
-# per-result enrichment (formats of the same work; curated lists)
+# per-result enrichment (curated lists)
 # --------------------------------------------------------------------------- #
-def formats_map(conn: sqlite3.Connection, rows) -> dict[str, list[str]]:
-    """Map ppn -> sorted list of formats the *work* exists in (a title may have
-    both an e-book and an audiobook edition under different PPNs)."""
-    titles = list({r["title"] for r in rows if r["title"]})
-    by_work: dict[tuple, set] = {}
-    if titles:
-        qmarks = ",".join("?" * len(titles))
-        for r in conn.execute(
-                f"SELECT title, author, format FROM books WHERE title IN ({qmarks})",
-                titles):
-            key = ((r["title"] or "").lower(), (r["author"] or "").lower())
-            by_work.setdefault(key, set()).add(r["format"])
-    out = {}
-    for r in rows:
-        key = ((r["title"] or "").lower(), (r["author"] or "").lower())
-        out[r["ppn"]] = sorted(f for f in by_work.get(key, {r["format"]}) if f)
-    return out
-
-
-def editions_map(conn: sqlite3.Connection, rows) -> dict[str, dict[str, str]]:
-    """Map each row's ppn -> ``{format: ppn}`` for every edition of its *work*, so a
-    merged search card can link the e-book / audiobook icons straight to the right
-    edition. When a work has two editions of one format (rare) the lower PPN wins."""
-    titles = list({r["title"] for r in rows if r["title"]})
-    by_work: dict[tuple, dict[str, str]] = {}
-    if titles:
-        qmarks = ",".join("?" * len(titles))
-        for r in conn.execute(
-                f"SELECT ppn, title, author, format FROM books WHERE title IN ({qmarks}) "
-                "ORDER BY ppn", titles):
-            if not r["format"]:
-                continue
-            key = ((r["title"] or "").lower(), (r["author"] or "").lower())
-            by_work.setdefault(key, {}).setdefault(r["format"], r["ppn"])
-    out = {}
-    for r in rows:
-        key = ((r["title"] or "").lower(), (r["author"] or "").lower())
-        out[r["ppn"]] = by_work.get(key) or {r["format"]: r["ppn"]}
-    return out
-
-
 def lists_map(conn: sqlite3.Connection, rows) -> dict[str, list[dict]]:
-    """ppn -> list of {name, slug, position, year} for the books on this page."""
-    ppns = [r["ppn"] for r in rows]
+    """work_id -> list of {name, slug, position, year} for the books on this page."""
+    ids = [r["work_id"] for r in rows]
     out: dict[str, list] = {}
-    if ppns:
-        qmarks = ",".join("?" * len(ppns))
+    if ids:
+        qmarks = ",".join("?" * len(ids))
         for r in conn.execute(
-                f"SELECT bl.book_ppn, l.name, l.slug, bl.position, bl.year, bl.won "
-                f"FROM book_lists bl JOIN lists l ON l.id = bl.list_id "
-                f"WHERE bl.book_ppn IN ({qmarks}) ORDER BY bl.position", ppns):
-            out.setdefault(r["book_ppn"], []).append(
+                f"SELECT wl.work_id, l.name, l.slug, wl.position, wl.year, wl.won "
+                f"FROM work_lists wl JOIN lists l ON l.id = wl.list_id "
+                f"WHERE wl.work_id IN ({qmarks}) ORDER BY wl.position", ids):
+            out.setdefault(r["work_id"], []).append(
                 {"name": r["name"], "slug": r["slug"], "position": r["position"],
                  "year": r["year"], "won": r["won"]})
     return out
 
 
 # --------------------------------------------------------------------------- #
-# facets (values are identical for every request; the route caches them)
+# facets
 # --------------------------------------------------------------------------- #
 def compute_facets(conn: sqlite3.Connection) -> dict:
-    formats = [r["format"] for r in conn.execute(
-        "SELECT DISTINCT format FROM books WHERE format IS NOT NULL ORDER BY format")]
+    """The filter panel's values — all of them LIMITed index reads.
+
+    The genre and author lists used to be a GROUP BY over the link tables per
+    request, which is why the route cached them behind a lock; the counts are
+    stamped at build time now, so every list below is cheap enough to just read.
+    """
+    formats = [fmt for fmt, flag in (("audiobook", "has_audiobook"),
+                                     ("ebook", "has_ebook"))
+               if conn.execute(
+                   f"SELECT EXISTS(SELECT 1 FROM works WHERE {flag} = 1)").fetchone()[0]]
     languages = [r["language"] for r in conn.execute(
-        "SELECT language FROM books WHERE language IS NOT NULL AND length(language) <= 24 "
+        "SELECT language FROM works WHERE language IS NOT NULL AND length(language) <= 24 "
         "AND language NOT IN ('Fictie','Non-fictie','Nonfictie') "
         "GROUP BY language ORDER BY COUNT(*) DESC LIMIT 25")]
     genres = [r["name"] for r in conn.execute(
-        "SELECT g.name FROM genres g JOIN book_genres bg ON bg.genre_id = g.id "
-        "GROUP BY g.id ORDER BY COUNT(*) DESC LIMIT 40")]
-    publishers = [r["publisher"] for r in conn.execute(
-        "SELECT publisher FROM books WHERE publisher IS NOT NULL AND publisher <> '' "
-        "GROUP BY publisher ORDER BY COUNT(*) DESC LIMIT 80")]
+        "SELECT name FROM genres WHERE n_works > 0 ORDER BY n_works DESC LIMIT 40")]
+    publishers = [r["name"] for r in conn.execute(
+        "SELECT name FROM publishers ORDER BY n DESC LIMIT 80")]
     authors = [r["name"] for r in conn.execute(
-        "SELECT a.name FROM authors a JOIN book_authors ba ON ba.author_id = a.id "
-        "GROUP BY a.id ORDER BY COUNT(*) DESC LIMIT 120")]
+        "SELECT name FROM authors WHERE n_works > 0 ORDER BY n_works DESC LIMIT 120")]
     lists = [{"slug": r["slug"], "name": r["name"]} for r in conn.execute(
         "SELECT slug, name FROM lists ORDER BY name")]
     return {"formats": formats, "languages": languages, "genres": genres,
@@ -319,29 +272,28 @@ def suggest(conn: sqlite3.Connection, q: str, limit: int = 7) -> dict | None:
     # Unscoped (not title-only) so a match in subjects/keywords/summary/author also
     # surfaces a book here — e.g. a search term that's only in "Trefwoorden" used to
     # show nothing in the live dropdown even though the full search page found it.
-    # Same bm25 weights as the main search, so title hits still rank first. The
-    # primary_edition filter collapses e-book+audiobook of one work (like the results
-    # page) so a title never shows up twice in the dropdown.
-    # first weight = the UNINDEXED ppn column (ppn, title, author, subjects, summary).
-    prim = " AND b.primary_edition = 1" if _has_primary_edition(conn) else ""
+    # Same bm25 weights as the main search, so title hits still rank first. One row
+    # per work by construction, so no collapse filter (a title cannot show up twice).
+    # first weight = the UNINDEXED work_id column (work_id, title, author, subjects,
+    # summary).
     title_rows = conn.execute(
-        "SELECT b.ppn, b.title, b.author, b.cover_url, b.format "
-        "FROM books_fts ft JOIN books b ON b.ppn = ft.ppn "
-        f"WHERE books_fts MATCH ?{prim} "
-        "ORDER BY bm25(books_fts, 0.0, 10.0, 6.0, 2.0, 1.0) LIMIT ?",
+        "SELECT w.work_id AS ppn, w.title, w.author, w.slug, w.cover_url, "
+        "       w.ebook_ppn, w.audiobook_ppn, "
+        "       CASE WHEN w.has_ebook THEN 'ebook' ELSE 'audiobook' END AS format "
+        "FROM works_fts ft JOIN works w ON w.work_id = ft.work_id "
+        "WHERE works_fts MATCH ? "
+        "ORDER BY bm25(works_fts, 0.0, 10.0, 6.0, 2.0, 1.0) LIMIT ?",
         (fts_match(q), limit)).fetchall()
     like = f"%{fold(q)}%"
     authors = [r["name"] for r in conn.execute(
-        "SELECT a.name, COUNT(*) n FROM authors a JOIN book_authors ba "
-        "ON ba.author_id = a.id WHERE a.name_fold LIKE ? GROUP BY a.id "
-        "ORDER BY n DESC LIMIT 5", (like,))]
+        "SELECT name FROM authors WHERE name_fold LIKE ? "
+        "ORDER BY n_works DESC LIMIT 5", (like,))]
     publishers = [r["name"] for r in conn.execute(
         "SELECT name FROM publishers WHERE name_fold LIKE ? "
         "ORDER BY n DESC LIMIT 4", (like,))]
     genres = [r["name"] for r in conn.execute(
-        "SELECT g.name, COUNT(*) n FROM genres g JOIN book_genres bg "
-        "ON bg.genre_id = g.id WHERE fold(g.name) LIKE ? GROUP BY g.id "
-        "ORDER BY n DESC LIMIT 4", (like,))]
+        "SELECT name FROM genres WHERE fold(name) LIKE ? "
+        "ORDER BY n_works DESC LIMIT 4", (like,))]
     lists = [{"slug": r["slug"], "name": r["name"]} for r in conn.execute(
         "SELECT slug, name FROM lists WHERE fold(name) LIKE ? ORDER BY name LIMIT 4",
         (like,))]
@@ -359,11 +311,10 @@ def facet_values(conn: sqlite3.Connection, kind: str, q: str = "",
     limit = _limit(limit, 30, 50)
     like = f"%{fold(qq)}%"
     if kind == "author":
-        base = ("SELECT a.name v, COUNT(*) n FROM authors a "
-                "JOIN book_authors ba ON ba.author_id = a.id ")
-        rows = (conn.execute(base + "WHERE a.name_fold LIKE ? GROUP BY a.id "
-                             "ORDER BY n DESC LIMIT ?", (like, limit)) if qq
-                else conn.execute(base + "GROUP BY a.id ORDER BY n DESC LIMIT ?", (limit,)))
+        base = "SELECT name v FROM authors WHERE n_works > 0 "
+        rows = (conn.execute(base + "AND name_fold LIKE ? "
+                             "ORDER BY n_works DESC LIMIT ?", (like, limit)) if qq
+                else conn.execute(base + "ORDER BY n_works DESC LIMIT ?", (limit,)))
     elif kind == "publisher":
         rows = (conn.execute("SELECT name v, n FROM publishers WHERE name_fold LIKE ? "
                              "ORDER BY n DESC LIMIT ?", (like, limit)) if qq
@@ -378,97 +329,105 @@ def facet_values(conn: sqlite3.Connection, kind: str, q: str = "",
 # detail pages
 # --------------------------------------------------------------------------- #
 def book_detail(conn: sqlite3.Connection, ppn: str) -> dict | None:
-    """Everything the book page needs, or ``None`` if the PPN is unknown."""
-    row = conn.execute("SELECT * FROM books WHERE ppn = ?", (ppn,)).fetchone()
-    if row is None:
-        return None
-    # genres with their parent (resolved per this book's audience). Tolerate a catalog
-    # DB built before the book_genres.parent_id column — i.e. the window after a
-    # schema-changing deploy but before the next rebuild — by falling back to flat.
-    try:
-        genres = [{"name": r["name"], "parent": r["parent_name"]} for r in conn.execute(
-            "SELECT g.name, p.name AS parent_name "
-            "FROM book_genres bg JOIN genres g ON g.id = bg.genre_id "
-            "LEFT JOIN genres p ON p.id = bg.parent_id "
-            "WHERE bg.book_ppn = ? ORDER BY COALESCE(p.name, g.name), g.name", (ppn,))]
-    except sqlite3.OperationalError as exc:  # DB built before book_genres.parent_id
-        if "parent_id" not in str(exc):
-            raise
-        genres = [{"name": r["name"], "parent": None} for r in conn.execute(
-            "SELECT g.name FROM genres g JOIN book_genres bg ON bg.genre_id = g.id "
-            "WHERE bg.book_ppn = ? ORDER BY g.name", (ppn,))]
+    """Everything the book page needs.
+
+    ``ppn`` may be any edition's PPN. For a non-representative edition returns
+    {"redirect": work_id} so the route can 301 — old audiobook URLs keep working.
+    Otherwise: {"work": row, "editions": [edition rows, e-book first then ppn],
+    "genres": [...], "authors": [...], "work_lists": [...]}.
+    None if the PPN is unknown at either grain.
+    """
+    work = conn.execute("SELECT * FROM works WHERE work_id = ?", (ppn,)).fetchone()
+    if work is None:
+        row = conn.execute("SELECT work_id FROM editions WHERE ppn = ?", (ppn,)).fetchone()
+        return {"redirect": row["work_id"]} if row else None
+    # genres with their parent (resolved per this work's audience)
+    genres = [{"name": r["name"], "parent": r["parent_name"]} for r in conn.execute(
+        "SELECT g.name, p.name AS parent_name "
+        "FROM work_genres wg JOIN genres g ON g.id = wg.genre_id "
+        "LEFT JOIN genres p ON p.id = wg.parent_id "
+        "WHERE wg.work_id = ? ORDER BY COALESCE(p.name, g.name), g.name", (ppn,))]
     # Drop a top-level genre's own chip when a "parent › child" chip already shows it —
     # e.g. skip standalone "Literatuur & Romans" when "Literatuur & Romans › Sociale
     # romans" is also on this book; that chip already conveys the top-level genre.
     shown_as_parent = {g["parent"] for g in genres if g["parent"]}
     genres = [g for g in genres if not (g["parent"] is None and g["name"] in shown_as_parent)]
-    # other editions of the same work (e.g. the audiobook of this e-book)
-    editions = {row["format"]: ppn}
-    for r in conn.execute(
-            "SELECT ppn, format FROM books WHERE lower(title)=lower(?) "
-            "AND lower(COALESCE(author,''))=lower(COALESCE(?,'')) AND format IS NOT NULL",
-            (row["title"], row["author"])):
-        editions.setdefault(r["format"], r["ppn"])
+    # the editions you can actually borrow, e-book first — one indexed lookup on
+    # editions.work_id instead of a case-insensitive (title, author) re-derivation
+    editions = conn.execute(
+        "SELECT * FROM editions WHERE work_id = ? "
+        "ORDER BY (CASE WHEN format = 'ebook' THEN 0 ELSE 1 END), ppn", (ppn,)).fetchall()
     authors = [r["name"] for r in conn.execute(
-        "SELECT a.name FROM authors a JOIN book_authors ba ON ba.author_id = a.id "
-        "WHERE ba.book_ppn = ? ORDER BY ba.position", (ppn,))]
-    book_lists = [{"name": r["name"], "slug": r["slug"], "position": r["position"],
+        "SELECT a.name FROM authors a JOIN work_authors wa ON wa.author_id = a.id "
+        "WHERE wa.work_id = ? ORDER BY wa.position", (ppn,))]
+    work_lists = [{"name": r["name"], "slug": r["slug"], "position": r["position"],
                    "year": r["year"], "won": r["won"]} for r in conn.execute(
-        "SELECT l.name, l.slug, bl.position, bl.year, bl.won FROM book_lists bl "
-        "JOIN lists l ON l.id = bl.list_id WHERE bl.book_ppn = ? ORDER BY bl.position",
+        "SELECT l.name, l.slug, wl.position, wl.year, wl.won FROM work_lists wl "
+        "JOIN lists l ON l.id = wl.list_id WHERE wl.work_id = ? ORDER BY wl.position",
         (ppn,))]
-    return {"row": row, "genres": genres, "editions": editions,
-            "authors": authors, "book_lists": book_lists}
+    return {"work": work, "editions": editions, "genres": genres,
+            "authors": authors, "work_lists": work_lists}
 
 
 def author_books(conn: sqlite3.Connection, name: str) -> list[sqlite3.Row]:
     """Books by the exact author name — the fallback for names that don't slug."""
     return conn.execute(
-        "SELECT b.* FROM books b JOIN book_authors ba ON ba.book_ppn = b.ppn "
-        "JOIN authors a ON a.id = ba.author_id WHERE a.name = ?"
-        f"{_collapse_editions(conn)} "
-        "ORDER BY b.year DESC, b.title COLLATE NOCASE LIMIT 300", (name,)).fetchall()
+        "SELECT w.* FROM works w JOIN work_authors wa ON wa.work_id = w.work_id "
+        "JOIN authors a ON a.id = wa.author_id WHERE a.name = ? "
+        "ORDER BY w.year DESC, w.title COLLATE NOCASE LIMIT 300", (name,)).fetchall()
 
 
 # A slug round-trips into a name_fold by swapping dashes for spaces, so the two
 # functions below look up an indexed column rather than a computed one. The catalog
 # holds the same person under several spellings ("Ad Van Schaik" / "Ad van Schaik",
-# "Agnès" / "Agnes") — 359 of them — and those fold together, so slugging the URL
-# also merges those duplicates onto a single page instead of splitting the shelf.
+# "Agnès" / "Agnes") — 359 of them — and ``authors`` is keyed by that fold, so one
+# person is one row, one shelf and one page.
 def author_display_name(conn: sqlite3.Connection, fold_key: str) -> str | None:
-    """The spelling to show for a folded author key: whichever variant carries the
-    most titles. ``None`` when no author folds to this key."""
+    """The spelling to show for a folded author key. ``None`` when no author folds
+    to this key (which is also the author page's 404 signal).
+
+    A single-row read: the vote between spellings happens at build time now.
+    """
     row = conn.execute(
-        "SELECT a.name AS name, COUNT(*) AS titles FROM authors a "
-        "JOIN book_authors ba ON ba.author_id = a.id WHERE a.name_fold = ? "
-        "GROUP BY a.id ORDER BY titles DESC, a.name COLLATE NOCASE LIMIT 1",
-        (fold_key,)).fetchone()
+        "SELECT name FROM authors WHERE name_fold = ? LIMIT 1", (fold_key,)).fetchone()
     return row["name"] if row else None
 
 
 def author_books_by_fold(conn: sqlite3.Connection, fold_key: str) -> list[sqlite3.Row]:
-    """Books by every author spelling that folds to ``fold_key``.
+    """Books by the person whose name folds to ``fold_key``.
 
-    ``GROUP BY b.ppn`` because a title credited to two spellings of one name would
-    otherwise appear on the shelf twice.
+    A plain join: ``work_authors``' primary key already collapsed a work credited
+    under two spellings into one link, so there is nothing left to GROUP BY.
     """
     return conn.execute(
-        "SELECT b.* FROM books b JOIN book_authors ba ON ba.book_ppn = b.ppn "
-        "JOIN authors a ON a.id = ba.author_id WHERE a.name_fold = ?"
-        f"{_collapse_editions(conn)} "
-        "GROUP BY b.ppn ORDER BY b.year DESC, b.title COLLATE NOCASE LIMIT 300",
+        "SELECT w.* FROM works w JOIN work_authors wa ON wa.work_id = w.work_id "
+        "JOIN authors a ON a.id = wa.author_id WHERE a.name_fold = ? "
+        "ORDER BY w.year DESC, w.title COLLATE NOCASE LIMIT 300",
         (fold_key,)).fetchall()
 
 
-def series_books(conn: sqlite3.Connection, names: tuple[str, ...]) -> list[sqlite3.Row]:
-    """Books in any of ``names`` — several spellings of one series ("De Stad" /
-    "De stad") share a slug, and therefore a page."""
-    if not names:
-        return []
-    clause, vals = _in("b.series", names)
+def series_books(conn: sqlite3.Connection, slug: str) -> list[sqlite3.Row]:
+    """The parts of a series, in order — one indexed lookup on ``works.series_slug``.
+
+    Several spellings of one series ("De Stad" / "De stad") share a slug, and
+    therefore a page; the slug lives on the work now, so the read side no longer
+    needs the spellings map the web layer used to cache.
+    """
     return conn.execute(
-        f"SELECT b.* FROM books b WHERE {clause}{_collapse_editions(conn)} "
-        "ORDER BY b.series_no, b.year LIMIT 300", vals).fetchall()
+        "SELECT w.* FROM works w WHERE w.series_slug = ? "
+        "ORDER BY w.series_no, w.year LIMIT 300", (slug,)).fetchall()
+
+
+def series_row(conn: sqlite3.Connection, slug: str) -> sqlite3.Row | None:
+    """The series' display spelling + part count, for the page heading."""
+    return conn.execute("SELECT * FROM series WHERE slug = ?", (slug,)).fetchone()
+
+
+def series_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every series page: slug, display spelling and part count, most parts first."""
+    return conn.execute(
+        "SELECT slug, name, titles FROM series "
+        "ORDER BY titles DESC, name COLLATE NOCASE").fetchall()
 
 
 # An author or series page only earns a place in the *sitemap* once it actually
@@ -480,95 +439,61 @@ MIN_INDEXABLE_TITLES = 2
 
 
 def author_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Every author spelling with its folded key and title count, A-Z.
+    """Every person with both A-Z sort keys and their work count.
 
-    Deliberately unfiltered and un-merged: an author page is addressed by slug, so
-    spelling variants share one page, and both the "has enough titles" rule and
-    the choice of display spelling have to be applied to the *merged* group. That
-    grouping lives in the web layer, which caches it per catalog rebuild.
+    One row per person rather than per spelling, and every column already
+    stamped: the hub's fold-merge loop and its per-request counting are gone.
     """
     return conn.execute(
-        "SELECT a.name AS name, a.name_fold AS fold, COUNT(*) AS titles "
-        "FROM authors a JOIN book_authors ba ON ba.author_id = a.id "
-        "GROUP BY a.id ORDER BY a.name_fold, titles DESC, a.name COLLATE NOCASE"
+        "SELECT name, name_fold, surname_sort, first_sort, n_works AS titles "
+        "FROM authors WHERE n_works > 0 ORDER BY name_fold").fetchall()
+
+
+# --------------------------------------------------------------------------- #
+# genre pages (taxonomy built by obc.db.build_genre_taxonomy)
+# --------------------------------------------------------------------------- #
+def genre_page(conn: sqlite3.Connection, slug: str) -> sqlite3.Row | None:
+    """One genre page: display name, work count, catalog-wide parent slug."""
+    return conn.execute("SELECT * FROM genre_pages WHERE slug = ?", (slug,)).fetchone()
+
+
+def genre_children(conn: sqlite3.Connection, slug: str) -> list[sqlite3.Row]:
+    """The subgenres filed under ``slug``, largest first."""
+    return conn.execute(
+        "SELECT slug, name, titles FROM genre_pages WHERE parent_slug = ? "
+        "ORDER BY titles DESC, slug", (slug,)).fetchall()
+
+
+def genre_pages(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every genre page, for the hub total and the sitemap's threshold check."""
+    return conn.execute(
+        "SELECT slug, name, titles, parent_slug FROM genre_pages ORDER BY slug"
     ).fetchall()
 
 
-def author_title_counts(conn: sqlite3.Connection) -> dict[str, int]:
-    """``{name_fold: distinct books}``.
+def genre_tree(conn: sqlite3.Connection, audience: str) -> list[dict]:
+    """One audience's genre tree: top genres carrying their own children.
 
-    Counted the way the shelf counts, so the hub can't advertise more than the
-    page delivers: per folded key rather than summed per spelling (one book
-    credited to both "Ad Van Schaik" and "Ad van Schaik" is one title), and with
-    editions collapsed (an e-book and its audiobook are one work). Both feed
-    MIN_INDEXABLE_TITLES, which decides what reaches the sitemap.
+    Jeugd and volwassenen are separate taxonomies — 67 of 213 subgenres sit under
+    a different parent depending on which shelf you are standing at — so each has
+    its own rows. The nesting below is presentation shaping over a few hundred
+    rows; the parent votes and the counts were settled at build time.
     """
-    return {r["fold"]: r["titles"] for r in conn.execute(
-        "SELECT a.name_fold AS fold, COUNT(DISTINCT ba.book_ppn) AS titles "
-        "FROM authors a JOIN book_authors ba ON ba.author_id = a.id "
-        f"JOIN books b ON b.ppn = ba.book_ppn WHERE 1=1{_collapse_editions(conn)} "
-        "GROUP BY a.name_fold")}
-
-
-def series_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Every series spelling with its part count, most parts first.
-
-    Un-merged and unfiltered for the same reason as :func:`author_index`: series
-    pages are addressed by slug, so spellings share a page and both the threshold
-    and the display spelling apply to the merged group.
-    """
-    return conn.execute(
-        "SELECT series AS name, COUNT(*) AS titles FROM books "
-        "WHERE COALESCE(series, '') <> '' "
-        "GROUP BY series ORDER BY titles DESC, series COLLATE NOCASE").fetchall()
-
-
-def genre_books(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """``(genre, parent, ppn, audience)`` per genre link, editions collapsed.
-
-    The web layer groups these by slug and counts *distinct* ppns: two spellings
-    of one genre routinely share books, so summing their separate counts
-    advertised more titles than the page delivers.
-
-    The parent lives on the link, not on the genre, because jeugd and volwassenen
-    reuse the same genre names under different parents (see
-    :func:`obc.db.set_book_genre_parents`): 67 of 213 subgenres sit under a
-    different parent per audience — "Avontuur" under "Spanning & Avontuur" for
-    jeugd and under "Spanning & Thrillers" for volwassenen. The audience comes
-    along so the web layer can build one tree per audience instead of flattening
-    the two into a single wrong one.
-    """
-    sql = ("SELECT g.name AS name, p.name AS parent, bg.book_ppn AS ppn, "
-           "       lower(COALESCE(b.audience, '')) AS audience "
-           "FROM genres g JOIN book_genres bg ON bg.genre_id = g.id "
-           "LEFT JOIN genres p ON p.id = bg.parent_id "
-           f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)}")
-    try:
-        return conn.execute(sql).fetchall()
-    except sqlite3.OperationalError as exc:  # catalog built before bg.parent_id
-        if "parent_id" not in str(exc):
-            raise
-        return conn.execute(
-            "SELECT g.name AS name, NULL AS parent, bg.book_ppn AS ppn, "
-            "       lower(COALESCE(b.audience, '')) AS audience FROM genres g "
-            "JOIN book_genres bg ON bg.genre_id = g.id "
-            f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)}"
-        ).fetchall()
-
-
-def genre_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Every genre with its work count, largest first.
-
-    Counted with editions collapsed, like the shelves: an e-book and its
-    audiobook are one title in the genre, not two. Unfiltered for the same reason
-    as :func:`author_index` — the hub lists every genre, the sitemap decides
-    separately which ones it nominates.
-    """
-    return conn.execute(
-        "SELECT g.name AS name, COUNT(DISTINCT bg.book_ppn) AS titles FROM genres g "
-        "JOIN book_genres bg ON bg.genre_id = g.id "
-        f"JOIN books b ON b.ppn = bg.book_ppn WHERE 1=1{_collapse_editions(conn)} "
-        "GROUP BY g.id ORDER BY titles DESC, g.name COLLATE NOCASE").fetchall()
+    rows = conn.execute(
+        "SELECT t.slug, t.parent_slug, t.titles, gp.name "
+        "FROM genre_tree t JOIN genre_pages gp ON gp.slug = t.slug "
+        "WHERE t.audience = ?", (audience,)).fetchall()
+    kids: dict[str, list[dict]] = {}
+    for r in rows:
+        if r["parent_slug"]:
+            kids.setdefault(r["parent_slug"], []).append(
+                {"name": r["name"], "slug": r["slug"], "titles": r["titles"]})
+    for group in kids.values():
+        group.sort(key=lambda g: -g["titles"])
+    tops = [{"name": r["name"], "slug": r["slug"], "titles": r["titles"],
+             "children": kids.get(r["slug"], [])}
+            for r in rows if not r["parent_slug"]]
+    return sorted(tops, key=lambda g: (-g["titles"], g["name"].lower()))
 
 
 def browse_summary(conn: sqlite3.Connection, f: SearchFilters,
@@ -577,53 +502,38 @@ def browse_summary(conn: sqlite3.Connection, f: SearchFilters,
 
     This is what keeps a browse landing page from being a bare wall of covers —
     every genre gets a different, factual paragraph, and the author names double
-    as internal links into the author pages. The format split deliberately counts
-    *editions*: it exists to say how many of these titles you can listen to.
+    as internal links into the author pages.
 
-    Authors with an empty fold are excluded: several unrelated non-Latin names
-    fold to "" and would otherwise be grouped into one person with a summed count.
+    Availability, not representation: ``SUM(has_ebook)`` counts the books in this
+    slice you can read, which is the same question the shelf below badges. It used
+    to be two correlated EXISTS subqueries over a (title, author) key, plus a
+    dedicated functional index, plus a branch mirroring search()'s collapse rule —
+    all of it to work around counting works through whichever edition happened to
+    represent them.
     """
     where, params = _build_where(f)
-    # Mirror search(): a format filter turns the collapse off there, so applying
-    # it here regardless made the summary describe a different set than the shelf
-    # below it — A.C. Baantjer vanished from /luisterboeken because his primary
-    # edition is an e-book.
-    if not f.format:
-        where.append("b.primary_edition = 1" if _has_primary_edition(conn) else "1=1")
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-    # Availability, not representation. With editions collapsed each work is
-    # counted through whichever edition happens to represent it, so a genre whose
-    # works are all primarily e-books reported zero audiobooks while its own shelf
-    # badged 91 of them as also available to listen to. EXISTS over the work key —
-    # the same (title, author) pairing formats_map uses, and the one
-    # idx_books_title_author_lower covers.
-    def has_edition(cond: str) -> str:
-        return ("EXISTS (SELECT 1 FROM books e "
-                "        WHERE lower(e.title) = lower(b.title) "
-                "          AND lower(COALESCE(e.author, '')) = lower(COALESCE(b.author, '')) "
-                f"          AND {cond})")
-
-    as_ebook = has_edition("e.format = 'ebook'")
-    as_audio = has_edition("e.format = 'audiobook'")
-    on_ereader = has_edition("e.ereader = 1")
     row = conn.execute(
-        f"SELECT SUM({as_ebook}) AS ebooks, SUM({as_audio}) AS audiobooks, "
-        f"       SUM({on_ereader}) AS ereader, "
-        "       MIN(NULLIF(b.year, 0)) AS year_min, MAX(b.year) AS year_max "
-        f"FROM books b {where_sql}", params).fetchone()
+        "SELECT SUM(w.has_ebook) AS ebooks, SUM(w.has_audiobook) AS audiobooks, "
+        "       SUM(w.ereader) AS ereader, "
+        "       MIN(NULLIF(w.year, 0)) AS year_min, MAX(w.year) AS year_max "
+        f"FROM works w {where_sql}", params).fetchone()
+    # Grouped by author_id: persons keep unrelated non-Latin names in separate
+    # rows, so the old "name_fold <> ''" exclusion (which existed because
+    # fold-grouping fused them into one person with a summed count) can go.
     authors = conn.execute(
-        "SELECT a.name AS name, COUNT(DISTINCT ba.book_ppn) AS titles FROM books b "
-        "JOIN book_authors ba ON ba.book_ppn = b.ppn "
-        "JOIN authors a ON a.id = ba.author_id "
-        f"{where_sql}{' AND' if where_sql else 'WHERE'} a.name_fold <> '' "
-        "GROUP BY a.name_fold ORDER BY titles DESC, a.name_fold LIMIT ?",
+        "SELECT a.name AS name, COUNT(*) AS titles FROM works w "
+        "JOIN work_authors wa ON wa.work_id = w.work_id "
+        "JOIN authors a ON a.id = wa.author_id "
+        f"{where_sql} GROUP BY wa.author_id "
+        "ORDER BY titles DESC, a.name_fold LIMIT ?",
         [*params, top_authors]).fetchall()
     return {"ebooks": row["ebooks"] or 0, "audiobooks": row["audiobooks"] or 0,
             "ereader": row["ereader"] or 0, "year_min": row["year_min"],
             "year_max": row["year_max"], "authors": authors}
 
 
-def similar_books(conn: sqlite3.Connection, ppn: str, method: str = "lsa",
+def similar_books(conn: sqlite3.Connection, work_id: str, method: str = "lsa",
                   limit: int = 20) -> list[sqlite3.Row]:
     """"Meer zoals dit": precomputed LSA neighbours for a book (see obc.similar).
 
@@ -633,12 +543,13 @@ def similar_books(conn: sqlite3.Connection, ppn: str, method: str = "lsa",
     limit = _limit(limit, 20, 30)
     try:
         return conn.execute(
-            "SELECT b.ppn, b.title, b.author, b.cover_url, b.format, s.score "
-            "FROM book_similar s JOIN books b ON b.ppn = s.other_ppn "
-            "WHERE s.book_ppn = ? AND s.method = ? ORDER BY s.rank LIMIT ?",
-            (ppn, method, limit)).fetchall()
+            "SELECT w.work_id AS ppn, w.title, w.author, w.slug, w.cover_url, "
+            "       w.has_ebook, w.has_audiobook, s.score "
+            "FROM work_similar s JOIN works w ON w.work_id = s.other_work_id "
+            "WHERE s.work_id = ? AND s.method = ? ORDER BY s.rank LIMIT ?",
+            (work_id, method, limit)).fetchall()
     except sqlite3.OperationalError as exc:  # table absent -> feature not built yet
-        if "book_similar" not in str(exc) and "method" not in str(exc):
+        if "work_similar" not in str(exc) and "method" not in str(exc):
             raise
         return []
 
@@ -661,10 +572,14 @@ def list_row(conn: sqlite3.Connection, slug: str) -> sqlite3.Row | None:
 
 
 def list_items(conn: sqlite3.Connection, list_id: int) -> list[sqlite3.Row]:
+    """A list's full contents. ``li.ppn`` holds a work_id (a work_id *is* a ppn),
+    so the row carries the work's slug and both availability flags — the item
+    links to one book page showing every edition it exists in."""
     return conn.execute(
         "SELECT li.position, li.year, li.title, li.author, li.cover_url, li.ppn, li.won, "
-        "b.cover_url AS bcover, b.format AS bformat "
-        "FROM list_items li LEFT JOIN books b ON b.ppn = li.ppn "
+        "w.work_id AS work_id, w.slug AS slug, w.cover_url AS bcover, "
+        "w.has_ebook AS bebook, w.has_audiobook AS baudio "
+        "FROM list_items li LEFT JOIN works w ON w.work_id = li.ppn "
         "WHERE li.list_id = ? ORDER BY li.position", (list_id,)).fetchall()
 
 
@@ -681,37 +596,29 @@ def web_stats(conn: sqlite3.Connection) -> dict:
     # top-level genres (parent_id IS NULL for that link) and sub-genres carry
     # their parent's name, so the stats page can show "Parent › Kind" like the
     # book page does. A genre used both ways (rare cross-audience overlap) gets
-    # its own row per role, so counts stay honest. Tolerate a catalog DB built
-    # before the book_genres.parent_id column (the window after a schema-changing
-    # deploy but before the next rebuild) by falling back to flat, parent-less rows.
-    try:
-        genres = many(
-            "SELECT g.name, p.name AS parent, COUNT(*) n "
-            "FROM book_genres bg JOIN genres g ON g.id = bg.genre_id "
-            "LEFT JOIN genres p ON p.id = bg.parent_id "
-            "GROUP BY g.id, p.id ORDER BY n DESC LIMIT 12")
-    except sqlite3.OperationalError as exc:  # DB built before book_genres.parent_id
-        if "parent_id" not in str(exc):
-            raise
-        genres = many(
-            "SELECT g.name, NULL AS parent, COUNT(*) n "
-            "FROM genres g JOIN book_genres bg ON bg.genre_id = g.id "
-            "GROUP BY g.id ORDER BY n DESC LIMIT 12")
+    # its own row per role, so counts stay honest.
+    genres = many(
+        "SELECT g.name, p.name AS parent, COUNT(*) n "
+        "FROM work_genres wg JOIN genres g ON g.id = wg.genre_id "
+        "LEFT JOIN genres p ON p.id = wg.parent_id "
+        "GROUP BY g.id, p.id ORDER BY n DESC LIMIT 12")
 
     return {
-        "total": one("SELECT COUNT(*) FROM books"),
-        "ebooks": one("SELECT COUNT(*) FROM books WHERE format='ebook'"),
-        "audiobooks": one("SELECT COUNT(*) FROM books WHERE format='audiobook'"),
-        "ereader": one("SELECT COUNT(*) FROM books WHERE ereader=1"),
+        # both grains, separately: a book and the files you can borrow it as are
+        # different numbers, and this page used to quietly report the second one
+        "total": one("SELECT COUNT(*) FROM works"),
+        "editions": one("SELECT COUNT(*) FROM editions"),
+        "ebooks": one("SELECT COUNT(*) FROM works WHERE has_ebook = 1"),
+        "audiobooks": one("SELECT COUNT(*) FROM works WHERE has_audiobook = 1"),
+        "ereader": one("SELECT COUNT(*) FROM works WHERE ereader = 1"),
         "authors": one("SELECT COUNT(*) FROM authors"),
         "publishers": one("SELECT COUNT(*) FROM publishers"),
         "lists": one("SELECT COUNT(*) FROM lists"),
         "languages": many("SELECT name, n FROM languages ORDER BY n DESC LIMIT 8"),
         "genres": genres,
-        "years": many("SELECT year, COUNT(*) n FROM books WHERE year >= 2000 "
+        "years": many("SELECT year, COUNT(*) n FROM works WHERE year >= 2000 "
                       "GROUP BY year ORDER BY year"),
-        "top_authors": many("SELECT a.name, COUNT(*) n FROM authors a "
-                            "JOIN book_authors ba ON ba.author_id=a.id GROUP BY a.id "
-                            "ORDER BY n DESC LIMIT 12"),
+        "top_authors": many("SELECT name, n_works AS n FROM authors "
+                            "ORDER BY n_works DESC LIMIT 12"),
         "top_publishers": many("SELECT name, n FROM publishers ORDER BY n DESC LIMIT 12"),
     }

@@ -15,6 +15,10 @@ from obc import db
 def _build_catalog(path) -> None:
     conn = db.connect(path)
     db.bulk_load(conn, sampledata.records(), sampledata.lists())
+    # The genre taxonomy is a post-pass because it reads work_genres.parent_id,
+    # which normalize stamps after the rebuild — the fixture mirrors that order so
+    # the genre hub and pages have the same tables to read as production.
+    db.build_genre_taxonomy(conn)
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")  # so mode=ro readers see it
     conn.close()
 
