@@ -1,14 +1,24 @@
 """A tiny, deterministic catalog shared by the hermetic tests.
 
-Six books chosen to exercise the interesting paths:
+Nine *editions* forming five *works*, chosen to exercise the interesting paths:
 
-* 001 + 002 — an e-book and an audiobook of the *same work* (shared title +
-  author) so edition-linking / formats_map have something to join on.
+* 001 + 002 + 007 — one work in three editions: an e-book and **two** audiobooks
+  (the case that killed /luisterboeken, where editions were counted as titles).
+  007's summary carries a word ("walvisexpeditie") that exists nowhere else, so
+  a work whose text only lives on a non-representative edition must still be
+  findable.
 * 003 — English, two authors, ereader=0.
-* 004 — a series volume (``Het Mysterie: deel 2``), Dutch.
-* 005 — ereader-available cookbook, with keywords not present in the title/subjects
-  (so full-text/suggest matching on keywords has something to exercise).
+* 004 + 009 — a series volume (``Het Mysterie: deel 2``) plus an audiobook whose
+  title matches no key; they are one work **only** via the library's own
+  ``related_ppns`` cross-link. 009 also spells its author "Bob De Wit", so the
+  person grain has a spelling variant to merge (majority "Bob de Wit", 2 vs 1).
+* 005 + 008 — one work **only** via ``strip_format_noise``: 008's title carries a
+  "- luisterboek" suffix. 005 has keywords not present in the title/subjects (so
+  full-text/suggest matching on keywords has something to exercise).
 * 006 — Spanish, diacritics in the title.
+
+Truth the tests assert against: 9 editions, 5 works; work 001 = {001, 002, 007}
+(audiobook_ppn "002"), 003 = {003}, 004 = {004, 009}, 005 = {005, 008}, 006 = {006}.
 
 ``records()`` / ``lists()`` return fresh copies so a test may mutate them.
 """
@@ -47,6 +57,25 @@ def records() -> list[dict]:
          "authors": ["Elena Sol"], "format": "ebook", "language": "Spaans",
          "publisher": "Sol Editorial", "year": 2019,
          "subjects": ["Literatuur & Romans"], "summary": "Poesía en español."},
+        # a second audiobook of work 001 — merged by the key, and the only place
+        # the word "walvisexpeditie" appears in the whole fixture catalog
+        {"ppn": "007", "title": "De Ontdekking", "author": "Anna Vrij",
+         "authors": ["Anna Vrij"], "format": "audiobook", "language": "Nederlands",
+         "publisher": "Querido, Amsterdam", "year": 2023, "isbn": "9789021400007",
+         "subjects": ["Literatuur & Romans"], "narrator": "Piet Stem",
+         "summary": "Volledige walvisexpeditie editie."},
+        # merges with 005 only because strip_format_noise drops the suffix
+        {"ppn": "008", "title": "Koken met Liefde - luisterboek", "author": "Dirk Kok",
+         "authors": ["Dirk Kok"], "format": "audiobook", "language": "Nederlands",
+         "publisher": "Keuken Pers", "year": 2022, "isbn": "9789021400008",
+         "subjects": ["Gezin & Gezondheid"], "narrator": "Kees Stem"},
+        # merges with 004 only because the library links the two itself; the
+        # capital-D spelling folds to the same person as 003/004's "Bob de Wit"
+        {"ppn": "009", "title": "Het grote mysterie, tweede deel", "author": "Bob De Wit",
+         "authors": ["Bob De Wit"], "format": "audiobook", "language": "Nederlands",
+         "publisher": "Spanning BV", "year": 2019,
+         "subjects": ["Spanning & Thrillers"], "narrator": "Ria Stem",
+         "related_ppns": ["004"]},
     ]
 
 

@@ -96,15 +96,15 @@ def _load_docs(conn: sqlite3.Connection,
     """
     genres_by_ppn: dict[str, list[str]] = {}
     for r in conn.execute(
-            "SELECT bg.book_ppn AS ppn, g.name AS name "
-            "FROM book_genres bg JOIN genres g ON g.id = bg.genre_id"):
+            "SELECT wg.work_id AS ppn, g.name AS name "
+            "FROM work_genres wg JOIN genres g ON g.id = wg.genre_id"):
         genres_by_ppn.setdefault(r["ppn"], []).append(r["name"])
 
     ppns: list[str] = []
     bags: list[list[str]] = []
     keys: list[str] = []
     for row in conn.execute(
-            "SELECT ppn, title, author, summary, keywords FROM books"):
+            "SELECT work_id AS ppn, title, author, summary, keywords FROM works"):
         ppns.append(row["ppn"])
         bags.append(_doc_tokens(row, genres_by_ppn.get(row["ppn"], []),
                                 w_author=w_author))

@@ -36,6 +36,13 @@ def raw(tmp_path, monkeypatch):
     _write(rec / "4.json", {"ppn": "4", "title": "Samen: deel 2",
                             "author": "Bob de Wit | Bernlef", "format": "ebook",
                             "language": "Fictie"})
+    # an e-book and its audiobook: one work in two editions, and the audiobook is
+    # the one carrying an ISBN a curated list can match on
+    _write(rec / "5.json", {"ppn": "5", "title": "Boek Vijf", "author": "Els Vijf",
+                            "format": "ebook", "language": "Nederlands"})
+    _write(rec / "6.json", {"ppn": "6", "title": "Boek Vijf", "author": "Els Vijf",
+                            "format": "audiobook", "language": "Nederlands",
+                            "isbn": "9789021400060"})
     monkeypatch.setattr(normalize, "EREADER_FILE", tmp_path / "ereader.json")
     monkeypatch.setattr(normalize, "GENRES_FILE", tmp_path / "genres.json")
     monkeypatch.setattr(normalize, "RECENT_FILE", tmp_path / "recent.json")
@@ -85,12 +92,14 @@ def test_normalize_publishes_recommendations_with_the_swap(tmp_path, monkeypatch
 
 
 def _enrich(raw):
-    """Run the read-only half of the pipeline; return (records, by_isbn, by_key)."""
+    """Run the read-only half of the pipeline; return (records, by_isbn, by_key,
+    work_of)."""
     paths = sorted((raw / "records").rglob("*.json"))
     aux = normalize._load_aux()
-    canon, by_isbn, by_key, _ = normalize._prepass(paths)
-    records = {r["ppn"]: r for r in normalize.iter_records(paths, aux, canon)}
-    return records, by_isbn, by_key
+    canon, by_isbn, by_key, _, work_of = normalize._prepass(paths)
+    records = {r["ppn"]: r
+               for r in normalize.iter_records(paths, aux, canon, work_of)}
+    return records, by_isbn, by_key, work_of
 
 
 def test_reclaim_disk_checkpoints_live_wal_instead_of_deleting(tmp_path):
@@ -102,8 +111,8 @@ def test_reclaim_disk_checkpoints_live_wal_instead_of_deleting(tmp_path):
     db_path = tmp_path / "catalog.db"
     conn = db.connect(db_path)  # WAL mode
     db.init_db(conn)
-    conn.execute("INSERT INTO books(ppn, title) VALUES ('1', 'Een')")
-    conn.execute("INSERT INTO books(ppn, title) VALUES ('2', 'Twee')")
+    conn.execute("INSERT INTO editions(ppn, work_id, title) VALUES ('1', '1', 'Een')")
+    conn.execute("INSERT INTO editions(ppn, work_id, title) VALUES ('2', '2', 'Twee')")
     conn.commit()
     # Keep the writer connection open (idle) so the -wal isn't auto-checkpointed
     # away on close — this is the "live DB with an active WAL" state we're testing.
@@ -115,15 +124,15 @@ def test_reclaim_disk_checkpoints_live_wal_instead_of_deleting(tmp_path):
     # WAL folded back in and truncated (never deleted out from under the reader).
     assert (not wal.exists()) or wal.stat().st_size == 0
     # DB still opens and the rows are all there.
-    assert conn.execute("SELECT COUNT(*) FROM books").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM editions").fetchone()[0] == 2
     conn.close()
     ro = sqlite3.connect(db_path)
-    assert ro.execute("SELECT COUNT(*) FROM books").fetchone()[0] == 2
+    assert ro.execute("SELECT COUNT(*) FROM editions").fetchone()[0] == 2
     ro.close()
 
 
 def test_publishers_canonicalised_to_most_common(raw):
-    records, _, _ = _enrich(raw)
+    records, _, _, _ = _enrich(raw)
     pubs = {ppn: records[ppn]["publisher"] for ppn in ("1", "2", "3")}
     assert pubs["1"] == pubs["2"] == pubs["3"] == "Querido, Amsterdam"
 
@@ -172,26 +181,26 @@ def test_normalize_preserves_ereader_when_side_file_vanishes(raw, tmp_path):
     db_path = tmp_path / "out.db"
     normalize.normalize(raw, db_path)                      # side-file has ["1"]
     conn = db.connect(db_path)
-    assert conn.execute("SELECT ereader FROM books WHERE ppn='1'").fetchone()[0] == 1
-    assert conn.execute("SELECT ereader FROM books WHERE ppn='2'").fetchone()[0] == 0
+    assert conn.execute("SELECT ereader FROM editions WHERE ppn='1'").fetchone()[0] == 1
+    assert conn.execute("SELECT ereader FROM editions WHERE ppn='2'").fetchone()[0] == 0
     conn.close()
 
     (raw / "ereader.json").unlink()                        # side-file lost
     normalize.normalize(raw, db_path)
     conn = db.connect(db_path)
-    assert conn.execute("SELECT ereader FROM books WHERE ppn='1'").fetchone()[0] == 1
-    assert conn.execute("SELECT ereader FROM books WHERE ppn='2'").fetchone()[0] == 0
+    assert conn.execute("SELECT ereader FROM editions WHERE ppn='1'").fetchone()[0] == 1
+    assert conn.execute("SELECT ereader FROM editions WHERE ppn='2'").fetchone()[0] == 0
     conn.close()
 
 
 def test_match_lists_by_isbn_then_title(raw):
-    _, by_isbn, by_key = _enrich(raw)
+    _, by_isbn, by_key, work_of = _enrich(raw)
     _write(raw / "lists" / "t.json", {"slug": "t", "name": "T", "items": [
         {"position": 1, "isbn": "9789021400017", "title": "x", "author": "y"},
         {"position": 2, "title": "Boek Twee", "author": "Anna Vrij"},
         {"position": 3, "title": "Bestaat Niet", "author": "Niemand"},
     ]})
-    items = normalize.match_lists(by_isbn, by_key)[0]["items"]
+    items = normalize.match_lists(by_isbn, by_key, work_of)[0]["items"]
     assert items[0]["ppn"] == "1"   # matched on ISBN (punctuation stripped)
     assert items[1]["ppn"] == "2"   # matched on title + author surname
     assert items[2]["ppn"] is None  # no match -> stays in list_items, greyed out
@@ -202,9 +211,54 @@ def test_normalize_end_to_end_builds_db(raw, tmp_path):
            "items": [{"position": 1, "isbn": "9789021400017"}]})
     db_path = tmp_path / "out.db"
     stats = normalize.normalize(raw, db_path)
-    assert stats["books"] == 4
+    assert stats["editions"] == 6
+    assert stats["works"] == 5          # 5 + 6 are one book in two editions
     conn = db.connect(db_path)
-    assert conn.execute("SELECT COUNT(*) FROM book_lists").fetchone()[0] == 1  # isbn match
+    assert conn.execute("SELECT COUNT(*) FROM work_lists").fetchone()[0] == 1  # isbn match
     assert conn.execute(
-        "SELECT publisher FROM books WHERE ppn='2'").fetchone()[0] == "Querido, Amsterdam"
+        "SELECT publisher FROM works WHERE work_id='2'").fetchone()[0] == "Querido, Amsterdam"
     conn.close()
+
+
+def test_editions_of_one_work_share_a_work_id(raw):
+    """The grouping happens in the prepass, so every record is written already
+    carrying it — and the representative is the e-book, whose PPN becomes the
+    work_id (so its existing /book/{ppn} URL keeps its meaning)."""
+    records, _, _, work_of = _enrich(raw)
+    assert records["5"]["work_id"] == records["6"]["work_id"] == "5"
+    assert work_of["6"] == "5"
+    # the unrelated records stay their own work
+    assert [records[p]["work_id"] for p in ("1", "2", "3", "4")] == ["1", "2", "3", "4"]
+
+
+def test_list_slot_matched_on_the_audiobooks_isbn_lands_on_the_work(raw):
+    """A curated-list slot used to match exactly one PPN — whichever edition's ISBN
+    was seen first — and the other edition silently lost the ribbon."""
+    _, by_isbn, by_key, work_of = _enrich(raw)
+    _write(raw / "lists" / "t.json", {"slug": "t", "name": "T", "items": [
+        {"position": 1, "isbn": "9789021400060", "title": "Boek Vijf"},
+    ]})
+    items = normalize.match_lists(by_isbn, by_key, work_of)[0]["items"]
+    assert items[0]["ppn"] == "5"       # the audiobook's ISBN, the work's id
+
+
+def test_list_slots_are_deduped_per_work(raw):
+    """Two slots naming the two editions of one book are one book — the second must
+    not be matched a second time."""
+    _, by_isbn, by_key, work_of = _enrich(raw)
+    _write(raw / "lists" / "t.json", {"slug": "t", "name": "T", "items": [
+        {"position": 1, "title": "Boek Vijf", "author": "Els Vijf"},
+        {"position": 2, "isbn": "9789021400060", "title": "Boek Vijf"},
+    ]})
+    items = normalize.match_lists(by_isbn, by_key, work_of)[0]["items"]
+    assert items[0]["ppn"] == "5"
+    assert items[1]["ppn"] is None
+
+
+def test_overrides_split_forces_two_works(raw, monkeypatch, tmp_path):
+    """When the data is wrong in a way no rule should guess, curate the exception:
+    a split pair forces the *second* ppn out into its own work."""
+    monkeypatch.setattr(normalize, "RAW_DIR", tmp_path)
+    _write(tmp_path / "work_overrides.json", {"split": [["5", "6"]]})
+    _, _, _, work_of = _enrich(raw)
+    assert work_of["5"] == "5" and work_of["6"] == "6"
