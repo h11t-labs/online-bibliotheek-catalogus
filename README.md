@@ -56,16 +56,15 @@ uv run obc serve              # http://127.0.0.1:8000
 
 # keep it fresh without re-downloading everything
 uv run obc scrape --sync      # daily: new/changed titles (newest-by-license first)
-uv run obc scrape --reconcile # periodic: full scan; mark titles removed from catalog
 
 # optional / periodic
 uv run obc scrape --genres    # tag books with genres via subject facets (slow, ~1h)
 uv run obc scrape --recent    # rank recently-added titles (for the 'Recent toegevoegd' sort)
 uv run obc scrape --ereader   # refresh only the e-reader-available flag set
-uv run obc scrape --enrich    # detail pages: ISBN, full genres, narrator, doelgroep,
-                              # leeftijd, reeks, trefwoorden
-uv run obc scrape --relink    # re-fetch only the pages whose 'ook beschikbaar als'
-                              # label names a twin but whose link wasn't captured
+uv run obc scrape --details   # detail pages, for records still missing what only
+                              # they carry: ISBN, genres, narrator, doelgroep,
+                              # leeftijd, reeks, trefwoorden, e-reader flag, and
+                              # the 'ook beschikbaar als' cross-links
 uv run obc lists update       # refresh curated lists (Bestseller 60, NYT, prizes)
 uv run obc similar            # rebuild only the "meer zoals dit" recommendations
 uv run obc stats
@@ -148,8 +147,11 @@ under the cap and paginate fully, while Dutch (the only >10k language) is split 
 
 Refresh: the catalog sorts by `licentie_datum`, so new/relicensed titles appear
 first. `--sync` pages newest-first and stops after a long run of already-known
-unchanged titles (usually a few pages). It can't see removals, so `--reconcile`
-(a full scan) stamps `removed_at` on titles no longer present; the UI hides them.
+unchanged titles (usually a few pages). It can't see removals; a completed
+`--full` stamps `removed_at` on titles no longer present (the UI hides them).
+That check is skipped when the run resumed from an interrupted one or was
+narrowed with `--formats`, because neither has seen the whole catalog — and
+"absent from a partial scan" is not evidence that a title is gone.
 
 ## How it works
 
@@ -163,7 +165,7 @@ unchanged titles (usually a few pages). It can't see removals, so `--reconcile`
   code until every piece fits. Records are de-duplicated by PPN and the run is
   resumable per `(format, year)` via `data/checkpoint.json`.
 - **Listing vs detail metadata**: listing rows give title, author, summary,
-  language, year, publisher, format, pages/duration, size, cover. `--enrich`
+  language, year, publisher, format, pages/duration, size, cover. `--details`
   then fetches **detail pages** (`/catalogus/{ppn}/{slug}.html`,
   `detail.parse_detail`) to add ISBN, the full subject/genre list, narrator,
   audience (doelgroep), age band, series, keywords and the "ook beschikbaar als"
@@ -241,7 +243,7 @@ src/obc/
   client.py       polite fetcher + get_listing_html() + fetch_detail()
   listing.py      results-page HTML -> record dicts + pager size
   detail.py       detail-page HTML -> record dict (enrichment)
-  scrape.py       browse/enrich/relink -> data/raw/records/*.json (resumable)
+  scrape.py       browse/details -> data/raw/records/*.json (resumable)
   work.py         which PPNs are one book (+ `obc works --report`)
   normalize.py    raw records -> SQLite (temp build + atomic swap)
   db.py           schema + the whole build: works, FTS5, every derived table

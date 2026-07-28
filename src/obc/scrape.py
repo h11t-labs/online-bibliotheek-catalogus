@@ -11,9 +11,12 @@ Two enumeration modes:
   Records are de-duplicated by PPN and the work is resumable per (format, year).
 
 * ``--from-file PATH`` — fetch + parse individual detail pages from a list of
-  catalog URLs / ``ppn,slug`` lines / JSON. Also used by ``--enrich`` to add
-  detail-only fields (ISBN, full subjects, narrator) to browsed records, and by
-  ``--relink`` to capture the cross-edition links that decide work identity.
+  catalog URLs / ``ppn,slug`` lines / JSON.
+
+``--details`` sits on top of the first mode: it fetches the detail page for every
+browsed record still missing something only that page carries — ISBN, the full
+subject list, narrator, the e-reader flag, and the cross-edition links that decide
+work identity.
 """
 
 from __future__ import annotations
@@ -106,18 +109,31 @@ def _enumerate_cell(client: Client, base: dict[str, str], on_record,
 
 
 def browse_all(client: Client, formats: Iterable[str], seen: set[str],
-               on_record, ereader: bool = False) -> None:
+               on_record, ereader: bool = False) -> bool:
     """Enumerate the catalog per (format x language). Resumable per cell.
 
     With ``ereader=True`` only the e-reader-available subset is visited
     (``leesvorm=ereader``) — used to flag which e-books work on an e-reader.
+
+    Returns whether ``seen`` ended up covering the whole catalog: false when a
+    cell was skipped because a previous, interrupted run had already done it.
+    That is the difference between "these are all the PPNs there are" and "these
+    are the ones I happened to visit", and only the first may be used to conclude
+    that a record on disk has been removed from the catalog.
+
+    Clears its own checkpoint namespace on the way out, so the *next* run starts
+    fresh rather than skipping every cell it already finished. The checkpoint
+    describes one run; leaving a completed one behind is what made a second
+    ``--full`` enumerate nothing at all.
     """
     done = _load_done()
     tag = "er" if ereader else "all"
+    complete = True
     for fmt in formats:
         for taal in LANGS:
             key = f"{tag}:{fmt}:{taal}"
             if key in done:
+                complete = False
                 continue
             base = {"q": "*", "type": FORMATS[fmt], "taal": taal}
             if ereader:
@@ -127,6 +143,8 @@ def browse_all(client: Client, formats: Iterable[str], seen: set[str],
             done.add(key)
             _save_done(done)
             logger.info(f"  {key}: +{len(seen) - before} (total {len(seen)})")
+    _save_done({k for k in _load_done() if not k.startswith(f"{tag}:")})
+    return complete
 
 
 def _paginate_flat(client: Client, params: dict[str, str], on_record,
@@ -187,14 +205,14 @@ def collect_recent(client: Client, max_page: int = 250) -> dict[str, int]:
 
 
 def collect_ereader(client: Client) -> set[str]:
-    """Enumerate e-reader-available e-books; persist the PPN set for normalize."""
-    # Clear our own (er:*) checkpoint namespace so an ereader refresh always
-    # re-enumerates. A completed prior run (or the ereader pass of a completed
-    # --full) would otherwise leave every er:* cell "done" -> we'd enumerate
-    # nothing and write an empty ereader.json, zeroing the flag on every e-book.
-    # (An interrupted ereader run can still resume within itself: the file is only
-    # rewritten at the very end.)
-    _save_done({k for k in _load_done() if not k.startswith("er:")})
+    """Enumerate e-reader-available e-books; persist the PPN set for normalize.
+
+    This used to clear its own ``er:*`` checkpoint namespace first, because a
+    completed prior run left every cell marked done — so the next run enumerated
+    nothing and wrote an empty ereader.json, zeroing the flag on every e-book.
+    ``browse_all`` clears its namespace when it finishes now, which fixes that
+    without also destroying the resume state of a run that was interrupted.
+    """
     seen: set[str] = set()
     ppns: set[str] = set()
     browse_all(client, ["ebook"], seen, lambda r: ppns.add(r["ppn"]), ereader=True)
@@ -263,29 +281,79 @@ def _existing_ppns() -> set[str]:
     return {p.stem for p in RECORDS_DIR.glob("*.json")} if RECORDS_DIR.exists() else set()
 
 
-def enrich(rate: float, limit=None) -> None:
-    """Add detail-only fields (ISBN, full subjects, narrator, audience) to
-    listing-sourced records that lack them. Resumable: records that already have
-    an ISBN are skipped."""
+def _merging_writer():
+    """Persist a browse row without discarding what the detail page added.
+
+    A listing row carries the listing fields and nothing else, so writing it over
+    an existing record would drop that record's ISBN, genres and cross-links.
+    ``_merge`` overlays only truthy values, so the row refreshes what it knows and
+    leaves the rest standing — except ``source``/``detail_at``, which describe how
+    complete the record is and must not be talked down by a listing row.
+    """
     write = _writer()
-    todo = []
-    for path in sorted(RECORDS_DIR.glob("*.json")):
-        rec = read_json(path)
-        if not isinstance(rec, dict):
-            continue
-        if rec.get("isbn") or not rec.get("slug"):
-            continue
-        todo.append(rec)
-    logger.info(f"Enriching {len(todo)} record(s) lacking detail fields")
+
+    def on_record(rec: dict) -> None:
+        path = RECORDS_DIR / f"{rec['ppn']}.json"
+        old = read_json(path) if path.exists() else None
+        if not isinstance(old, dict):
+            write(rec)
+            return
+        merged = _merge(old, rec)
+        if old.get("detail_at"):
+            merged["detail_at"] = old["detail_at"]
+            merged["source"] = old.get("source") or merged.get("source")
+        write(merged)
+
+    return on_record
+
+
+def _needs_detail(rec: dict) -> bool:
+    """Is there anything left for the detail page to add to this record?
+
+    One question, asked once. It used to be two passes with two selectors, and the
+    split cost a three-hour re-fetch: ``enrich`` skipped every record that already
+    had an ISBN, which is nearly all of them, so it could never pick up the "ook
+    beschikbaar als" cross-links that decide work identity — hence a second pass
+    with its own selector to go back over the same pages.
+
+    ``detail_at`` is what makes this self-resuming and terminating: a record that
+    has been fetched is never fetched again, even if the page turned out not to
+    carry the field we came for. Without it the eight pages whose label names a
+    twin that isn't actually linked would be re-fetched on every single run.
+    Records enriched before the stamp existed carry an ISBN instead, which is why
+    that still counts as "fetched".
+
+    A twin licensed *later* needs no re-fetch here: the newer edition's own first
+    fetch captures the link, and ``work.group_editions`` unions in both directions.
+    """
+    if not rec.get("slug") or rec.get("detail_at"):
+        return False
+    return (not rec.get("isbn")
+            or bool(rec.get("also_available_as") and not rec.get("related_ppns")))
+
+
+def details(rate: float, limit=None) -> None:
+    """Fetch the detail page for every record still missing something it provides.
+
+    ISBN, the full subject/genre list, narrator, audience, age band, series,
+    keywords, the e-reader flag and the cross-links all live on that page and
+    nowhere else.
+    """
+    write = _writer()
+    todo = [rec for rec in (read_json(p) for p in sorted(RECORDS_DIR.glob("*.json")))
+            if isinstance(rec, dict) and _needs_detail(rec)]
+    logger.info(f"Fetching detail pages for {len(todo)} record(s)")
+    stamp = datetime.datetime.now().isoformat(timespec="seconds")
     n = 0
     # cache=False: don't accumulate ~2GB of detail HTML on the volume — the merged
-    # record itself is the persistent result, and already-enriched records are skipped.
+    # record itself is the persistent result, and it is fetched once.
     with Client(per_second=rate, cache=False) as client:
         for rec in todo:
             detail = client.fetch_detail(rec["ppn"], rec["slug"])
             if detail:
                 merged = _merge(rec, detail)
                 merged["source"] = "listing+detail"
+                merged["detail_at"] = stamp
                 # _merge keeps only truthy values, so a detail ereader=0 (app-only)
                 # would be dropped — carry the flag through explicitly so app-only
                 # e-books aren't left blank.
@@ -294,55 +362,10 @@ def enrich(rate: float, limit=None) -> None:
                 write(merged)
                 n += 1
                 if n % 50 == 0:
-                    logger.info(f"  …{n} enriched")
+                    logger.info(f"  …{n} fetched")
             if limit and n >= limit:
                 break
-    logger.info(f"Enriched {n} record(s)")
-
-
-def relink(rate: float, limit=None) -> None:
-    """Re-fetch detail pages to capture the ``related_ppns`` cross-links.
-
-    Targeted, not a full re-enrich: an absent ``also_available_as`` label means the
-    page had no twin block when it was enriched, so refetching it would yield
-    nothing — the label is a free oracle for which pages carry a link. Twins
-    licensed *after* a record was enriched are covered anyway, because the newer
-    edition's own enrich captures the link and ``work.group_editions`` unions in
-    both directions. So this reaches the same grouping evidence as re-scraping all
-    ~68k detail pages at roughly a third of the requests.
-
-    ``enrich()`` can't do this: it skips records that already have an ISBN, which
-    is nearly all of them. Self-resuming like every other pass — a merged record
-    gains ``related_ppns`` and drops out of the selector.
-    """
-    write = _writer()
-    todo = []
-    for path in sorted(RECORDS_DIR.glob("*.json")):
-        rec = read_json(path)
-        if not isinstance(rec, dict):
-            continue
-        if not rec.get("also_available_as") or rec.get("related_ppns"):
-            continue
-        if not rec.get("slug"):
-            continue
-        todo.append(rec)
-    logger.info(f"Relinking {len(todo)} record(s) whose label names a twin but "
-                "carry no captured link")
-    n = 0
-    # cache=False: the merged record is the persistent result, so there is no
-    # reason to accumulate detail HTML on the volume.
-    with Client(per_second=rate, cache=False) as client:
-        for rec in todo:
-            detail = client.fetch_detail(rec["ppn"], rec["slug"])
-            if detail:
-                merged = _merge(rec, detail)
-                write(merged)
-                n += 1
-                if n % 50 == 0:
-                    logger.info(f"  …{n} relinked")
-            if limit and n >= limit:
-                break
-    logger.info(f"Relinked {n} record(s)")
+    logger.info(f"Fetched {n} detail page(s)")
 
 
 def harvest_details(pairs: Iterable[tuple[str, str]], rate: float, limit):
@@ -401,16 +424,14 @@ def sync(rate: float, max_pages: int = 300, streak_stop: int = 120) -> None:
     logger.info(f"sync: +{new} new, {updated} updated (scanned {page - 1} pages)")
 
 
-def reconcile(client: Client, formats: Iterable[str]) -> set[str]:
-    """Full enumeration to detect removals: PPNs on disk but no longer in the
-    catalog are stamped ``removed_at`` (the UI hides them)."""
-    # A reconcile is by definition a full re-scan, so drop any resume state first.
-    # A leftover checkpoint from a completed run would make browse_all skip every
-    # cell -> seen stays empty -> every record on disk gets falsely marked removed
-    # (and the next normalize would then drop the entire catalog).
-    CHECKPOINT.unlink(missing_ok=True)
-    seen: set[str] = set()
-    browse_all(client, formats, seen, lambda r: None)
+def mark_removed(seen: set[str]) -> set[str]:
+    """Stamp ``removed_at`` on records the catalog no longer lists (the UI hides them).
+
+    Only ever called with a ``seen`` set that covers the whole catalog. Concluding
+    "absent from this run, therefore gone" from a partial enumeration marks the
+    entire catalog removed, and the next normalize then drops it — which is
+    precisely what a leftover checkpoint used to cause.
+    """
     removed = _existing_ppns() - seen
     stamp = datetime.datetime.now().isoformat(timespec="seconds")
     for ppn in removed:
@@ -419,7 +440,7 @@ def reconcile(client: Client, formats: Iterable[str]) -> set[str]:
         if isinstance(rec, dict):
             rec["removed_at"] = stamp
             write_json(path, rec)
-    logger.info(f"reconcile: {len(seen)} live, {len(removed)} marked removed")
+    logger.info(f"{len(seen)} live, {len(removed)} marked removed")
     return removed
 
 
@@ -439,14 +460,11 @@ def main(argv: list[str] | None = None) -> int:
                      help="only refresh the recently-added ranking")
     src.add_argument("--sync", action="store_true",
                      help="incremental: pick up new/changed titles (newest first)")
-    src.add_argument("--reconcile", action="store_true",
-                     help="full scan to mark removed titles")
     src.add_argument("--from-file", type=Path, help="detail pages from a URL list")
-    src.add_argument("--enrich", action="store_true",
-                     help="add detail fields (ISBN, genres) to browsed records")
-    src.add_argument("--relink", action="store_true",
-                     help="re-fetch detail pages whose 'ook beschikbaar als' label "
-                          "names a twin but whose cross-link was never captured")
+    src.add_argument("--details", action="store_true",
+                     help="fetch the detail page for every record still missing "
+                          "something it provides (ISBN, genres, narrator, "
+                          "e-reader flag, cross-links)")
     p.add_argument("--formats", default="ebook,audiobook",
                    help="comma list: ebook,audiobook")
     p.add_argument("--rate", type=float, default=3.0, help="requests/second")
@@ -456,10 +474,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.from_file:
         harvest_details(enumerate_from_file(args.from_file), args.rate, args.limit)
-    elif args.enrich:
-        enrich(args.rate, args.limit)
-    elif args.relink:
-        relink(args.rate, args.limit)
+    elif args.details:
+        details(args.rate, args.limit)
     elif args.ereader:
         with Client(per_second=args.rate) as client:
             collect_ereader(client)
@@ -471,19 +487,28 @@ def main(argv: list[str] | None = None) -> int:
             collect_recent(client)
     elif args.sync:
         sync(args.rate)
-    elif args.reconcile:
-        with Client(per_second=args.rate) as client:
-            reconcile(client, formats)
     else:  # --full (default)
-        seen = _existing_ppns()
-        write = _writer()
-        logger.info(f"Full enumeration of {formats} (resuming with {len(seen)} PPNs)")
+        # `seen` starts empty and collects what *this run* enumerates, which is
+        # what makes removal detection possible: it used to be seeded with every
+        # PPN already on disk, so "on disk but not in the catalog" was empty by
+        # construction and a separate --reconcile pass had to re-walk the whole
+        # catalog to answer the same question.
+        seen: set[str] = set()
+        logger.info(f"Full enumeration of {formats}")
         with Client(per_second=args.rate) as client:
-            browse_all(client, formats, seen, write)
+            complete = browse_all(client, formats, seen, _merging_writer())
             collect_ereader(client)
             collect_genres(client)
             collect_recent(client)
-        logger.info(f"Done. {len(seen)} unique records in {RECORDS_DIR}")
+        # Two ways this run's `seen` can fail to be the whole catalog, and both
+        # would mark good records removed: a resumed run skipped the cells the
+        # previous one finished, and --formats narrowed the enumeration to part of
+        # the catalog (with `ebook` alone, every audiobook is "missing").
+        if complete and set(formats) == set(FORMATS):
+            mark_removed(seen)
+        else:
+            logger.info("partial enumeration — not checking for removed titles")
+        logger.info(f"Done. {len(_existing_ppns())} records in {RECORDS_DIR}")
     return 0
 
 
