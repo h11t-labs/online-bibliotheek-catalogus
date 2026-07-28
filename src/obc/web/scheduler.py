@@ -54,12 +54,12 @@ def _schema_stale() -> bool:
 
 def _default_cmds() -> list[list[str]]:
     """The refresh pipeline: harvest (full on an empty volume, else incremental),
-    optionally enrich detail-only fields (age/series/keywords + the per-title
-    e-reader flag), refresh the recency ranking + curated lists, then a single
-    normalize that reflects it all. Enrich is gated by ``OBC_ENRICH=1`` since the
-    first full pass fetches every detail page (slow).
+    optionally fill in detail-only fields, refresh the recency ranking + curated
+    lists, then a single normalize that reflects it all. The detail pass is gated
+    by ``OBC_ENRICH=1`` because on a fresh volume it fetches every detail page,
+    one request per title.
 
-    E-reader/genre facets ride the incremental path via ``--enrich`` (new titles'
+    E-reader/genre facets ride the incremental path via ``--details`` (new titles'
     detail pages carry both), so they no longer need a periodic full re-enumeration.
     Recency is a cheap bounded scan, refreshed here on the incremental path (a
     ``--full`` harvest already collects it)."""
@@ -72,7 +72,7 @@ def _default_cmds() -> list[list[str]]:
         # already there is minutes; waiting out sync -> lists -> normalize is not.
         cmds.insert(0, ["normalize"])
     if os.environ.get("OBC_ENRICH") == "1":
-        cmds.append(["scrape", "--enrich"])
+        cmds.append(["scrape", "--details"])
     if seeded:  # --full already ranks recency; the incremental path must refresh it
         cmds.append(["scrape", "--recent"])
     cmds += [["lists", "update"], ["normalize"]]
