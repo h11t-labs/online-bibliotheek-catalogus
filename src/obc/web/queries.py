@@ -24,17 +24,26 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
-from ..textnorm import fold
+from ..textnorm import fold, slugify
+
+# Genre slugs are computed inside SQL (see the genre statements below), which calls
+# this once per scanned row — hundreds of thousands of times over a few hundred
+# distinct names. Memoised, all but the first few hundred calls are a dict lookup.
+_slug = lru_cache(maxsize=4096)(slugify)
 
 
 # --------------------------------------------------------------------------- #
 # connection
 # --------------------------------------------------------------------------- #
 def connect_ro(db_path: str | Path) -> sqlite3.Connection:
-    """Open a read-only connection with a ``fold()`` SQL function for
-    diacritic/case-insensitive ``LIKE`` matching (Klöpping ~ klopping).
+    """Open a read-only connection with ``fold()`` and ``slug()`` SQL functions.
+
+    ``fold()`` gives diacritic/case-insensitive ``LIKE`` matching (Klöpping ~
+    klopping); ``slug()`` is the same slug the URLs use, so grouping by the thing
+    a page is addressed by can happen in SQL instead of in Python.
 
     ``check_same_thread=False``: FastAPI can run a ``yield`` dependency's setup and
     the route handler on different threadpool threads, so a connection opened in
@@ -48,6 +57,12 @@ def connect_ro(db_path: str | Path) -> sqlite3.Connection:
     )
     conn.row_factory = sqlite3.Row
     conn.create_function("fold", 1, lambda s: fold(s) if s else "", deterministic=True)
+    conn.create_function("slug", 1, lambda s: _slug(s) if s else "", deterministic=True)
+    # Read the database through the OS page cache instead of copying pages into
+    # this connection's own. Connections are per request, so a private cache is
+    # thrown away as soon as it is warm; a mapping is shared by every request and
+    # every thread, and costs evictable file-backed pages rather than heap.
+    conn.execute("PRAGMA mmap_size = 268435456")
     return conn
 
 

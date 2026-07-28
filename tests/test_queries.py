@@ -324,3 +324,5 @@ def test_relevance_weights_subjects_above_summary(tmp_path):
     ro.close()
     order = [r["work_id"] for r in res.rows]
     assert order == ["SUB", "SUM"]
+
+

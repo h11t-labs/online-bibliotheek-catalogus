@@ -47,8 +47,9 @@ def client(catalog_db, monkeypatch):
     from fastapi.testclient import TestClient
 
     from obc.web import app as appmod
+    from obc.web import indexes as indexmod
 
-    monkeypatch.setattr(appmod, "DB_PATH", catalog_db)
+    monkeypatch.setattr(indexmod, "DB_PATH", catalog_db)
     monkeypatch.setattr(appmod, "author_bio", lambda name: None)
     # Nothing to reset between tests: the web process holds no derived state any
     # more, so every route reads the catalog on every request.
