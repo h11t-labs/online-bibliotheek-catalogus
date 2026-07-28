@@ -14,5 +14,6 @@ data/
 .DS_Store
 
 # Local tooling
-.claude/
+.claude/*
+!.claude/settings.json
 .gstack/
