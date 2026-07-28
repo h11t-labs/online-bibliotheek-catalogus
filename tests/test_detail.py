@@ -58,6 +58,20 @@ def test_audiobook_alternate_canonical():
     assert r["duration"]
 
 
+def test_also_available_as_yields_the_twin_ppn():
+    # The "Ook beschikbaar als" block links straight at the other edition — the
+    # library asserting the work relationship itself. Its label text was kept and
+    # the href thrown away, which is the strongest signal available.
+    r = _parse("ebook_460719149.html")
+    assert r["related_ppns"] == ["460719130"]
+    assert "Luisterboek" in r["also_available_as"]
+
+
+def test_no_also_available_block_yields_no_related_ppns():
+    r = _parse("ebook_416728413.html")
+    assert "related_ppns" not in r
+
+
 def test_cover_and_ppn_present():
     r = _parse("ebook_416728413.html")
     assert r["ppn"] == "416728413"
