@@ -31,6 +31,13 @@ commands must pass before the next step starts.
   or the other.
 - The word `ppn` keeps meaning "an edition's id". A `work_id` *is* a PPN (the
   representative edition's), but name variables by role, not by type.
+- **No pydantic models, no ORM, no record classes.** Data crosses boundaries as
+  it does today: dicts through the build pipeline, `sqlite3.Row` from queries to
+  templates. The DB schema and the invariant tests are the record contract; the
+  build passes are the validation layer (that is the point of "the build owns
+  derivation"). Typed containers only where a contract crosses a module boundary
+  and the repo already uses them — frozen `dataclass`es in the style of
+  `SearchFilters`/`SearchResult` (`work.EditionMeta` is one; see step 1).
 - PPN comparisons/orderings are **string** comparisons throughout (they are TEXT
   today, `set_primary_editions` orders them as text; keep that behaviour).
 
@@ -200,7 +207,14 @@ if the group has one, else the lowest PPN (string order, matching how the old
 set_primary_editions chose).
 """
 
-EditionMeta = tuple  # (title, author, language, format, related_ppns) — or a small dataclass
+@dataclass(frozen=True)
+class EditionMeta:
+    """The slice of one record that work identity is decided on."""
+    title: str | None
+    author: str | None
+    language: str | None
+    format: str | None
+    related_ppns: tuple[str, ...] = ()
 
 def strip_format_noise(title: str | None) -> str: ...
 def work_key(title: str | None, author: str | None, language: str | None) -> tuple[str, str]:
@@ -780,7 +794,12 @@ once and never equals the source" (structurally guaranteed; keep the assertion).
    self-resuming (a merged record drops out of the selector).
 3. **README.md**: usage section gains `obc works --report` and
    `scrape --relink`; "How it works" storage paragraph rewritten (works +
-   editions, one URL per book); pages list gains `/e-books`, `/luisterboeken`.
+   editions, one URL per book); pages list gains `/e-books`, `/luisterboeken`;
+   the Layout section gains the one-line layer map — *acquire*
+   (`client`/`listing`/`detail`/`scrape`) → *build*
+   (`work`/`textnorm`/`normalize`/`db`/`similar`) → *read* (`web/queries`) →
+   *present* (`web/app` + templates) — so the module structure's domain layering
+   is stated, not inferred.
 4. **`docs/works-and-editions.md`**: mark the plan as implemented; note the ⚠
    deviation (editions keeps raw columns; the narrowing is the read contract).
 5. PR: use `.github/pull_request_template.md` structure. Body must include the
