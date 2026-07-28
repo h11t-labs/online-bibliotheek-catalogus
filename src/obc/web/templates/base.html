@@ -34,6 +34,12 @@
       --line:#e6ddcd; --line-strong:#d8cdb8;
       --accent:#9a3b2e; --accent-ink:#fff; --accent-soft:#f3e3df;
       --gold:#b8893b; --shadow:18px 28px 60px -36px rgba(60,40,20,.45);
+      /* Solid per-format fills for anything that carries a format's identity at
+         text size (the borrow buttons). The cover badges use --accent/--gold
+         directly, but --gold behind white text clears only ~3:1 — so the filled
+         variant is a deeper bronze that reads as the same family and passes AA. */
+      --fmt-ebook:#9a3b2e; --fmt-ebook-ink:#fff;
+      --fmt-audio:#8c6520; --fmt-audio-ink:#fff;
       --radius:16px; --radius-sm:10px;
       --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
       --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
@@ -46,6 +52,9 @@
         --line:#332b21; --line-strong:#473c2d; --accent:#e0795f; --accent-ink:#1a120e;
         --accent-soft:#3a241d; --gold:#d6a456;
         --shadow:18px 28px 60px -34px rgba(0,0,0,.7);
+        /* dark: the fills are the light tints and the ink flips to near-black */
+        --fmt-ebook:#e0795f; --fmt-ebook-ink:#1a120e;
+        --fmt-audio:#d6a456; --fmt-audio-ink:#1a120e;
       }
     }
     :root[data-theme="dark"]{
@@ -53,6 +62,8 @@
       --line:#332b21; --line-strong:#473c2d; --accent:#e0795f; --accent-ink:#1a120e;
       --accent-soft:#3a241d; --gold:#d6a456;
       --shadow:18px 28px 60px -34px rgba(0,0,0,.7);
+      --fmt-ebook:#e0795f; --fmt-ebook-ink:#1a120e;
+      --fmt-audio:#d6a456; --fmt-audio-ink:#1a120e;
     }
     *{box-sizing:border-box}
     html{scroll-behavior:smooth}

@@ -9,8 +9,6 @@
     box-shadow:var(--shadow);border:1px solid var(--line);
     background:linear-gradient(145deg,var(--line),var(--bg-soft))}
   .editions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
-  .linkbadge{cursor:pointer;border:1px dashed currentColor;background:transparent}
-  .linkbadge:hover{background:var(--accent-soft)}
   .listbadge{background:var(--accent);color:var(--accent-ink)}
   .listbadge:hover{filter:brightness(1.07)}
   /* clickable filter links: dotted underline affordance */
@@ -36,7 +34,37 @@
   .edition h2{font-family:var(--serif);font-size:20px;margin:0 0 4px;
     display:flex;align-items:center;gap:9px}
   .edition h2 .fmt-ic{position:static}
-  .edition .btn{margin-top:16px}
+  .edition.ebook{--fmt:var(--fmt-ebook)}
+  .edition.audio{--fmt:var(--fmt-audio)}
+  /* Only the extra editions of a format carry a button here (the lead edition's
+     link is the CTA under the cover). Outlined rather than filled: it opens the
+     same kind of thing as the CTA, but it is not the page's primary action. */
+  .edition .btn{margin-top:16px;background:transparent;box-shadow:none;color:var(--fmt);
+    border:1px solid color-mix(in oklab,var(--fmt) 45%,transparent)}
+  .edition .btn:hover{filter:none;background:color-mix(in oklab,var(--fmt) 12%,transparent)}
+
+  /* Borrow CTAs — the page's primary action, so they sit under the cover in the
+     sticky column instead of at the foot of each edition block. You borrow an
+     edition, never a work, so there is one button per format, each carrying that
+     format's own colour and icon: the button says which edition it opens before
+     you read the label. */
+  .borrow{display:flex;flex-direction:column;gap:9px;margin-top:18px;width:100%}
+  .borrow-btn{display:flex;align-items:center;gap:12px;padding:12px 15px;border-radius:14px;
+    background:var(--fmt);color:var(--fmt-ink);box-shadow:var(--shadow);
+    transition:transform .12s ease,filter .12s ease}
+  .borrow-btn.ebook{--fmt:var(--fmt-ebook);--fmt-ink:var(--fmt-ebook-ink)}
+  .borrow-btn.audio{--fmt:var(--fmt-audio);--fmt-ink:var(--fmt-audio-ink)}
+  .borrow-btn:hover{filter:brightness(1.07);transform:translateY(-1px)}
+  /* the icon chip tints with the ink, so it reads whether the fill is dark
+     (light theme, white ink) or light (dark theme, near-black ink) */
+  .borrow-btn .b-ic{width:31px;height:31px;flex:none;display:grid;place-items:center;
+    border-radius:9px;background:color-mix(in oklab,var(--fmt-ink) 16%,transparent)}
+  .borrow-btn .b-tx{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
+  .borrow-btn .b-t{font-size:15px;font-weight:700;letter-spacing:-.1px}
+  .borrow-btn .b-s{font-size:12px;opacity:.82;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .borrow-btn .b-go{flex:none;opacity:.8}
+  .borrow-more{display:block;text-align:center;font-size:13px;color:var(--ink-soft);padding-top:2px}
+  .borrow-more:hover{color:var(--accent)}
   /* "Meer zoals dit" — LSA content-based recommendations (obc.similar), a
      horizontally-scrolling strip of small covers (images lazy-load as you scroll). */
   .similar{margin-top:56px;border-top:1px solid var(--line);padding-top:28px}
@@ -87,11 +115,22 @@
     /* hero pattern: the cover centered as a group; reading content below stays left-aligned */
     .poster{position:static;max-width:none;display:flex;flex-direction:column;align-items:center}
     .poster .cover{width:200px;max-width:55vw;flex:none}
+    .borrow{max-width:420px}
     .edition .btn{width:100%;max-width:420px;justify-content:center}
     .meta .r{grid-template-columns:120px 1fr}
   }
 {% endblock %}
 {% block body %}
+{# The first edition of each format leads: it is the one the primary CTA offers
+   and the one whose block carries the anchor. `editions` arrives e-book first,
+   so `lead` is ordered the same way the badges and blocks are. #}
+{% set ns = namespace(fmts=[], lead=[]) %}
+{% for e in editions %}
+  {% if e['format'] not in ns.fmts %}
+    {% set ns.fmts = ns.fmts + [e['format']] %}
+    {% set ns.lead = ns.lead + [e] %}
+  {% endif %}
+{% endfor %}
 <main>
   <a class="back" href="javascript:history.back()">‹ Terug</a>
   <article class="detail">
@@ -103,18 +142,50 @@
         </div>
         <img src="{{ b['cover_url']|coverw(600) }}" alt="Omslag van {{ b['title'] }}">
       </div>
-      {# the borrow button lives in each edition block below: you borrow an
-         edition, never a work, and the two have different links #}
+      {# One borrow button per format, in the format's own colour: which edition
+         you are about to open is the thing to be unambiguous about, so it is
+         said in the label, the icon and the fill. Further editions of the same
+         format keep their button in their own block below. #}
+      <div class="borrow">
+        {% for e in ns.lead %}
+        {% set audio = e['format'] == 'audiobook' %}
+        {% if e['url'] %}
+        <a class="borrow-btn {{ 'audio' if audio else 'ebook' }}" href="{{ e['url'] }}"
+           target="_blank" rel="noopener">
+          <span class="b-ic" aria-hidden="true">
+            <svg width="17" height="17"><use href="#ic-{{ 'audio' if audio else 'book' }}"/></svg>
+          </span>
+          <span class="b-tx">
+            <span class="b-t">{{ 'Luisterboek' if audio else 'E-book' }} lenen</span>
+            {% if audio %}{% set detail = e['duration']|dur_short %}
+            {# a catalogued page count of 1 is an artefact, not a book: 327 editions
+               carry it. Harmless in a meta row, but this is the primary CTA. #}
+            {% elif e['pages'] and e['pages'] > 1 %}{% set detail = e['pages'] ~ " pagina's" %}
+            {% else %}{% set detail = e['features'] %}{% endif %}
+            {% if detail %}<span class="b-s">{{ detail }}</span>{% endif %}
+          </span>
+          <svg class="b-go" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M7 17 17 7M8 7h9v9"/>
+          </svg>
+        </a>
+        {% endif %}
+        {% endfor %}
+        {% if editions|length > ns.lead|length %}
+        <a class="borrow-more" href="#{{ 'luisterboek' if ns.lead[-1]['format'] == 'audiobook' else 'e-book' }}">
+          Nog {{ editions|length - ns.lead|length }} andere uitvoering{{ 'en' if editions|length - ns.lead|length > 1 }} ↓
+        </a>
+        {% endif %}
+      </div>
     </div>
     <div class="info">
-      {# the formats this book exists in. The badge that used to link to the twin's
-         own page is an anchor into its block on this page now. #}
+      {# The formats this book exists in, as equals. "Ook als luisterboek" made
+         sense when the two were separate records and one of them was the page
+         you happened to land on; this is one work with two editions, so neither
+         format is the visitor's default and neither is the afterthought. #}
       <div class="editions">
         {% if b['has_ebook'] %}<span class="badge">E-book</span>{% endif %}
-        {% if b['has_audiobook'] %}
-          {% if b['has_ebook'] %}<a class="badge linkbadge audio" href="#luisterboek">Ook als luisterboek →</a>
-          {% else %}<span class="badge audio">Luisterboek</span>{% endif %}
-        {% endif %}
+        {% if b['has_audiobook'] %}<span class="badge audio">Luisterboek</span>{% endif %}
       </div>
       <h1>{{ b['title'] or '—' }}</h1>
       {% if authors %}<p class="author">door
@@ -157,13 +228,13 @@
          them side by side under one heading, each with its own borrow link. Only
          the first edition of a format carries the anchor id — a book can hold
          several audiobook editions. #}
-      {% set ns = namespace(seen=[]) %}
+      {% set blocks = namespace(seen=[]) %}
       {% for e in editions %}
       {% set audio = e['format'] == 'audiobook' %}
       {% set anchor = 'luisterboek' if audio else 'e-book' %}
-      {% set first = anchor not in ns.seen %}
-      {% if first %}{% set ns.seen = ns.seen + [anchor] %}{% endif %}
-      <section class="edition"{% if first %} id="{{ anchor }}"{% endif %}>
+      {% set first = anchor not in blocks.seen %}
+      {% if first %}{% set blocks.seen = blocks.seen + [anchor] %}{% endif %}
+      <section class="edition {{ 'audio' if audio else 'ebook' }}"{% if first %} id="{{ anchor }}"{% endif %}>
         <h2>
           <span class="fmt-ic {{ 'audio' if audio else 'ebook' }}" aria-hidden="true">
             <svg width="15" height="15"><use href="#ic-{{ 'audio' if audio else 'book' }}"/></svg>
@@ -181,7 +252,11 @@
           {% if e['publisher'] and e['publisher'] != b['publisher'] %}{{ rlink('Uitgever', e['publisher'], 'publisher') }}{% endif %}
           {% if e['year'] and e['year'] != b['year'] %}{{ r('Verschenen', e['year']) }}{% endif %}
         </div>
-        {% if e['url'] %}<a class="btn" href="{{ e['url'] }}" target="_blank" rel="noopener">Lenen op onlinebibliotheek.nl ↗</a>{% endif %}
+        {# no button for the lead edition of a format: the CTA under the cover is
+           already this exact link, and repeating it reads as a second, different
+           action. Only the extra editions — the ones the CTA can't offer — carry
+           their own. #}
+        {% if e['url'] and not first %}<a class="btn" href="{{ e['url'] }}" target="_blank" rel="noopener">Deze uitvoering lenen ↗</a>{% endif %}
       </section>
       {% endfor %}
     </div>

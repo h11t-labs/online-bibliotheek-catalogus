@@ -94,16 +94,23 @@ def test_canonical_book_page_has_one_block_per_edition(client):
     facts once, then a block per edition with its own fields and borrow link."""
     body = client.get(CANON_001).text
     assert 'id="e-book"' in body and 'id="luisterboek"' in body
-    # its own "Lenen op onlinebibliotheek.nl" button per edition, three editions
+    # its own borrow button per edition, three editions
     for ppn in ("001", "002", "007"):
         assert f"/catalogus/{ppn}/" in body, ppn
-    assert body.count("Lenen op onlinebibliotheek.nl") == 3
+    # one primary CTA per *format* under the cover, carrying that format's colour…
+    assert body.count('class="borrow-btn ebook"') == 1
+    assert body.count('class="borrow-btn audio"') == 1
+    # …and a button in the block only for the edition the CTA cannot offer: the
+    # second audiobook. No link is ever shown twice.
+    assert body.count("lenen ↗") == 1
+    assert 'class="borrow-more"' in body             # points at that leftover edition
     # a narrator is an audiobook fact: it must not appear above the e-book block
     assert "Jan Stem" in body
     assert "Jan Stem" not in body[:body.index('id="e-book"')]
     assert "Piet Stem" in body                       # the second audiobook's narrator
-    # the badge that used to link the twin's own page anchors into this one
-    assert 'href="#luisterboek"' in body
+    # one work with two editions, so neither format is the other's afterthought
+    assert "Ook als luisterboek" not in body
+    assert body.count('class="badge"') == 1 and body.count('class="badge audio"') == 1
 
 
 def test_book_page_without_authors_gets_a_title_only_slug(tmp_path, monkeypatch):
@@ -658,6 +665,19 @@ def test_book_meta_description_is_snippet_clean(client):
     desc = re.search(r'<meta name="description" content="(.*?)">', body).group(1)
     assert desc and "\n" not in desc and not desc.startswith("&#34;")
 
+
+
+def test_borrow_button_duration_reads_as_a_length(client):
+    from obc.web.app import _dur_short
+    # the catalog stores speelduur in both shapes; the button shows one
+    assert _dur_short("3:17:19") == "3 u 17 min"
+    assert _dur_short("9 uur 1 minuut") == "9 u 1 min"
+    assert _dur_short("0:42:10") == "42 min"
+    assert _dur_short("8:00:00") == "8 u"
+    assert _dur_short("7 uur") == "7 u"
+    # unparseable and empty pass through rather than guessing
+    assert _dur_short("onbekend") == "onbekend"
+    assert _dur_short(None) == ""
 
 
 def test_goatcounter_snippet_present(client):

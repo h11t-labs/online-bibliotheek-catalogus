@@ -168,6 +168,33 @@ def _nlnum(n: int) -> str:
     return f"{n:,}".replace(",", ".")
 
 
+_DUR_CLOCK = re.compile(r"^(\d+):([0-5]\d)(?::[0-5]\d)?$")
+_DUR_WORDS = re.compile(r"(?:(\d+)\s*uur)?(?:\D*?(\d+)\s*minu)?", re.I)
+
+
+def _dur_short(value) -> str:
+    """Speelduur in one shape: '3:17:19' and '9 uur 1 minuut' both -> '3 u 17 min'.
+
+    The catalog stores both spellings, which the meta rows can carry unnoticed but
+    the borrow button cannot: there it sits one line below the e-book's page count,
+    where a raw 'h:mm:ss' reads as a timestamp rather than a length. Anything
+    matching neither shape passes through untouched.
+    """
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    if m := _DUR_CLOCK.match(s):
+        hours, minutes = int(m[1]), int(m[2])
+    else:
+        m = _DUR_WORDS.match(s)
+        if not m or not (m[1] or m[2]):
+            return s
+        hours, minutes = int(m[1] or 0), int(m[2] or 0)
+    if hours and minutes:
+        return f"{hours} u {minutes} min"
+    return f"{hours} u" if hours else f"{minutes} min"
+
+
 def _data_updated() -> float | None:
     """Epoch seconds the catalog was last (re)built — the DB file's mtime."""
     try:
@@ -182,6 +209,7 @@ _templates.env.filters["author_path"] = _author_path
 _templates.env.filters["series_path"] = _series_path
 _templates.env.filters["genre_path"] = _genre_path
 _templates.env.filters["nlnum"] = _nlnum
+_templates.env.filters["dur_short"] = _dur_short
 _templates.env.globals["url_with"] = _url_with
 _templates.env.globals["url_without"] = _url_without
 _templates.env.globals["book_path"] = _book_path
