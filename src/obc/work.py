@@ -13,11 +13,12 @@ set_primary_editions chose).
 from __future__ import annotations
 
 import re
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .textnorm import fold, split_authors, surname_key
+from .textnorm import fold, publisher_key, split_authors, surname_key
 from .util import read_json
 
 
@@ -205,3 +206,77 @@ def load_overrides(path: Path) -> dict:
     """{'merge': [[ppn, ppn], ...], 'split': [[ppn, ppn], ...]} or {} if absent."""
     data = read_json(Path(path), default={})
     return data if isinstance(data, dict) else {}
+
+
+# --------------------------------------------------------------------------- #
+# audit report
+# --------------------------------------------------------------------------- #
+# The grouping is the one part of this model that can be *wrong* about the data,
+# and a false merge hides a book (worse than a false split, which merely
+# duplicates it). Both error classes are measurable against evidence already on
+# disk, with zero extra requests: the "Ook beschikbaar als" *label* is stored for
+# every enriched edition, so it is a free oracle for "a twin exists" that is
+# independent of how the key decided.
+_REPORT_LIMIT = 20
+
+
+def _rows(conn: sqlite3.Connection, sql: str, *params) -> list[sqlite3.Row]:
+    return conn.execute(sql, params).fetchall()
+
+
+def _print_sample(label: str, rows: list[sqlite3.Row], columns: tuple[str, ...]) -> None:
+    print(f"\n{label}: {len(rows)}")
+    for row in rows[:_REPORT_LIMIT]:
+        print("  " + "  ".join(str(row[c] or "") for c in columns))
+    if len(rows) > _REPORT_LIMIT:
+        print(f"  … and {len(rows) - _REPORT_LIMIT} more")
+
+
+def report(db_path: str | Path) -> int:
+    """Print an audit of the work grouping. Always exits 0 — it is a report, not a
+    check: the numbers are for a human to read before trusting the 301s.
+
+    Run it against a copy of the production DB; the local catalog is too small for
+    any of these counts to mean anything.
+    """
+    conn = sqlite3.connect(f"file:{Path(db_path)}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    # publisher_key groups "De Correspondent, Amsterdam" with "de Correspondent,
+    # [Amsterdam]", so a merge is only flagged on a genuinely different publisher.
+    conn.create_function("publisher_key", 1, publisher_key, deterministic=True)
+    try:
+        works, editions = conn.execute(
+            "SELECT (SELECT COUNT(*) FROM works), (SELECT COUNT(*) FROM editions)"
+        ).fetchone()
+        print(f"works: {works}   editions: {editions}")
+
+        print("\ngroup sizes (editions per work):")
+        for row in _rows(conn, "SELECT n_editions, COUNT(*) AS n FROM works "
+                               "GROUP BY 1 ORDER BY 1"):
+            print(f"  {row['n_editions']:>3} edition(s): {row['n']}")
+
+        # A label naming the other format while the work has no such edition is a
+        # missed merge, countable exactly.
+        splits = _rows(conn, """
+            SELECT e.ppn, e.title FROM editions e JOIN works w ON w.work_id = e.work_id
+            WHERE (lower(e.also_available_as) LIKE '%luisterboek%' AND w.has_audiobook = 0)
+               OR (lower(e.also_available_as) LIKE '%e-book%'      AND w.has_ebook = 0)
+            ORDER BY e.ppn""")
+        _print_sample("false splits (a twin the label names, but no twin in the work)",
+                      splits, ("ppn", "title"))
+
+        # Editions that disagree about what they are: a merge worth eyeballing.
+        merges = _rows(conn, """
+            SELECT e.work_id, MIN(e.title) AS title, COUNT(*) AS n,
+                   COUNT(DISTINCT e.language) AS langs,
+                   MAX(e.year) - MIN(NULLIF(e.year, 0)) AS span,
+                   COUNT(DISTINCT publisher_key(e.publisher)) AS pubs
+            FROM editions e GROUP BY e.work_id HAVING n > 1
+               AND (langs > 1 OR span > 5 OR pubs > 1)
+            ORDER BY langs DESC, span DESC, e.work_id""")
+        _print_sample("suspicious merges (differing language, year gap > 5, "
+                      "or differing publisher)",
+                      merges, ("work_id", "title", "n", "langs", "span", "pubs"))
+    finally:
+        conn.close()
+    return 0

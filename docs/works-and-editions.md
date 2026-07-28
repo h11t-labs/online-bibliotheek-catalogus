@@ -1,11 +1,21 @@
 # Plan: one *book*, several *editions*
 
+> **Status: implemented.** Shipped as the six commits of §8 on
+> `claude/audiobook-ebook-unification-x0rebb`; `docs/works-and-editions-implementation.md`
+> is the executable spec that was followed. One ⚠ deviation from the plan below:
+> `editions` physically **keeps every raw record column** (title, author, summary,
+> keywords, audience, …) rather than being narrowed to edition-only fields. It is
+> the per-PPN mirror `works` is derived from and the debugging record, and
+> `raw_json` lives there anyway — so the narrowing is the **read contract** (the web
+> layer reads work-level facts only from `works`), not a column list. See §3's
+> implementation note.
+
 **Question.** The library models an e-book and a digital audiobook as two
 unrelated items, each with its own PPN and partly its own fields. For a reader
 they are one book. Can this catalog present it that way — search a book, find
 links to *its* e-book and *its* audiobook — and if so, how?
 
-**Answer.** Yes, and most of the hard part is already built. What is missing is
+**Answer.** Yes, and most of the hard part was already built. What is missing is
 not a capability but an entity. Today "these two rows are the same book" is
 re-derived, slightly differently, in seven places from a string comparison on
 `(lower(title), lower(author))`. The fix is to store the book itself: a `works`

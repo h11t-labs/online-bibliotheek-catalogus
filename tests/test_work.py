@@ -179,3 +179,30 @@ def test_load_overrides_missing_file_is_empty(tmp_path):
     path = tmp_path / "work_overrides.json"
     path.write_text('{"merge": [["1", "2"]]}', encoding="utf-8")
     assert load_overrides(path) == {"merge": [["1", "2"]]}
+
+
+def test_report_counts_false_splits_and_suspicious_merges(tmp_path, capsys):
+    """The grouping is the part of this model that can be wrong about the data, and
+    both error classes are measurable against evidence already on disk — the stored
+    "ook beschikbaar als" *label* is a free oracle for "a twin exists" that is
+    independent of how the key decided."""
+    import sampledata
+
+    from obc import db, work
+    recs = sampledata.records()
+    # a label naming an audiobook whose work has none -> a missed merge
+    recs[2]["also_available_as"] = "Luisterboek (digitaal)"
+    # 009 is linked to 004 by the library itself but disagrees on language
+    recs[8]["language"] = "Engels"
+    path = tmp_path / "audit.db"
+    conn = db.connect(path)
+    db.bulk_load(conn, recs, sampledata.lists())
+    conn.close()
+
+    assert work.report(path) == 0        # a report, not a check
+    out = capsys.readouterr().out
+    assert "works: 5   editions: 9" in out
+    assert "3 edition(s): 1" in out      # the group-size histogram
+    assert "false splits (a twin the label names, but no twin in the work): 1" in out
+    assert "003" in out
+    assert "suspicious merges" in out and "004" in out
