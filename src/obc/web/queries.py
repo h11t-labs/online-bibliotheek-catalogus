@@ -469,15 +469,23 @@ def series_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 MIN_INDEXABLE_TITLES = 2
 
 
-def author_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Every person with both A-Z sort keys and their work count.
+def author_index(conn: sqlite3.Connection,
+                 by_surname: bool = True) -> list[sqlite3.Row]:
+    """Every person with both A-Z sort keys and their work count, in hub order.
 
     One row per person rather than per spelling, and every column already
     stamped: the hub's fold-merge loop and its per-request counting are gone.
+
+    Ordered here rather than by the caller. ``surname_sort`` and ``first_sort``
+    are exactly ``surname_key(name)`` and ``slugify(name)``, stamped at build time
+    (see ``db._stamp_author_names``) — and the hub was calling both functions
+    again, per row, to rebuild a key it already had. SQLite sorts the stamped
+    columns instead.
     """
+    order = "surname_sort, first_sort" if by_surname else "first_sort"
     return conn.execute(
         "SELECT name, name_fold, surname_sort, first_sort, n_works AS titles "
-        "FROM authors WHERE n_works > 0 ORDER BY name_fold").fetchall()
+        f"FROM authors WHERE n_works > 0 ORDER BY {order}").fetchall()
 
 
 # --------------------------------------------------------------------------- #

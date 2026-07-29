@@ -241,3 +241,31 @@ def test_genre_hierarchy(tmp_path, monkeypatch):
     conn.close()
 
 
+
+
+def test_the_hub_orders_on_the_stamped_keys(ro_conn):
+    """No sort key is recomputed per request.
+
+    `surname_sort` and `first_sort` are `surname_key(name)` and `slugify(name)`,
+    stamped at build time. The hub used to call both again for every row it
+    returned — 22,383 calls per request on the live catalog, to rebuild what the
+    columns already held, which is most of the 7.5s the /authors page took. This
+    asserts the ordering is the same as doing it the slow way, so the speed-up
+    cannot quietly reshuffle a reader-facing index.
+    """
+    from obc.textnorm import slugify, surname_key
+    from obc.web import indexes, queries
+
+    for by in (indexes.BY_SURNAME, indexes.BY_FIRST):
+        field = "surname_sort" if by == indexes.BY_SURNAME else "first_sort"
+        slow: dict[str, list[dict]] = {}
+        for row in queries.author_index(ro_conn):
+            if not row["first_sort"]:
+                continue
+            slow.setdefault(indexes.author_letter(row[field]), []).append(
+                {"name": row["name"], "titles": row["titles"]})
+        for rows in slow.values():
+            rows.sort(key=lambda e: (surname_key(e["name"]) if by == indexes.BY_SURNAME
+                                     else slugify(e["name"]), slugify(e["name"])))
+
+        assert indexes.authors_by_letter(ro_conn, by) == slow, by
