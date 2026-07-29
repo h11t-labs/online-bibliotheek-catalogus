@@ -51,7 +51,7 @@ Run commands with `uv run` (no manual venv activation needed):
 
 ```bash
 uv run obc scrape --full      # complete catalog enumeration + e-reader flags (resumable)
-uv run obc normalize          # load data/raw/records/*.json into data/catalog.db (~5s)
+uv run obc normalize          # load data/raw/raw.db into data/catalog.db (~2 min)
 uv run obc serve              # http://127.0.0.1:8000
 
 # keep it fresh without re-downloading everything
@@ -65,6 +65,7 @@ uv run obc scrape --details   # detail pages, for records still missing what onl
                               # they carry: ISBN, genres, narrator, doelgroep,
                               # leeftijd, reeks, trefwoorden, e-reader flag, and
                               # the 'ook beschikbaar als' cross-links
+uv run obc reparse            # re-derive records from the stored pages (no network)
 uv run obc lists update       # refresh curated lists (Bestseller 60, NYT, prizes)
 uv run obc similar            # rebuild only the "meer zoals dit" recommendations
 uv run obc stats
@@ -171,6 +172,16 @@ narrowed with `--formats`, because neither has seen the whole catalog — and
   audience (doelgroep), age band, series, keywords and the "ook beschikbaar als"
   cross-links. `client.Client` fetches politely (descriptive UA, configurable
   rate, backoff, on-disk HTML cache in `data/raw/html/`).
+- **One raw store, two kinds of thing in it** (`raw.py`): `data/raw/raw.db` holds
+  one row per PPN with the detail page **as the library served it** (gzipped) and
+  the parsed record derived from it. Keeping only the parse means a change to the
+  *parser* forces a re-scrape — which is what happened when the parser learned to
+  keep the "ook beschikbaar als" hrefs it had been discarding, and recovering them
+  cost three hours of re-fetching 17,916 pages that had already said so once. With
+  the page kept that is `obc reparse`: local, no network. A *model* change never
+  needed the network anyway — `obc normalize` rebuilds the catalog from the store.
+  It replaced a file per PPN, where 259 MB on disk held 111 MB of data (1.6 KB
+  records in 4 KB blocks) and the volume's inode table had run out once already.
 - **Storage** (`db.py`): two grains, because the library has two. `editions` holds
   one row per PPN — the faithful per-item mirror, and what you actually borrow.
   `works` holds one row per *book*: an e-book and its audiobook are two editions of
@@ -243,7 +254,8 @@ src/obc/
   client.py       polite fetcher + get_listing_html() + fetch_detail()
   listing.py      results-page HTML -> record dicts + pager size
   detail.py       detail-page HTML -> record dict (enrichment)
-  scrape.py       browse/details -> data/raw/records/*.json (resumable)
+  scrape.py       browse/details -> data/raw/raw.db (resumable)
+  raw.py          the raw store: parsed record + the page it came from
   work.py         which PPNs are one book (+ `obc works --report`)
   normalize.py    raw records -> SQLite (temp build + atomic swap)
   db.py           schema + the whole build: works, FTS5, every derived table

@@ -21,6 +21,15 @@ def _wait_until(pred, timeout=5.0):
     return False
 
 
+def _seed_store(tmp_path) -> None:
+    """One harvested record, which is what "the volume has something to refresh
+    from" means."""
+    from obc import raw
+    conn = raw.connect(tmp_path / "raw.db")
+    raw.put(conn, {"ppn": "1", "slug": "a"})
+    conn.close()
+
+
 def test_trigger_refresh_is_single_flight(monkeypatch):
     # Never touch real data: neutralise the disk-reclaim step _run_locked runs.
     monkeypatch.setattr(normalize, "_reclaim_disk", lambda *a, **k: None)
@@ -49,30 +58,26 @@ def test_trigger_refresh_is_single_flight(monkeypatch):
 
 
 def test_default_cmds_full_on_empty_sync_when_seeded(tmp_path, monkeypatch):
-    records = tmp_path / "records"
-    records.mkdir()
-    monkeypatch.setattr(scrape, "RECORDS_DIR", records)
+    monkeypatch.setattr(scrape, "RAW_DB", tmp_path / "raw.db")
     monkeypatch.delenv("OBC_ENRICH", raising=False)
 
-    # empty records dir -> a full harvest
+    # empty store -> a full harvest
     assert scheduler._default_cmds()[0] == ["scrape", "--full"]
 
     # once a record file exists -> an incremental sync
-    (records / "1.json").write_text("{}", encoding="utf-8")
+    _seed_store(tmp_path)
     assert scheduler._default_cmds()[0] == ["scrape", "--sync"]
 
 
 def test_default_cmds_refreshes_recency_on_incremental_path(tmp_path, monkeypatch):
-    records = tmp_path / "records"
-    records.mkdir()
-    monkeypatch.setattr(scrape, "RECORDS_DIR", records)
+    monkeypatch.setattr(scrape, "RAW_DB", tmp_path / "raw.db")
     monkeypatch.delenv("OBC_ENRICH", raising=False)
 
     # a full harvest already collects recency -> no separate --recent step
     assert ["scrape", "--recent"] not in scheduler._default_cmds()
 
     # incremental path can't re-derive recency from --sync, so it runs --recent
-    (records / "1.json").write_text("{}", encoding="utf-8")
+    _seed_store(tmp_path)
     assert ["scrape", "--recent"] in scheduler._default_cmds()
 
 
@@ -84,10 +89,8 @@ def test_default_cmds_normalizes_first_when_the_schema_is_stale(tmp_path, monkey
 
     from obc import db
 
-    records = tmp_path / "records"
-    records.mkdir()
-    (records / "1.json").write_text("{}", encoding="utf-8")   # seeded volume
-    monkeypatch.setattr(scrape, "RECORDS_DIR", records)
+    monkeypatch.setattr(scrape, "RAW_DB", tmp_path / "raw.db")
+    _seed_store(tmp_path)   # seeded volume
     monkeypatch.delenv("OBC_ENRICH", raising=False)
 
     stale = tmp_path / "stale.db"

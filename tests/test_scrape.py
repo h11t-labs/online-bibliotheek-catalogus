@@ -61,19 +61,30 @@ class FakeClient:
         return _listing_html(self.rows if page == 1 else [])
 
 
-def _seed_records(records_dir, rows: list[tuple[str, str]]) -> None:
-    records_dir.mkdir(parents=True, exist_ok=True)
+def _seed_records(_unused, rows: list[tuple[str, str]]) -> None:
+    """Put bare records in the store, as a browse pass would."""
+    from obc import raw
+    conn = raw.connect(scrape.RAW_DB)
     for ppn, slug in rows:
-        (records_dir / f"{ppn}.json").write_text(
-            json.dumps({"ppn": ppn, "slug": slug}), encoding="utf-8")
+        raw.put(conn, {"ppn": ppn, "slug": slug})
+    conn.close()
+
+
+def _stored(ppn: str) -> dict | None:
+    from obc import raw
+    conn = raw.connect(scrape.RAW_DB)
+    try:
+        return raw.get(conn, ppn)
+    finally:
+        conn.close()
 
 
 @pytest.fixture
 def paths(tmp_path, monkeypatch):
     """Point scrape's data paths at a tmp dir; return the tmp dir."""
-    monkeypatch.setattr(scrape, "RECORDS_DIR", tmp_path / "records")
     monkeypatch.setattr(scrape, "CHECKPOINT", tmp_path / "checkpoint.json")
     monkeypatch.setattr(scrape, "EREADER_FILE", tmp_path / "ereader.json")
+    monkeypatch.setattr(scrape, "RAW_DB", tmp_path / "raw.db")
     return tmp_path
 
 
@@ -81,22 +92,19 @@ def _all_keys(tag: str, formats) -> set[str]:
     return {f"{tag}:{fmt}:{taal}" for fmt in formats for taal in scrape.LANGS}
 
 
-def test_a_completed_run_leaves_no_checkpoint_behind(paths):
-    # C1, at the source. The checkpoint describes one run: it exists so an
-    # *interrupted* run can resume. A completed one that stayed behind made the
-    # next run skip every cell -> enumerate nothing -> conclude the catalog is
-    # empty. Each mode used to clear the namespace itself on the way in, which
-    # also destroyed the resume state it was there to provide.
+def test_a_completed_checkpoint_is_cleared_before_the_walk(paths):
+    # C1, at the source. The checkpoint exists so an *interrupted* run can resume.
+    # A namespace already covering every cell means the last run finished, so the
+    # next one must start fresh — otherwise it skips everything and concludes the
+    # catalog is empty. Clearing it on the way *out* is not the same thing: the run
+    # that meets a stale checkpoint still does nothing, which is exactly what a
+    # June checkpoint did to the first real run of this store.
     fake = FakeClient([("001", "a"), ("002", "b")])
+    scrape._save_done(_all_keys("all", scrape.FORMATS))
     seen: set[str] = set()
 
     assert scrape.browse_all(fake, list(scrape.FORMATS), seen, lambda r: None) is True
-    assert not [k for k in scrape._load_done() if k.startswith("all:")]
-
-    # so the next run really does re-enumerate
-    again: set[str] = set()
-    assert scrape.browse_all(fake, list(scrape.FORMATS), again, lambda r: None) is True
-    assert again == {"001", "002"}
+    assert seen == {"001", "002"}          # it really did enumerate
 
 
 def test_an_interrupted_run_still_resumes(paths):
@@ -120,62 +128,58 @@ def _full_run(monkeypatch, rows, argv):
 
 
 def test_a_resumed_full_run_marks_nothing_removed(paths, monkeypatch):
-    # A run that skipped cells has seen only part of the catalog, so "on disk but
-    # not seen" is not evidence of removal. Marking it anyway wipes the catalog on
-    # the next normalize — the failure the old --reconcile pass was written around,
-    # now unexpressible: the stamp is gated on browse_all reporting completeness.
+    # A run that skipped cells has seen only part of the catalog, so "in the store
+    # but not seen" is not evidence of removal. Marking it anyway wipes the catalog
+    # on the next normalize — the failure the old --reconcile pass was written
+    # around, now unexpressible: the stamp is gated on browse_all reporting
+    # completeness.
     rows = [("001", "a"), ("002", "b")]
-    _seed_records(paths / "records", [*rows, ("003", "gone")])
+    _seed_records(None, [*rows, ("003", "gone")])
     scrape._save_done({"all:ebook:dut"})
 
     _full_run(monkeypatch, rows, ["--full"])
 
-    gone = json.loads((paths / "records" / "003.json").read_text(encoding="utf-8"))
-    assert "removed_at" not in gone
+    assert "removed_at" not in _stored("003")
 
 
 def test_a_narrowed_full_run_marks_nothing_removed(paths, monkeypatch):
-    # --formats ebook enumerates no audiobooks, so every audiobook on disk is
+    # --formats ebook enumerates no audiobooks, so every audiobook in the store is
     # "missing" from a run that was never looking for one.
     rows = [("001", "a")]
-    _seed_records(paths / "records", [*rows, ("002", "an-audiobook")])
+    _seed_records(None, [*rows, ("002", "an-audiobook")])
 
     _full_run(monkeypatch, rows, ["--full", "--formats", "ebook"])
 
-    other = json.loads((paths / "records" / "002.json").read_text(encoding="utf-8"))
-    assert "removed_at" not in other
+    assert "removed_at" not in _stored("002")
 
 
 def test_a_full_run_keeps_what_the_detail_pass_added(paths, monkeypatch):
-    # a browse row carries the listing fields only; writing it over an enriched
-    # record would drop the ISBN and the cross-links that decide work identity
-    records = paths / "records"
-    records.mkdir(parents=True, exist_ok=True)
-    (records / "001.json").write_text(json.dumps(
-        {"ppn": "001", "slug": "a", "isbn": "978", "related_ppns": ["002"],
-         "detail_at": "2026-07-28T00:00:00", "source": "listing+detail"}),
-        encoding="utf-8")
+    # a browse row carries the listing fields only; writing it over a record would
+    # drop the ISBN and the cross-links that decide work identity
+    from obc import raw
+
+    conn = raw.connect(scrape.RAW_DB)
+    raw.put(conn, {"ppn": "001", "slug": "a", "isbn": "978",
+                   "related_ppns": ["002"]})
+    conn.close()
 
     _full_run(monkeypatch, [("001", "a")], ["--full"])
 
-    rec = json.loads((records / "001.json").read_text(encoding="utf-8"))
+    rec = _stored("001")
     assert rec["isbn"] == "978" and rec["related_ppns"] == ["002"]
-    assert rec["source"] == "listing+detail"
 
 
 def test_a_complete_enumeration_marks_what_the_catalog_dropped(paths):
     rows = [("001", "a"), ("002", "b")]
-    _seed_records(paths / "records", [*rows, ("003", "gone")])
+    _seed_records(None, [*rows, ("003", "gone")])
     fake = FakeClient(rows)
     seen: set[str] = set()
 
     assert scrape.browse_all(fake, list(scrape.FORMATS), seen, lambda r: None) is True
     assert scrape.mark_removed(seen) == {"003"}
 
-    gone = json.loads((paths / "records" / "003.json").read_text(encoding="utf-8"))
-    assert gone["removed_at"]
-    kept = json.loads((paths / "records" / "001.json").read_text(encoding="utf-8"))
-    assert "removed_at" not in kept
+    assert _stored("003")["removed_at"]
+    assert "removed_at" not in _stored("001")
 
 
 def test_collect_ereader_rerun_reenumerates(paths):
@@ -251,14 +255,16 @@ def test_paginate_respects_max_page():
 # browse_all resume (the legitimate behavior step 4 preserved)
 # --------------------------------------------------------------------------- #
 def test_browse_all_skips_cells_already_in_checkpoint(paths):
+    # a partial namespace is an interrupted run: those cells are not walked again
     fake = FakeClient([("1", "a")])
-    scrape._save_done(_all_keys("all", scrape.FORMATS))  # every cell already done
+    skipped = {f"all:ebook:{taal}" for taal in scrape.LANGS}
+    scrape._save_done(skipped)
     seen: set[str] = set()
 
     scrape.browse_all(fake, list(scrape.FORMATS), seen, lambda r: None)
 
-    assert fake.calls == []   # zero requests: all cells were resumed-as-done
-    assert seen == set()
+    asked = {p.get("type") for p, _page in fake.calls}
+    assert asked == {"Digitaal_luisterboek"}   # every e-book cell was resumed-as-done
 
 
 # --------------------------------------------------------------------------- #
@@ -299,27 +305,28 @@ class _RepeatClient:
 
 
 def test_sync_writes_new_and_merge_preserves_old_fields(paths, monkeypatch):
-    records = paths / "records"
-    records.mkdir(parents=True, exist_ok=True)
-    # existing record (PPNs must be [0-9xX]+ for the listing parser) with a
-    # detail-only field (isbn) not present in listing rows
-    (records / "100.json").write_text(json.dumps(
-        {"ppn": "100", "slug": "keep", "title": "Oud", "author": "Auteur",
-         "format": "ebook", "isbn": "ISBN-OLD", "summary": "zelfde"}), encoding="utf-8")
+    from obc import raw
 
-    client = _OnePageClient([
-        {"ppn": "100", "slug": "keep", "title": "Nieuw", "author": "Auteur",
-         "summary": "zelfde"},                       # title changed -> update
-        {"ppn": "200", "slug": "new", "title": "Nieuw boek"},   # not on disk -> new
-    ])
-    monkeypatch.setattr(scrape, "Client", lambda *a, **k: client)
+    conn = raw.connect(scrape.RAW_DB)
+    raw.put(conn, {"ppn": "001", "slug": "a", "title": "Oud", "isbn": "978"})
+    conn.close()
 
-    scrape.sync(3.0)
+    class SyncClient(FakeClient):
+        def get_listing_html(self, params, page=1):
+            self.calls.append((dict(params), page))
+            if page > 1:
+                return _rich_listing_html([])
+            return _rich_listing_html([
+                {"ppn": "001", "slug": "a", "title": "Nieuw"},
+                {"ppn": "009", "slug": "i", "title": "Onbekend"}])
 
-    keep = json.loads((records / "100.json").read_text(encoding="utf-8"))
-    assert keep["title"] == "Nieuw"          # updated from the listing
-    assert keep["isbn"] == "ISBN-OLD"        # old detail-only field preserved by merge
-    assert (records / "200.json").exists()   # brand-new record written
+    monkeypatch.setattr(scrape, "Client", lambda **kw: SyncClient())
+    scrape.sync(rate=99)
+
+    changed = _stored("001")
+    assert changed["title"] == "Nieuw"      # the listing refreshes what it knows
+    assert changed["isbn"] == "978"         # and leaves the detail fields alone
+    assert _stored("009")["title"] == "Onbekend"
 
 
 def test_sync_stops_after_streak_of_unchanged(paths, monkeypatch):
@@ -344,52 +351,36 @@ def test_sync_stops_after_streak_of_unchanged(paths, monkeypatch):
 # --------------------------------------------------------------------------- #
 # --details (the pass that replaced --enrich + --relink)
 # --------------------------------------------------------------------------- #
-def test_needs_detail_asks_one_question(paths):
-    needs = scrape._needs_detail
-    # never fetched
-    assert needs({"slug": "a"})
-    # fetched, and the page had everything: done for good
-    assert not needs({"slug": "a", "isbn": "978", "detail_at": "2026-07-28"})
-    # enriched before detail_at existed — the ISBN is what says "fetched"
-    assert not needs({"slug": "a", "isbn": "978"})
-    # …unless its label names a twin whose link was never captured. This is the
-    # case --enrich could not express (it skipped anything with an ISBN), which
-    # is why a second pass had to exist.
-    assert needs({"slug": "a", "isbn": "978", "also_available_as": "Luisterboek"})
-    assert not needs({"slug": "a", "isbn": "978", "also_available_as": "Luisterboek",
-                      "related_ppns": ["002"]})
-    # a page whose label promised a link it does not actually carry is fetched
-    # once and then left alone — without the stamp those eight records in the live
-    # catalog would be re-fetched on every run, forever
-    assert not needs({"slug": "a", "isbn": "978", "also_available_as": "Luisterboek",
-                      "detail_at": "2026-07-28"})
-    # no slug, no URL to fetch
-    assert not needs({"isbn": None})
+def test_details_stamps_and_keeps_what_it_fetched(paths, monkeypatch):
+    from obc import raw
 
-
-def test_details_stamps_what_it_fetched(paths, monkeypatch):
-    records = paths / "records"
-    records.mkdir(parents=True, exist_ok=True)
-    (records / "001.json").write_text(
-        json.dumps({"ppn": "001", "slug": "a"}), encoding="utf-8")
-    (records / "002.json").write_text(json.dumps(
-        {"ppn": "002", "slug": "b", "isbn": "978", "detail_at": "2026-01-01"}),
-        encoding="utf-8")
+    _seed_records(None, [("001", "a")])
+    conn = raw.connect(scrape.RAW_DB)
+    raw.put(conn, {"ppn": "002", "slug": "b"})
+    raw.put_detail(conn, "002", "<html>already have this one</html>")
+    conn.close()
 
     fetched = []
 
     class DetailClient(FakeClient):
-        def fetch_detail(self, ppn, slug):
+        def get_detail_html(self, ppn, slug):
             fetched.append(ppn)
-            return {"ppn": ppn, "isbn": "979", "ereader": 0}
+            return f"<html>{ppn}</html>"
 
     monkeypatch.setattr(scrape, "Client", lambda **kw: DetailClient())
+    monkeypatch.setattr(scrape, "parse_detail",
+                        lambda html, ppn: {"ppn": ppn, "isbn": "979", "ereader": 0})
     scrape.details(rate=99)
 
-    assert fetched == ["001"]                    # 002 was already complete
-    rec = json.loads((records / "001.json").read_text(encoding="utf-8"))
+    assert fetched == ["001"]                    # 002 already has its page
+    rec = _stored("001")
     assert rec["isbn"] == "979" and rec["detail_at"]
-    assert rec["source"] == "listing+detail"
     # _merge keeps truthy values only, so an app-only e-book (ereader=0) would
     # lose the flag rather than record it
     assert rec["ereader"] == 0
+    # and the page itself is kept, so this fetch never has to happen again
+    conn = raw.connect(scrape.RAW_DB)
+    assert raw.detail_html(conn, "001") == "<html>001</html>"
+    conn.close()
+
+

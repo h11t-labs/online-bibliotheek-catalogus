@@ -1,4 +1,4 @@
-"""Harvest the catalog into ``data/raw/records/{ppn}.json``, then ``obc normalize``.
+"""Harvest the catalog into ``data/raw/raw.db`` (see obc.raw), then ``obc normalize``.
 
 Two enumeration modes:
 
@@ -22,18 +22,25 @@ work identity.
 from __future__ import annotations
 
 import argparse
-import datetime
 import json
 import re
 import sys
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
+from . import raw
 from .client import Client
 
 # Data paths live in obc.config; imported (and rebindable) at module level so
-# `scrape.RECORDS_DIR` etc. stay monkeypatchable by tests and the scheduler.
-from .config import CHECKPOINT, EREADER_FILE, GENRES_FILE, RECENT_FILE, RECORDS_DIR
+# `scrape.RAW_DB` etc. stay monkeypatchable by tests and the scheduler.
+from .config import (
+    CHECKPOINT,
+    EREADER_FILE,
+    GENRES_FILE,
+    RAW_DB,
+    RECENT_FILE,
+)
+from .detail import parse_detail
 from .listing import parse_listing
 from .log import logger
 from .util import read_json, write_json
@@ -121,13 +128,19 @@ def browse_all(client: Client, formats: Iterable[str], seen: set[str],
     are the ones I happened to visit", and only the first may be used to conclude
     that a record on disk has been removed from the catalog.
 
-    Clears its own checkpoint namespace on the way out, so the *next* run starts
-    fresh rather than skipping every cell it already finished. The checkpoint
-    describes one run; leaving a completed one behind is what made a second
-    ``--full`` enumerate nothing at all.
+    The checkpoint describes one run, and a namespace that already covers every
+    cell means the last run finished — so it is cleared here, before the walk,
+    rather than resumed. Clearing it on the way *out* instead is not the same
+    thing and does not work: the run that meets a stale checkpoint still skips
+    everything, so a second ``--full`` was needed before the first one did
+    anything. Resume state from an *interrupted* run is partial, and survives.
     """
-    done = _load_done()
     tag = "er" if ereader else "all"
+    cells = {f"{tag}:{fmt}:{taal}" for fmt in formats for taal in LANGS}
+    done = _load_done()
+    if cells <= done:
+        done -= cells
+        _save_done(done)
     complete = True
     for fmt in formats:
         for taal in LANGS:
@@ -143,7 +156,6 @@ def browse_all(client: Client, formats: Iterable[str], seen: set[str],
             done.add(key)
             _save_done(done)
             logger.info(f"  {key}: +{len(seen) - before} (total {len(seen)})")
-    _save_done({k for k in _load_done() if not k.startswith(f"{tag}:")})
     return complete
 
 
@@ -265,123 +277,101 @@ def _save_done(done: set[str]) -> None:
     write_json(CHECKPOINT, sorted(done))
 
 
-def _writer():
-    RECORDS_DIR.mkdir(parents=True, exist_ok=True)
-    now = datetime.datetime.now().isoformat(timespec="seconds")
-
-    def write(rec: dict) -> None:
-        rec.setdefault("scraped_at", now)
-        (RECORDS_DIR / f"{rec['ppn']}.json").write_text(
-            json.dumps(rec, ensure_ascii=False), encoding="utf-8")
-
-    return write
-
-
-def _existing_ppns() -> set[str]:
-    return {p.stem for p in RECORDS_DIR.glob("*.json")} if RECORDS_DIR.exists() else set()
-
-
-def _merging_writer():
-    """Persist a browse row without discarding what the detail page added.
-
-    A listing row carries the listing fields and nothing else, so writing it over
-    an existing record would drop that record's ISBN, genres and cross-links.
-    ``_merge`` overlays only truthy values, so the row refreshes what it knows and
-    leaves the rest standing — except ``source``/``detail_at``, which describe how
-    complete the record is and must not be talked down by a listing row.
-    """
-    write = _writer()
-
-    def on_record(rec: dict) -> None:
-        path = RECORDS_DIR / f"{rec['ppn']}.json"
-        old = read_json(path) if path.exists() else None
-        if not isinstance(old, dict):
-            write(rec)
-            return
-        merged = _merge(old, rec)
-        if old.get("detail_at"):
-            merged["detail_at"] = old["detail_at"]
-            merged["source"] = old.get("source") or merged.get("source")
-        write(merged)
-
-    return on_record
-
-
-def _needs_detail(rec: dict) -> bool:
-    """Is there anything left for the detail page to add to this record?
-
-    One question, asked once. It used to be two passes with two selectors, and the
-    split cost a three-hour re-fetch: ``enrich`` skipped every record that already
-    had an ISBN, which is nearly all of them, so it could never pick up the "ook
-    beschikbaar als" cross-links that decide work identity — hence a second pass
-    with its own selector to go back over the same pages.
-
-    ``detail_at`` is what makes this self-resuming and terminating: a record that
-    has been fetched is never fetched again, even if the page turned out not to
-    carry the field we came for. Without it the eight pages whose label names a
-    twin that isn't actually linked would be re-fetched on every single run.
-    Records enriched before the stamp existed carry an ISBN instead, which is why
-    that still counts as "fetched".
-
-    A twin licensed *later* needs no re-fetch here: the newer edition's own first
-    fetch captures the link, and ``work.group_editions`` unions in both directions.
-    """
-    if not rec.get("slug") or rec.get("detail_at"):
-        return False
-    return (not rec.get("isbn")
-            or bool(rec.get("also_available_as") and not rec.get("related_ppns")))
+def _store():
+    return raw.connect(RAW_DB)
 
 
 def details(rate: float, limit=None) -> None:
-    """Fetch the detail page for every record still missing something it provides.
+    """Fetch the detail page for every record whose page we have never had.
 
     ISBN, the full subject/genre list, narrator, audience, age band, series,
     keywords, the e-reader flag and the cross-links all live on that page and
-    nowhere else.
+    nowhere else — and now the page itself is kept, so this is the last time any
+    of it has to come off the network.
     """
-    write = _writer()
-    todo = [rec for rec in (read_json(p) for p in sorted(RECORDS_DIR.glob("*.json")))
-            if isinstance(rec, dict) and _needs_detail(rec)]
+    store = _store()
+    todo = raw.without_detail(store)
     logger.info(f"Fetching detail pages for {len(todo)} record(s)")
-    stamp = datetime.datetime.now().isoformat(timespec="seconds")
     n = 0
-    # cache=False: don't accumulate ~2GB of detail HTML on the volume — the merged
-    # record itself is the persistent result, and it is fetched once.
+    # cache=False switches off the loose per-file HTML cache: the store holds the
+    # same bytes compressed, in one file, and is not wiped by every normalize.
     with Client(per_second=rate, cache=False) as client:
         for rec in todo:
-            detail = client.fetch_detail(rec["ppn"], rec["slug"])
+            # Fetched and parsed in two steps, unlike client.fetch_detail, so the
+            # page can be kept: parsing is what we happen to want from it today,
+            # and re-deriving that later must not cost another 69k requests.
+            html = client.get_detail_html(rec["ppn"], rec["slug"])
+            if not html:
+                continue
+            raw.put_detail(store, rec["ppn"], html)
+            detail = parse_detail(html, ppn=rec["ppn"])
             if detail:
                 merged = _merge(rec, detail)
-                merged["source"] = "listing+detail"
-                merged["detail_at"] = stamp
                 # _merge keeps only truthy values, so a detail ereader=0 (app-only)
                 # would be dropped — carry the flag through explicitly so app-only
                 # e-books aren't left blank.
                 if detail.get("ereader") is not None:
                     merged["ereader"] = detail["ereader"]
-                write(merged)
-                n += 1
-                if n % 50 == 0:
-                    logger.info(f"  …{n} fetched")
+                raw.put(store, merged)
+            n += 1
+            if n % 50 == 0:
+                logger.info(f"  …{n} fetched")
             if limit and n >= limit:
                 break
-    logger.info(f"Fetched {n} detail page(s)")
+    logger.info(f"Fetched {n} detail page(s); {raw.detail_count(store)} stored")
+    store.close()
+
+
+def reparse() -> int:
+    """Re-derive every record from its stored page. No network.
+
+    This is what the pages are for: a parser change becomes a local rebuild. #34
+    taught ``detail.parse_detail`` to keep the "ook beschikbaar als" hrefs it had
+    been discarding, and recovering them cost three hours of re-fetching pages
+    that had already said so once.
+
+    Merges rather than replaces: the page is the truth about what the detail page
+    says and nothing else, so the browse-row fields on the record stay as they are.
+    """
+    store = _store()
+    n = changed = 0
+    for ppn, html in raw.iter_details(store):
+        n += 1
+        detail = parse_detail(html, ppn=ppn)
+        if not detail:
+            continue
+        rec = raw.get(store, ppn) or {"ppn": ppn}
+        merged = _merge(rec, detail)
+        if detail.get("ereader") is not None:
+            merged["ereader"] = detail["ereader"]
+        if raw.put(store, merged):
+            changed += 1
+        if n % 5000 == 0:
+            logger.info(f"  …{n} reparsed ({changed} changed)")
+    store.close()
+    logger.info(f"Reparsed {n} stored page(s); {changed} record(s) changed")
+    return changed
 
 
 def harvest_details(pairs: Iterable[tuple[str, str]], rate: float, limit):
-    write = _writer()
+    store = _store()
     n = 0
     with Client(per_second=rate) as client:
         for ppn, slug in pairs:
-            rec = client.fetch_detail(ppn, slug)
+            html = client.get_detail_html(ppn, slug)
+            if not html:
+                continue
+            rec = parse_detail(html, ppn=ppn)
             if rec:
-                write(rec)
+                raw.put(store, rec)
+                raw.put_detail(store, ppn, html)
                 n += 1
                 if n % 50 == 0:
                     logger.info(f"  …{n} detail records")
             if limit and n >= limit:
                 break
-    logger.info(f"Harvested {n} detail record(s) -> {RECORDS_DIR}")
+    store.close()
+    logger.info(f"Harvested {n} detail record(s) into the store")
 
 
 # --------------------------------------------------------------------------- #
@@ -397,7 +387,7 @@ def _sig(rec: dict) -> tuple:
 def sync(rate: float, max_pages: int = 300, streak_stop: int = 120) -> None:
     """Pick up new / changed titles cheaply by paging newest-by-license first
     and stopping once we hit a long run of already-known unchanged records."""
-    write = _writer()
+    store = _store()
     new = updated = streak = 0
     with Client(per_second=rate) as client:
         page = 1
@@ -407,20 +397,20 @@ def sync(rate: float, max_pages: int = 300, streak_stop: int = 120) -> None:
             if not recs:
                 break
             for r in recs:
-                path = RECORDS_DIR / f"{r['ppn']}.json"
-                old = read_json(path) if path.exists() else None
-                if isinstance(old, dict):
+                old = raw.get(store, r["ppn"])
+                if old is not None:
                     merged = _merge(old, r)
                     if _sig(old) == _sig(merged):
                         streak += 1
                         continue
-                    write(merged)
+                    raw.put(store, merged)
                     updated += 1
                 else:
-                    write(r)
+                    raw.put(store, r)
                     new += 1
                 streak = 0
             page += 1
+    store.close()
     logger.info(f"sync: +{new} new, {updated} updated (scanned {page - 1} pages)")
 
 
@@ -432,14 +422,10 @@ def mark_removed(seen: set[str]) -> set[str]:
     entire catalog removed, and the next normalize then drops it — which is
     precisely what a leftover checkpoint used to cause.
     """
-    removed = _existing_ppns() - seen
-    stamp = datetime.datetime.now().isoformat(timespec="seconds")
-    for ppn in removed:
-        path = RECORDS_DIR / f"{ppn}.json"
-        rec = read_json(path)
-        if isinstance(rec, dict):
-            rec["removed_at"] = stamp
-            write_json(path, rec)
+    store = _store()
+    removed = raw.known_ppns(store) - seen
+    raw.mark_removed(store, removed)
+    store.close()
     logger.info(f"{len(seen)} live, {len(removed)} marked removed")
     return removed
 
@@ -494,12 +480,22 @@ def main(argv: list[str] | None = None) -> int:
         # construction and a separate --reconcile pass had to re-walk the whole
         # catalog to answer the same question.
         seen: set[str] = set()
+        store = _store()
         logger.info(f"Full enumeration of {formats}")
+
+        def on_record(rec: dict) -> None:
+            # merge, never overwrite: a browse row carries the listing fields only,
+            # and writing it over a record would drop the ISBN, genres and
+            # cross-links its detail page put there.
+            old = raw.get(store, rec["ppn"])
+            raw.put(store, _merge(old, rec) if old else rec)
+
         with Client(per_second=args.rate) as client:
-            complete = browse_all(client, formats, seen, _merging_writer())
+            complete = browse_all(client, formats, seen, on_record)
             collect_ereader(client)
             collect_genres(client)
             collect_recent(client)
+        store.close()
         # Two ways this run's `seen` can fail to be the whole catalog, and both
         # would mark good records removed: a resumed run skipped the cells the
         # previous one finished, and --formats narrowed the enumeration to part of
@@ -508,7 +504,10 @@ def main(argv: list[str] | None = None) -> int:
             mark_removed(seen)
         else:
             logger.info("partial enumeration — not checking for removed titles")
-        logger.info(f"Done. {len(_existing_ppns())} records in {RECORDS_DIR}")
+        done = _store()
+        logger.info(f"Done. {raw.count(done)} records, "
+                    f"{raw.detail_count(done)} with a stored page")
+        done.close()
     return 0
 
 

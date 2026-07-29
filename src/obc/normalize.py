@@ -17,9 +17,10 @@ import os
 import re
 import sqlite3
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 
-from . import db, work
+from . import db, raw, work
 
 # Data paths live in obc.config; imported (and rebindable) at module level so
 # `normalize.EREADER_FILE` etc. stay monkeypatchable by tests and the scheduler.
@@ -41,13 +42,6 @@ from .textnorm import (
     valid_language,
 )
 from .util import read_json
-
-
-def _read(path: Path):
-    data = read_json(path, default=[])
-    if isinstance(data, list):
-        return [r for r in data if isinstance(r, dict)]
-    return [data] if isinstance(data, dict) else []
 
 
 def _load_aux(db_path: Path | None = None) -> tuple[set, bool, dict, dict, dict]:
@@ -111,7 +105,7 @@ def _transform(r: dict, ereader: set, have_ereader: bool, genres_map: dict,
     return r
 
 
-def _prepass(paths: list[Path]) -> tuple[dict, dict, dict, tuple, dict]:
+def _prepass(records: Iterable[dict]) -> tuple[dict, dict, dict, tuple, dict]:
     """One streaming pass to build the publisher-canon map, the isbn/title lookup
     maps for list matching, the genre name->facet-code map (for the hierarchy) and
     the work grouping — without holding records in RAM.
@@ -119,40 +113,39 @@ def _prepass(paths: list[Path]) -> tuple[dict, dict, dict, tuple, dict]:
     Work identity has to be decided here rather than per record: whether two PPNs
     are one book is a fact about the *pair*, so it needs every record's title,
     author, language and cross-links in hand before any of them is written. The
-    slice each decision needs is small, and this pass already reads every file."""
+    slice each decision needs is small, and this pass already reads every record."""
     groups: dict[str, Counter] = {}
     by_isbn: dict[str, str] = {}
     by_key: dict[str, str] = {}
     genre_code: dict[tuple[str, str], str] = {}
     genre_count: Counter = Counter()
     meta: dict[str, work.EditionMeta] = {}
-    for path in paths:
-        for r in _read(path):
-            ppn = r.get("ppn")
-            if not ppn or r.get("removed_at"):
-                continue
-            meta[ppn] = work.EditionMeta(
-                title=r.get("title"), author=r.get("author"),
-                language=valid_language(r.get("language")), format=r.get("format"),
-                related_ppns=tuple(r.get("related_ppns") or ()))
-            p = r.get("publisher")
-            if p:
-                groups.setdefault(publisher_key(p), Counter())[p] += 1
-            if r.get("isbn"):
-                by_isbn.setdefault(re.sub(r"\D", "", r["isbn"]), ppn)
-            authors = [canonical_author(a) for a in split_authors(r.get("author"))] \
-                or [r.get("author")]
-            for a in authors:
-                by_key.setdefault(match_key(r.get("title"), a), ppn)
-            # (audience, genre name) -> facet code. onderwerpJeugd and
-            # onderwerpVolwassenen reuse the same numbers (2.0 = jeugd "Natuur &
-            # Dieren" vs volwassenen "Literatuur & Romans"), so the code — and thus a
-            # genre's parent — is only meaningful within one audience.
-            aud = (r.get("audience") or "").strip().lower()
-            for g in (r.get("genres") or []):
-                if g.get("name") and g.get("code"):
-                    genre_code.setdefault((aud, g["name"]), g["code"])
-                    genre_count[(aud, g["name"])] += 1
+    for r in records:
+        ppn = r.get("ppn")
+        if not ppn or r.get("removed_at"):
+            continue
+        meta[ppn] = work.EditionMeta(
+            title=r.get("title"), author=r.get("author"),
+            language=valid_language(r.get("language")), format=r.get("format"),
+            related_ppns=tuple(r.get("related_ppns") or ()))
+        p = r.get("publisher")
+        if p:
+            groups.setdefault(publisher_key(p), Counter())[p] += 1
+        if r.get("isbn"):
+            by_isbn.setdefault(re.sub(r"\D", "", r["isbn"]), ppn)
+        authors = [canonical_author(a) for a in split_authors(r.get("author"))] \
+            or [r.get("author")]
+        for a in authors:
+            by_key.setdefault(match_key(r.get("title"), a), ppn)
+        # (audience, genre name) -> facet code. onderwerpJeugd and
+        # onderwerpVolwassenen reuse the same numbers (2.0 = jeugd "Natuur &
+        # Dieren" vs volwassenen "Literatuur & Romans"), so the code — and thus a
+        # genre's parent — is only meaningful within one audience.
+        aud = (r.get("audience") or "").strip().lower()
+        for g in (r.get("genres") or []):
+            if g.get("name") and g.get("code"):
+                genre_code.setdefault((aud, g["name"]), g["code"])
+                genre_count[(aud, g["name"])] += 1
     canon = {k: ctr.most_common(1)[0][0] for k, ctr in groups.items()}
     work_of = work.group_editions(
         meta, work.load_overrides(RAW_DIR / "work_overrides.json"))
@@ -161,18 +154,17 @@ def _prepass(paths: list[Path]) -> tuple[dict, dict, dict, tuple, dict]:
     return canon, by_isbn, by_key, (genre_code, genre_count), work_of
 
 
-def iter_records(paths: list[Path], aux: tuple, canon: dict, work_of: dict):
+def iter_records(records: Iterable[dict], aux: tuple, canon: dict, work_of: dict,
+                 total: int = 0):
     """Yield enriched records one at a time (constant memory)."""
     ereader, have_ereader, genres_map, recent_map, prior_ereader = aux
-    total = len(paths)
-    for seen, path in enumerate(paths, 1):
+    for seen, r in enumerate(records, 1):
         if seen % 10_000 == 0 or seen == total:
             logger.info(f"[normalize] loading records: {seen}/{total}")
-        for r in _read(path):
-            t = _transform(r, ereader, have_ereader, genres_map, recent_map,
-                           canon, prior_ereader, work_of)
-            if t is not None:
-                yield t
+        t = _transform(r, ereader, have_ereader, genres_map, recent_map,
+                       canon, prior_ereader, work_of)
+        if t is not None:
+            yield t
 
 
 def match_lists(by_isbn: dict, by_key: dict, work_of: dict) -> list[dict]:
@@ -247,16 +239,19 @@ def _reclaim_disk(db_path: Path, raw_dir: Path) -> None:
             p.unlink(missing_ok=True)
         except OSError:
             pass
+    # The loose per-request HTML cache is scratch and is dropped. `raw/raw.db`
+    # is deliberately not touched: it is the source the records are derived from,
+    # not something derived from them, and re-fetching it costs 69k requests.
     html_cache = raw_dir / "html"
     if html_cache.is_dir():
         for f in html_cache.glob("*"):
             f.unlink(missing_ok=True)
     try:  # log what's left so a stubborn full volume is diagnosable
         st = os.statvfs(raw_dir if raw_dir.exists() else db_path.parent)
-        rec = raw_dir / "records"
-        n = sum(1 for _ in rec.glob("*.json")) if rec.exists() else 0
+        store = raw_dir / "raw.db"
+        n = store.stat().st_size // 1_000_000 if store.exists() else 0
         logger.info(f"[reclaim] free {st.f_bavail * st.f_frsize // 1_000_000}"
-                    f"/{st.f_blocks * st.f_frsize // 1_000_000}MB · {n} record files")
+                    f"/{st.f_blocks * st.f_frsize // 1_000_000}MB · raw store {n}MB")
     except OSError:
         pass
 
@@ -288,17 +283,20 @@ def _build_similar(conn: sqlite3.Connection) -> None:
 def normalize(raw_dir: Path = RAW_DIR, db_path: Path = db.DEFAULT_DB) -> dict:
     db_path = Path(db_path)
     _reclaim_disk(db_path, raw_dir)
-    paths = sorted((raw_dir / "records").rglob("*.json"))
+    store = raw.connect(raw_dir / "raw.db")
+    total = raw.count(store)
     aux = _load_aux(db_path)  # reads the live DB's e-reader flags before the swap
     # canon + match maps + genre codes + the edition->work grouping
-    canon, by_isbn, by_key, genre_info, work_of = _prepass(paths)
+    canon, by_isbn, by_key, genre_info, work_of = _prepass(raw.iter_records(store))
     lists = match_lists(by_isbn, by_key, work_of)
     # Build into a temp DB, then swap it in atomically — the web app keeps serving
     # the old, complete catalog throughout the rebuild (no "wordt opgebouwd" window).
     tmp = db_path.with_name(db_path.name + ".tmp")
     conn = db.connect(tmp)
     # stream records in batches — constant memory, no full in-RAM load
-    n = db.stream_rebuild(conn, iter_records(paths, aux, canon, work_of), lists)
+    n = db.stream_rebuild(
+        conn, iter_records(raw.iter_records(store), aux, canon, work_of, total),
+        lists)
     db.set_work_genre_parents(conn, genre_info)  # per-work genre-hierarchy parent
     db.build_genre_taxonomy(conn)  # reads parent_id, so it runs after the stamp
     _build_similar(conn)  # into the temp DB, so the swap publishes both at once
@@ -309,6 +307,7 @@ def normalize(raw_dir: Path = RAW_DIR, db_path: Path = db.DEFAULT_DB) -> dict:
     # (Safer than deleting the sidecars, which can corrupt an open reader.)
     _checkpoint_live(db_path)
     os.replace(tmp, db_path)  # atomic on the same filesystem
+    store.close()
     logger.info(f"Normalized {n} record(s). DB now: {s}")
     return s
 
