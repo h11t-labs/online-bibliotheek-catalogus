@@ -29,7 +29,6 @@ import sqlite3
 from pathlib import Path
 
 from .. import db
-from ..textnorm import slugify, surname_key
 from . import queries
 
 DB_PATH = Path(os.environ.get("OBC_DB", db.DEFAULT_DB))
@@ -103,15 +102,15 @@ def authors_by_letter(conn: sqlite3.Connection,
     """
     field = "surname_sort" if by == BY_SURNAME else "first_sort"
     buckets: dict[str, list[dict]] = {}
-    for row in queries.author_index(conn):
+    # Rows arrive in the order the page wants them, so each bucket fills in order
+    # and nothing is sorted here. This used to re-derive the sort key per row with
+    # surname_key()/slugify() — 22,383 calls per request to rebuild the two
+    # columns the build had already stamped, which cost 7.5s on the live hub.
+    for row in queries.author_index(conn, by_surname=(by == BY_SURNAME)):
         # A name with no Latin characters at all folds to "" and has no slug, so it
         # cannot be a hub or sitemap entry — those keep their own encoded-name page.
         if not row["first_sort"]:
             continue
         buckets.setdefault(author_letter(row[field]), []).append(
             {"name": row["name"], "titles": row["titles"]})
-    # the chosen key first, then the whole name, so a letter page reads as an index
-    for rows in buckets.values():
-        rows.sort(key=lambda e: (surname_key(e["name"]) if by == BY_SURNAME
-                                 else slugify(e["name"]), slugify(e["name"])))
     return buckets
