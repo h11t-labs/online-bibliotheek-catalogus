@@ -50,6 +50,8 @@ def main(argv: list[str] | None = None) -> int:
     # the flags) instead of printing this empty stub's help and exiting.
     sub.add_parser("scrape", help="harvest the catalog (see obc scrape --help)",
                    add_help=False)
+    sub.add_parser("reparse",
+                   help="re-derive records from the stored detail pages (no network)")
     lp = sub.add_parser("lists", help="update curated lists (bestsellers, prizes)")
     lp.add_argument("args", nargs="*",
                     help="optional 'update' action and/or specific list slugs")
@@ -86,6 +88,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "scrape":
         from . import scrape
         return scrape.main(rest)
+    elif args.cmd == "reparse":
+        from . import scrape
+        scrape.reparse()
     elif args.cmd == "lists":
         from . import lists
         slugs = [a for a in args.args if a != "update"]  # 'update' is the implied action

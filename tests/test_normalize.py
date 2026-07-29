@@ -13,8 +13,15 @@ from obc import db, normalize
 
 
 def _write(path: Path, obj) -> None:
+    """Seed one record, both as a file (what ``_enrich`` reads back) and in the
+    raw store under the same tmp ``data/raw`` (what ``normalize`` reads)."""
+    from obc import raw as rawstore
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+    if path.parent.name == "records" and isinstance(obj, dict) and obj.get("ppn"):
+        conn = rawstore.connect(path.parent.parent / "raw.db")
+        rawstore.put(conn, obj)
+        conn.close()
 
 
 @pytest.fixture
@@ -94,11 +101,12 @@ def test_normalize_publishes_recommendations_with_the_swap(tmp_path, monkeypatch
 def _enrich(raw):
     """Run the read-only half of the pipeline; return (records, by_isbn, by_key,
     work_of)."""
-    paths = sorted((raw / "records").rglob("*.json"))
+    recs = [json.loads(p.read_text(encoding="utf-8"))
+            for p in sorted((raw / "records").rglob("*.json"))]
     aux = normalize._load_aux()
-    canon, by_isbn, by_key, _, work_of = normalize._prepass(paths)
+    canon, by_isbn, by_key, _, work_of = normalize._prepass(recs)
     records = {r["ppn"]: r
-               for r in normalize.iter_records(paths, aux, canon, work_of)}
+               for r in normalize.iter_records(recs, aux, canon, work_of)}
     return records, by_isbn, by_key, work_of
 
 

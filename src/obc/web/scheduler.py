@@ -29,11 +29,16 @@ def _seeded() -> bool:
     """True once the volume holds harvested records to refresh from. On a fresh
     volume (first deploy) there are none, so we do a full harvest instead of an
     incremental sync that would only pick up the newest titles."""
-    from ..scrape import RECORDS_DIR
+    from .. import raw
+    from ..scrape import RAW_DB
     try:
-        return next(RECORDS_DIR.glob("*.json"), None) is not None
+        conn = raw.connect(RAW_DB)
     except OSError:
         return False
+    try:
+        return raw.count(conn) > 0
+    finally:
+        conn.close()
 
 
 def _schema_stale() -> bool:
