@@ -326,3 +326,18 @@ def test_relevance_weights_subjects_above_summary(tmp_path):
     assert order == ["SUB", "SUM"]
 
 
+
+
+def test_the_format_filter_counts_without_touching_the_table(ro_conn):
+    """The exact total behind /e-books and every ?format= search.
+
+    Unindexed, `COUNT(*) FROM works WHERE has_ebook = 1` is a full scan: 175ms
+    locally over 50,373 rows, and seconds on a 512MB VM where the 593MB table is
+    not in the page cache — 99.8% of the /e-books page, whose 120 rows cost 0.4ms.
+    A covering index answers it without reading the table at all.
+    """
+    for col in ("has_ebook", "has_audiobook"):
+        plan = " ".join(r[-1] for r in ro_conn.execute(
+            f"EXPLAIN QUERY PLAN SELECT COUNT(*) FROM works WHERE {col} = 1"))
+        assert "COVERING INDEX" in plan, f"{col}: {plan}"
+        assert "SCAN works" not in plan, f"{col}: {plan}"

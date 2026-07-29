@@ -237,6 +237,13 @@ CREATE INDEX IF NOT EXISTS idx_works_title    ON works(title COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_works_series   ON works(series_slug);
 CREATE INDEX IF NOT EXISTS idx_works_language ON works(language);
 CREATE INDEX IF NOT EXISTS idx_works_ereader  ON works(ereader);
+-- has_ebook / has_audiobook are the site's most-used filter (both landing pages,
+-- and every ?format= search), and the pages want an exact total. Unindexed that
+-- count is a full scan of `works` — 175ms locally for the 50,373 e-books, and
+-- seconds on a 512MB VM where the 593MB table is not in the page cache. With the
+-- index it is a covering scan that never touches the table: 0.6ms.
+CREATE INDEX IF NOT EXISTS idx_works_ebook    ON works(has_ebook);
+CREATE INDEX IF NOT EXISTS idx_works_audio    ON works(has_audiobook);
 CREATE INDEX IF NOT EXISTS idx_wg_genre       ON work_genres(genre_id);
 CREATE INDEX IF NOT EXISTS idx_wa_author      ON work_authors(author_id);
 CREATE INDEX IF NOT EXISTS idx_wl_list        ON work_lists(list_id);
