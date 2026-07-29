@@ -51,6 +51,14 @@ CREATE TABLE IF NOT EXISTS records (
 # on the way out so everything downstream keeps seeing one flat record.
 _STAMPS = ("first_seen", "updated_at", "detail_at", "removed_at")
 
+# Every column a record is made of — deliberately not ``SELECT *``. The page is
+# 86% of the store (708 MB against 114 MB of records) and no reader of a *record*
+# ever looks at it, but naming it in the projection still drags it off disk. That
+# put 1.6 GB through the page cache per normalize (this is walked twice), on a
+# machine with 132 MB of cache and a 593 MB catalog to serve — which is how a
+# background rebuild came to make every aggregate page on the live site take 20s.
+_COLS = "ppn, record, " + ", ".join(_STAMPS)
+
 
 def _now() -> str:
     return datetime.datetime.now().isoformat(timespec="seconds")
@@ -119,7 +127,8 @@ def put_detail(conn: sqlite3.Connection, ppn: str, html: str) -> None:
 
 
 def get(conn: sqlite3.Connection, ppn: str) -> dict | None:
-    row = conn.execute("SELECT * FROM records WHERE ppn = ?", (ppn,)).fetchone()
+    row = conn.execute(f"SELECT {_COLS} FROM records WHERE ppn = ?",
+                       (ppn,)).fetchone()
     return _to_record(row) if row else None
 
 
@@ -134,7 +143,7 @@ def detail_html(conn: sqlite3.Connection, ppn: str) -> str | None:
 def iter_records(conn: sqlite3.Connection) -> Iterator[dict]:
     """Every record, in ppn order. Streams: normalize walks this twice, and 69k
     records in memory is not something a 512 MB machine should be asked to hold."""
-    for row in conn.execute("SELECT * FROM records ORDER BY ppn"):
+    for row in conn.execute(f"SELECT {_COLS} FROM records ORDER BY ppn"):
         yield _to_record(row)
 
 
@@ -156,7 +165,7 @@ def without_detail(conn: sqlite3.Connection) -> list[dict]:
     slug has no URL to fetch, so it is not a candidate.
     """
     return [_to_record(row) for row in conn.execute(
-        "SELECT * FROM records WHERE detail_html IS NULL "
+        f"SELECT {_COLS} FROM records WHERE detail_html IS NULL "
         "AND json_extract(record, '$.slug') IS NOT NULL ORDER BY ppn")]
 
 

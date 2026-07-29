@@ -384,3 +384,25 @@ def test_details_stamps_and_keeps_what_it_fetched(paths, monkeypatch):
     conn.close()
 
 
+
+
+def test_reading_records_leaves_the_pages_on_disk(paths):
+    """A record read must not drag its page along.
+
+    The page is 86% of the store — 708 MB against 114 MB of records — and no
+    reader of a record ever looks at it. `SELECT *` still pulled it off disk,
+    which put 1.6 GB through the page cache per normalize (the store is walked
+    twice) on a machine with 132 MB of cache and a 593 MB catalog to serve. The
+    live symptom was a nightly rebuild making every aggregate page take 20s.
+    """
+    from obc import raw
+
+    conn = raw.connect(scrape.RAW_DB)
+    raw.put(conn, {"ppn": "001", "slug": "a", "title": "De Ontdekking"})
+    raw.put_detail(conn, "001", "<html>" + "x" * 100_000 + "</html>")
+
+    assert "detail_html" not in raw._COLS   # not in the projection at all
+    assert raw.get(conn, "001")["title"] == "De Ontdekking"
+    assert next(raw.iter_records(conn))["title"] == "De Ontdekking"
+    # …and the page is still there for the one reader that does want it
+    assert raw.detail_html(conn, "001").startswith("<html>")
