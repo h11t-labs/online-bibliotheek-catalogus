@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v2.0.0...v2.0.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **scrape:** read records without dragging their pages off disk ([#39](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/39)) ([527f4c2](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/527f4c24919ca3ee6ed701d53cda77a79f61cd6e))
+
+
+### Performance Improvements
+
+* **db:** index the format flags the site filters on most ([#42](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/42)) ([5c65898](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/5c658988a4f7ee7442c12a4b8e5472db68a4a15b))
+* **web:** the author hub orders on the keys the build already stamped ([#41](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/41)) ([49ff4ac](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/49ff4ac418f5bef008f63effb77186f872db1d28))
+
 ## [2.0.0](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v1.2.0...v2.0.0) (2026-07-29)
 
 
