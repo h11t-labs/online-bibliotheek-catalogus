@@ -5,6 +5,25 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v1.2.0...v2.0.0) (2026-07-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* **scrape:** one raw store, and the pages that make a parser change free ([#38](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/38))
+* **scrape:** one detail pass, and --full sees removals itself ([#37](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/37))
+* **catalog:** `books` becomes `editions` and a derived `works` table above it; `book_genres`/`book_authors`/`book_lists`/`books_fts` hang off the work. No migration to write — normalize rebuilds into a temp DB and swaps it in.
+
+### Features
+
+* **catalog:** model works with editions (e-book + luisterboek = one book) ([#34](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/34)) ([c5938d8](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/c5938d89daf497335acde5c648773ffc44ecf71a))
+* **scrape:** one raw store, and the pages that make a parser change free ([#38](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/38)) ([8f11752](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/8f1175246fe352a2a38f7f1bed2f7fd523524e95))
+
+
+### Code Refactoring
+
+* **scrape:** one detail pass, and --full sees removals itself ([#37](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/37)) ([03a8196](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/03a81965c08a53e83349d26ac927647b1322e42c))
+
 ## [1.2.0](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v1.1.2...v1.2.0) (2026-07-26)
 
 
