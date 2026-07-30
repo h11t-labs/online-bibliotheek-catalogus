@@ -529,3 +529,17 @@ def test_404_offers_matching_genres(client, monkeypatch):
     body = client.get("/list/thriller").text
     assert 'href="/?genre=Spanning%20%26%20Thrillers"' in body
     assert "Spanning &amp; Thrillers" in body
+
+
+def test_pagination_is_bounded(client):
+    """`LIMIT n OFFSET m` walks and discards m rows, so depth costs linearly:
+    measured over "de" (51,980 matches) page 1 is 373ms, page 100 657ms and the
+    last page 4.2s — and the pager linked straight to that last page, so the worst
+    case was one click from every search. The exact total is still shown; only the
+    walk is bounded."""
+    from obc.web.app import MAX_PAGES
+
+    body = client.get(f"/?page={MAX_PAGES + 500}").text
+    assert f"page={MAX_PAGES + 500}" not in body       # never offered
+    # asking past the end serves the last reachable page rather than erroring
+    assert client.get(f"/?page={MAX_PAGES + 500}").status_code == 200

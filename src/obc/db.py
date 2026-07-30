@@ -129,14 +129,20 @@ CREATE TABLE IF NOT EXISTS work_genres (
 -- to '' (non-Latin scripts) never merge — one row per spelling there. Display
 -- strings on works/editions stay exactly as scraped; this table is the identity
 -- underneath them. surname_sort / first_sort are the A-Z hub's two orderings,
--- stamped here so the hub is an indexed read instead of a per-process cache.
+-- stamped here so the hub is an indexed read instead of a per-process cache;
+-- surname_letter / first_letter are the bucket each ordering files a person
+-- under, so a letter page reads its own letter instead of every author. Two
+-- letters and not one: bucketing by surname puts Alexander Klöpping under K and
+-- bucketing by first name puts him under A.
 CREATE TABLE IF NOT EXISTS authors (
-    id           INTEGER PRIMARY KEY,
-    name         TEXT UNIQUE,
-    name_fold    TEXT,
-    n_works      INTEGER,
-    surname_sort TEXT,
-    first_sort   TEXT
+    id             INTEGER PRIMARY KEY,
+    name           TEXT UNIQUE,
+    name_fold      TEXT,
+    n_works        INTEGER,
+    surname_sort   TEXT,
+    first_sort     TEXT,
+    surname_letter TEXT,
+    first_letter   TEXT
 );
 
 -- distinct publishers with a folded form + count, for fast autocomplete
@@ -249,6 +255,11 @@ CREATE INDEX IF NOT EXISTS idx_wa_author      ON work_authors(author_id);
 CREATE INDEX IF NOT EXISTS idx_wl_list        ON work_lists(list_id);
 CREATE INDEX IF NOT EXISTS idx_authors_fold   ON authors(name_fold);
 CREATE INDEX IF NOT EXISTS idx_authors_nworks ON authors(n_works DESC);
+-- The A-Z hub renders 27 counts and a letter page renders one letter, so neither
+-- has any business reading all 22,383 authors. Ordered inside the index, so the
+-- page gets its rows in the order it shows them.
+CREATE INDEX IF NOT EXISTS idx_authors_sletter ON authors(surname_letter, surname_sort, first_sort);
+CREATE INDEX IF NOT EXISTS idx_authors_fletter ON authors(first_letter, first_sort);
 CREATE INDEX IF NOT EXISTS idx_publishers_fold ON publishers(name_fold);
 CREATE INDEX IF NOT EXISTS idx_li_list        ON list_items(list_id);
 
@@ -395,6 +406,16 @@ def _insert_authors(cur: sqlite3.Cursor, records: list[dict[str, Any]]) -> None:
     _stamp_author_names(cur, spell_counts, aid)
 
 
+# Kept in step with obc.web.indexes.OTHER_LETTER, which is what the URL says.
+OTHER_LETTER = "overig"
+
+
+def _letter(sort_key: str) -> str:
+    """The A-Z bucket a stamped sort key falls in, or the catch-all."""
+    first = (sort_key or "")[:1].upper()
+    return first if "A" <= first <= "Z" else OTHER_LETTER
+
+
 def _stamp_author_names(cur: sqlite3.Cursor, spell_counts: dict[str, collections.Counter],
                         aid: dict[str, int]) -> None:
     """Give every person their most-common spelling, plus the two A-Z sort keys.
@@ -410,10 +431,12 @@ def _stamp_author_names(cur: sqlite3.Cursor, spell_counts: dict[str, collections
         if key not in aid:
             continue
         best = min(counter.items(), key=lambda kv: (-kv[1], kv[0]))[0]
-        rows.append((best, surname_key(best), slugify(best), aid[key]))
+        surname, first = surname_key(best), slugify(best)
+        rows.append((best, surname, first, _letter(surname), _letter(first),
+                     aid[key]))
     cur.executemany(
-        "UPDATE authors SET name = ?, surname_sort = ?, first_sort = ? WHERE id = ?",
-        rows)
+        "UPDATE authors SET name = ?, surname_sort = ?, first_sort = ?, "
+        "surname_letter = ?, first_letter = ? WHERE id = ?", rows)
 
 
 def _distinct_counts(records: list[dict[str, Any]], field: str) -> dict[str, int]:

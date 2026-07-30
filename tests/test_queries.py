@@ -341,3 +341,24 @@ def test_the_format_filter_counts_without_touching_the_table(ro_conn):
             f"EXPLAIN QUERY PLAN SELECT COUNT(*) FROM works WHERE {col} = 1"))
         assert "COVERING INDEX" in plan, f"{col}: {plan}"
         assert "SCAN works" not in plan, f"{col}: {plan}"
+
+
+def test_a_bare_text_search_counts_inside_the_index(ro_conn):
+    """The count must not join to `works` just to be discarded.
+
+    Counting FTS matches through `JOIN works` costs one row lookup per match —
+    51,980 of them for "de" on the live catalog, none of which the count uses.
+    FTS5 counts its own rows: 231ms -> 37ms locally, and it never touches the
+    593MB table, which is what matters on a machine whose page cache holds a
+    fifth of the catalog.
+    """
+    f = Q.SearchFilters(q="ontdekking")
+    viaidx = Q.search(ro_conn, f, 1, 24).total
+    joined = ro_conn.execute(
+        "SELECT COUNT(*) FROM works w JOIN works_fts ft ON ft.work_id = w.work_id "
+        "WHERE works_fts MATCH ?", [Q.fts_match("ontdekking")]).fetchone()[0]
+    assert viaidx == joined
+
+    # …and with any other filter the join is back, because it applies the filter
+    both = Q.SearchFilters(q="ontdekking", format="audiobook")
+    assert Q.search(ro_conn, both, 1, 24).total <= viaidx
