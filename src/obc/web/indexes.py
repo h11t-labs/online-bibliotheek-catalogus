@@ -87,9 +87,26 @@ def letter_order(index: dict) -> list[str]:
         ([OTHER_LETTER] if OTHER_LETTER in index else [])
 
 
+def letter_counts(conn: sqlite3.Connection, by: str = BY_SURNAME) -> dict[str, int]:
+    """``{letter: n}`` — what the A-Z hub renders, and nothing more."""
+    return dict(queries.author_letter_counts(conn, by_surname=(by == BY_SURNAME)))
+
+
+def authors_in_letter(conn: sqlite3.Connection, letter: str,
+                      by: str = BY_SURNAME) -> list[dict]:
+    """One letter's authors, in page order."""
+    return [{"name": r["name"], "titles": r["titles"]}
+            for r in queries.authors_in_letter(
+                conn, letter, by_surname=(by == BY_SURNAME))]
+
+
 def authors_by_letter(conn: sqlite3.Connection,
                       by: str = BY_SURNAME) -> dict[str, list[dict]]:
     """``{"A": [{name, titles}…], …, "overig": […]}`` — every person, bucketed.
+
+    Whole-catalog, and only the sitemap wants that now: the hub reads
+    :func:`letter_counts` and a letter page reads :func:`authors_in_letter`, both
+    of which stay proportional to what they show.
 
     One pass over ~10k tiny rows, on the two hub pages only. Both the fold-merge
     loop and the per-request title counting are gone: ``authors`` is already one

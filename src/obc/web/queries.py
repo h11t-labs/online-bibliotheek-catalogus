@@ -211,8 +211,18 @@ def search(conn: sqlite3.Connection, f: SearchFilters, page: int,
             order = "bm25(works_fts, 0.0, 10.0, 6.0, 2.0, 1.0)"
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-    total = conn.execute(
-        f"SELECT COUNT(*) FROM works w {joins} {where_sql}", params).fetchone()[0]
+    if match and len(where) == 1:
+        # A bare full-text search: FTS5 can count its own matches, so the join to
+        # `works` — 51,980 row lookups for "de", none of which the count uses —
+        # is skipped. Same number, and it never touches the 593MB table: 231ms to
+        # 37ms here, and far more than that on a machine whose page cache holds a
+        # fifth of the catalog. Any other filter needs the join to apply it.
+        total = conn.execute(
+            "SELECT COUNT(*) FROM works_fts WHERE works_fts MATCH ?",
+            [match]).fetchone()[0]
+    else:
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM works w {joins} {where_sql}", params).fetchone()[0]
     offset = (page - 1) * page_size
     rows = conn.execute(
         f"SELECT w.* FROM works w {joins} {where_sql} "
@@ -467,6 +477,36 @@ def series_index(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 # reachable and listed in the A-Z hub — this rule is about what gets nominated to
 # search engines, not about what a reader can browse to.
 MIN_INDEXABLE_TITLES = 2
+
+
+def author_letter_counts(conn: sqlite3.Connection,
+                         by_surname: bool = True) -> list[tuple[str, int]]:
+    """``[(letter, n)]`` for the A-Z hub — the only thing that page renders.
+
+    The hub shows 27 counts and no authors at all, so reading every author to
+    length the buckets was 22,383 rows for 27 numbers. This groups inside the
+    letter index instead.
+    """
+    col = "surname_letter" if by_surname else "first_letter"
+    return [(r[0], r[1]) for r in conn.execute(
+        f"SELECT {col}, COUNT(*) FROM authors "
+        f"WHERE n_works > 0 AND first_sort <> '' AND {col} IS NOT NULL "
+        f"GROUP BY {col}")]
+
+
+def authors_in_letter(conn: sqlite3.Connection, letter: str,
+                      by_surname: bool = True) -> list[sqlite3.Row]:
+    """One letter's authors, in the order the page shows them.
+
+    Proportional to the letter, which the bucket-the-world approach was not: the
+    catch-all holds three people and used to cost the same as the 2,562 under B.
+    """
+    col, order = ("surname_letter", "surname_sort, first_sort") if by_surname \
+        else ("first_letter", "first_sort")
+    return conn.execute(
+        f"SELECT name, n_works AS titles FROM authors "
+        f"WHERE {col} = ? AND n_works > 0 AND first_sort <> '' ORDER BY {order}",
+        (letter,)).fetchall()
 
 
 def author_index(conn: sqlite3.Connection,

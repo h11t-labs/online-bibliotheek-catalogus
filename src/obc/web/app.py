@@ -38,6 +38,14 @@ from .indexes import AUDIENCES, AUTHOR_SORTS, BY_SURNAME, get_conn
 
 PAGE_SIZE = 24
 PER_PAGE_OPTIONS = (12, 24, 48, 96)  # selectable items-per-page (PAGE_SIZE is the default)
+# How deep pagination goes. `LIMIT n OFFSET m` makes SQLite walk and discard m
+# rows, so the cost is linear in the depth: measured over "de" (51,980 matches),
+# page 1 is 373ms, page 100 657ms, page 200 1.3s and the last page 4.2s — and the
+# pager links straight to that last page, so the worst case was one click from
+# every search. 100 pages is 2,400 titles deep, well past anything a reader walks
+# to: past that they refine the search instead. The *total* stays exact and is
+# still shown; only the walk is bounded.
+MAX_PAGES = 100
 
 _templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 _STATIC = Path(__file__).parent / "static"
@@ -527,6 +535,7 @@ def search(
         publishers=tuple(publisher), authors=tuple(author), lists=tuple(lists_),
         ereader=(ereader == "1"), year_from=yf, year_to=yt, sort=sort)
 
+    page = min(page, MAX_PAGES)   # before the query: the offset is the cost
     result = queries.search(conn, filters, page, page_size)
     rows = result.rows
     facets = queries.compute_facets(conn)
@@ -534,7 +543,7 @@ def search(
     total_indexed = queries.total_works(conn)
 
     total = result.total
-    pages = max(1, (total + page_size - 1) // page_size)
+    pages = min(max(1, (total + page_size - 1) // page_size), MAX_PAGES)
     list_labels = {lst["slug"]: lst["name"] for lst in facets["lists"]}
 
     state = {"q": q, "format": format_, "language": language, "genre": genre,
@@ -734,12 +743,13 @@ def authors_index(request: Request, sort: str = BY_SURNAME,
     out of every sitemap.
     """
     sort = sort if sort in AUTHOR_SORTS else BY_SURNAME
-    index = indexes.authors_by_letter(conn, sort)
-    letters = indexes.letter_order(index)
-    total = sum(len(rows) for rows in index.values())
+    # The hub renders 27 counts and no authors, so it reads 27 counts.
+    counts = indexes.letter_counts(conn, sort)
+    letters = indexes.letter_order(counts)
     return _templates.TemplateResponse(request, "authors.html", {
-        "letters": letters, "letter": "", "authors": [], "total": total, "sort": sort,
-        "counts": {ltr: len(index[ltr]) for ltr in letters},
+        "letters": letters, "letter": "", "authors": [],
+        "total": (total := sum(counts.values())), "sort": sort,
+        "counts": counts,
         "meta_description": f"Blader alfabetisch door alle {_nlnum(total)} auteurs "
                             f"in de online Bibliotheek — e-books en luisterboeken."})
 
@@ -748,9 +758,9 @@ def authors_index(request: Request, sort: str = BY_SURNAME,
 def authors_letter(request: Request, letter: str, sort: str = BY_SURNAME,
                    conn: sqlite3.Connection = Depends(get_conn)):
     sort = sort if sort in AUTHOR_SORTS else BY_SURNAME
-    index = indexes.authors_by_letter(conn, sort)
+    counts = indexes.letter_counts(conn, sort)
     key = letter.upper() if len(letter) == 1 else letter.lower()
-    if key not in index:
+    if key not in counts:
         return _not_found(request, "letter")
     # One canonical spelling per letter, so /authors/A and /authors/a don't become
     # two URLs with the same content.
@@ -759,12 +769,12 @@ def authors_letter(request: Request, letter: str, sort: str = BY_SURNAME,
         return RedirectResponse(f"/authors/{canonical}" +
                                 (f"?sort={sort}" if sort != BY_SURNAME else ""),
                                 status_code=301)
-    rows = index[key]
+    rows = indexes.authors_in_letter(conn, key, sort)
     label = key.upper() if key != indexes.OTHER_LETTER else "Overig"
     return _templates.TemplateResponse(request, "authors.html", {
-        "letters": indexes.letter_order(index), "letter": key, "label": label,
+        "letters": indexes.letter_order(counts), "letter": key, "label": label,
         "authors": rows, "total": len(rows), "sort": sort,
-        "counts": {ltr: len(index[ltr]) for ltr in index},
+        "counts": counts,
         "meta_description": f"{_nlnum(len(rows))} auteurs waarvan de naam met {label} "
                             f"begint, met al hun e-books en luisterboeken in de online "
                             f"Bibliotheek."})

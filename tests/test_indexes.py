@@ -269,3 +269,39 @@ def test_the_hub_orders_on_the_stamped_keys(ro_conn):
                                      else slugify(e["name"]), slugify(e["name"])))
 
         assert indexes.authors_by_letter(ro_conn, by) == slow, by
+
+
+def test_a_letter_page_reads_its_own_letter(ro_conn):
+    """Cost proportional to the page, not to the catalog.
+
+    The hub renders 27 counts and no authors; a letter page renders one letter.
+    Both used to bucket all 22,383 authors first, so the catch-all — three people
+    on the live catalog — cost the same 2.2s as the 2,562 under B. The letter is
+    stamped at build time now (`authors.surname_letter` / `first_letter`).
+    """
+    from obc.web import indexes
+
+    counts = indexes.letter_counts(ro_conn)
+    assert counts, "fixture has no authors to bucket"
+    # the same buckets the whole-catalog pass produces, which the sitemap still uses
+    whole = indexes.authors_by_letter(ro_conn)
+    assert counts == {ltr: len(rows) for ltr, rows in whole.items()}
+
+    for by in (indexes.BY_SURNAME, indexes.BY_FIRST):
+        for letter in indexes.letter_counts(ro_conn, by):
+            assert indexes.authors_in_letter(ro_conn, letter, by) == \
+                indexes.authors_by_letter(ro_conn, by)[letter], (by, letter)
+
+    # the stamped letter is reachable by index, not by scanning the table
+    plan = " ".join(r[-1] for r in ro_conn.execute(
+        "EXPLAIN QUERY PLAN SELECT name FROM authors WHERE surname_letter = 'A'"))
+    assert "SCAN authors" not in plan, plan
+    assert "INDEX" in plan, plan
+
+
+def test_the_stamped_letter_matches_the_sort_key(ro_conn):
+    from obc import db
+    for row in ro_conn.execute("SELECT surname_sort, surname_letter, first_sort, "
+                               "first_letter FROM authors WHERE first_sort <> ''"):
+        assert row["surname_letter"] == db._letter(row["surname_sort"])
+        assert row["first_letter"] == db._letter(row["first_sort"])
