@@ -58,7 +58,19 @@ LANGS = ["dut", "eng", "fre", "ger", "fry", "spa", "ita", "lat", "gre",
          "pap", "rus", "lim", "mul"]
 # Dutch is year-rich (~98% have a `jaar`), so a per-year split keeps each cell
 # under the cap; a maker-sort window mops up the few year-less ones.
-YEARS = list(range(2027, 1899, -1))
+#
+# `jaar` is the *original* publication year, not the edition's. So the classics
+# sit where they were written: Moby Dick under 1851, Couperus under 1889. This
+# range used to start at 1900 and silently lost every one of them — they fell in
+# no year cell at all, and only whatever the maker-sort window happened to catch
+# came back. 84 titles on the live catalog, found by comparing against an older
+# copy that no longer exists. The floor is 1400 because the oldest Dutch title in
+# the catalog is well inside it and 500 extra empty queries cost ~90s against a
+# Dutch walk of 26 minutes.
+#
+# Only Dutch is split this way — every other language fits under the 10k cap and
+# is walked whole, which is why the loss was 88 Dutch titles and one English.
+YEARS = list(range(2027, 1399, -1))
 
 # onderwerp (subject) facet code -> genre name, per audience. These ARE the
 # site's genres; tagging books via the facet avoids fetching detail pages.
