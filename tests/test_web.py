@@ -318,7 +318,8 @@ def test_genre_and_format_pages(client):
     assert genre.status_code == 200
     assert "<h1>Spanning &amp; Thrillers</h1>" in genre.text
     assert "/boek/thriller-in-de-nacht--bob-de-wit--003" in genre.text  # a fixture thriller
-    assert 'href="/?genre=Spanning%20%26%20Thrillers"' in genre.text
+    # the "filter in zoeken" link carries the same spelling the page filters on
+    assert 'href="/?genre=Spanning+%26+Thrillers"' in genre.text
     assert client.get("/genre/bestaat-niet").status_code == 404
     # one spelling per genre, as with the author letters — the rest is a miss
     assert client.get("/genre/Spanning-Thrillers",
@@ -389,6 +390,12 @@ def test_publisher_page_merges_the_spellings_that_fold_together():
     assert set(entry["spellings"]) == {"Ambo|Anthos uitgevers, Amsterdam",
                                        "Ambo|Anthos Uitgevers, Amsterdam"}
     assert queries.publisher_page(conn, "bestaat-niet") is None
+
+    # the "filter in zoeken" link has to carry every spelling the page filters on,
+    # or it opens a search with fewer titles than the page the reader just left
+    from obc.web.app import _filter_url
+    url = _filter_url("uitgever", entry["spellings"])
+    assert url.count("uitgever=") == 2 and url.startswith("/?")
     # the sitemap sees one page per fold, not one per spelling
     pages = queries.publisher_pages(conn)
     assert [p["slug"] for p in pages] == ["ambo-anthos-uitgevers-amsterdam",

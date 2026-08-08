@@ -80,6 +80,17 @@ def _url_with(state: dict, **over) -> str:
     return "?" + urlencode(pairs) if pairs else "?"
 
 
+def _filter_url(param: str, values: tuple[str, ...]) -> str:
+    """``/?uitgever=A&uitgever=B`` — the search that matches a landing page exactly.
+
+    A genre and a publisher both reach the catalog under several spellings that
+    fold onto one page, and the page filters on all of them. Its "filter in
+    zoeken" link has to carry the same set, or it opens a search showing fewer
+    titles than the page the reader just left.
+    """
+    return "/?" + urlencode([(param, v) for v in values])
+
+
 def _url_without(state: dict, key: str, value: str) -> str:
     """Return a URL with ``value`` removed from the list-valued ``key``."""
     remaining = [v for v in (state.get(key) or []) if v != value]
@@ -270,24 +281,31 @@ _RENAMED_KEYS = {"q": "zoek", "format": "formaat", "language": "taal",
 
 
 def _renamed_path(path: str) -> str:
-    """The Dutch path for an old English one, or "" when it was never renamed."""
+    """The Dutch path for an old English one, or "" when it was never renamed.
+
+    The target never keeps a trailing slash. ``/authors/`` would otherwise cost a
+    second hop through Starlette's own slash redirect, and ``/author/anna-vrij/``
+    is worse: the ``:path`` routes capture the slash, so the 301 would land on a
+    404. One hop, to the slug the page actually answers at.
+    """
     for old, new in _RENAMED:
         if path == old or path.startswith(old + "/"):
-            return new + path[len(old):]
+            return (new + path[len(old):]).rstrip("/") or new
     return ""
 
 
 def _renamed_query(query: str) -> str:
-    """``?q=x&sort=y`` -> ``?zoek=x&sortering=y``; "" stays "".
+    """``q=x&sort=y`` -> ``zoek=x&sortering=y``; anything else is returned as-is.
 
-    Unknown keys pass through untouched: ``ereader``, ``genre`` and ``publiek``
-    never changed, and a key this table has never heard of is not ours to rewrite.
+    Returned unchanged unless a retired key is actually present — re-encoding a
+    query that needs nothing would 301 on nothing more than ``+`` versus ``%20``.
+    Keys this table has never heard of pass through: ``ereader``, ``genre`` and
+    ``publiek`` never changed and are not ours to rewrite.
     """
-    if not query:
-        return ""
-    pairs = [(_RENAMED_KEYS.get(k, k), v)
-             for k, v in parse_qsl(query, keep_blank_values=True)]
-    return "?" + urlencode(pairs)
+    pairs = parse_qsl(query, keep_blank_values=True)
+    if not any(k in _RENAMED_KEYS for k, _ in pairs):
+        return query
+    return urlencode([(_RENAMED_KEYS.get(k, k), v) for k, v in pairs])
 
 
 def _is_alias(host: str) -> bool:
@@ -308,18 +326,20 @@ async def _headers_and_canonical_host(request: Request, call_next):
     # The alias 301 skips the routing pass but still gets the headers below — it is
     # a response the site sends, and it used to get them by virtue of running in
     # the inner of the two middlewares.
-    query = f"?{request.url.query}" if request.url.query else ""
-    renamed = _renamed_path(request.url.path)
+    path, query = request.url.path, request.url.query
+    renamed, new_query = _renamed_path(path), _renamed_query(query)
+    # A path that never moved can still carry retired parameters: `/?q=ontdek` is
+    # a bookmark from before the rename, and `/` accepts only `zoek` now, so
+    # without this it quietly answers with the whole unfiltered catalog.
+    moved = renamed or (path if new_query != query else "")
+    suffix = f"?{new_query}" if new_query else ""
     if (_is_alias(request.headers.get("host", ""))
-            and not request.url.path.startswith(_NO_REDIRECT)):
+            and not path.startswith(_NO_REDIRECT)):
         response: Response = RedirectResponse(
-            seo.SITE_URL + (renamed or request.url.path)
-            + (_renamed_query(request.url.query) if renamed else query),
-            status_code=301)
-    elif renamed:
+            seo.SITE_URL + (moved or path) + suffix, status_code=301)
+    elif moved:
         # One hop, so an alias host on an old path doesn't cost two.
-        response = RedirectResponse(
-            renamed + _renamed_query(request.url.query), status_code=301)
+        response = RedirectResponse(moved + suffix, status_code=301)
     else:
         response = await call_next(request)
     # Security headers on every response (cheap, no per-user state).
@@ -758,14 +778,14 @@ def genre_page(request: Request, slug: str,
     if slug != slugify(slug):   # one spelling per genre, the rest is a miss
         return _not_found(request, "genre", _slug_words(slug))
     name = entry["name"]
+    spellings = tuple(queries.genre_spellings(conn, slugify(slug)))
     parent = queries.genre_page(conn, entry["parent_slug"]) if entry["parent_slug"] else None
     return _browse_page(
         request, conn, heading=name,
         lead=f"Alle titels in het genre {name} uit de collectie van de online "
              f"Bibliotheek.",
-        filters=queries.SearchFilters(
-            genres=tuple(queries.genre_spellings(conn, slugify(slug))), sort="year_desc"),
-        search_url=f"/?genre={quote(name, safe='')}",
+        filters=queries.SearchFilters(genres=spellings, sort="year_desc"),
+        search_url=_filter_url("genre", spellings),
         crumb=("Genres", "/genres"),
         parent=({"name": parent["name"], "slug": entry["parent_slug"]} if parent else None),
         children=[{"name": c["name"], "slug": c["slug"], "titles": c["titles"]}
@@ -792,7 +812,7 @@ def publisher_page(request: Request, slug: str,
         lead=f"Alle e-books en luisterboeken van uitgever {name} in de collectie "
              f"van de online Bibliotheek.",
         filters=queries.SearchFilters(publishers=entry["spellings"], sort="year_desc"),
-        search_url=f"/?uitgever={quote(name, safe='')}")
+        search_url=_filter_url("uitgever", entry["spellings"]))
 
 
 # The format landing pages, back and honest this time. They were removed in #27

@@ -99,3 +99,43 @@ def test_the_rename_301_translates_the_old_parameter_names_too(client):
         assert r.status_code == 301, old
         assert r.headers["location"] == new, old
     assert client.get("/suggesties?zoek=ontdek").json()["titles"]
+
+
+def test_a_retired_parameter_is_redirected_even_when_the_path_never_moved(client):
+    """`/?q=ontdek` is a bookmark from before the rename.
+
+    The path is fine — `/` never moved — so the rename table has nothing to say
+    about it, and `/` accepts only `zoek` now. Without a redirect it answers 200
+    with the entire unfiltered catalog, which looks like the search silently
+    breaking. A query that needs nothing must not be touched, or every `+` versus
+    `%20` difference would cost a 301.
+    """
+    for old, new in (("/?q=ontdek", "/?zoek=ontdek"),
+                     ("/?format=audiobook", "/?formaat=audiobook"),
+                     ("/?sort=title&page=2", "/?sortering=title&pagina=2"),
+                     ("/lijst/test-top?show=available", "/lijst/test-top?toon=available")):
+        r = client.get(old, follow_redirects=False)
+        assert r.status_code == 301, old
+        assert r.headers["location"] == new, old
+        assert client.get(new).status_code == 200, new
+    # untouched: no retired key, so no redirect at all
+    for fine in ("/?zoek=ontdek", "/?genre=Spanning+%26+Thrillers", "/?ereader=1",
+                 "/genres?publiek=jeugd", "/facetten?type=author&zoek=a"):
+        assert client.get(fine, follow_redirects=False).status_code == 200, fine
+
+
+def test_an_old_url_with_a_trailing_slash_still_lands_in_one_hop(client):
+    """`/author/anna-vrij/` used to 301 to `/auteur/anna-vrij/` — a 404.
+
+    The `:path` routes capture the trailing slash, so it fails the exact-slug
+    check on arrival. The hub paths were merely wasteful: a 301 to `/auteurs/`
+    and then Starlette's own 307 to `/auteurs`.
+    """
+    for old, new in (("/authors/", "/auteurs"),
+                     ("/author/anna-vrij/", "/auteur/anna-vrij"),
+                     ("/series/het-mysterie/", "/reeks/het-mysterie"),
+                     ("/about/", "/over"), ("/lists/", "/lijsten")):
+        r = client.get(old, follow_redirects=False)
+        assert r.status_code == 301, old
+        assert r.headers["location"] == new, old
+        assert client.get(new).status_code == 200, new
