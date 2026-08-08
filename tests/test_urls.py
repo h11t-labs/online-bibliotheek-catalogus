@@ -138,3 +138,67 @@ def test_an_old_url_with_a_trailing_slash_still_lands_in_one_hop(client):
         assert r.status_code == 301, old
         assert r.headers["location"] == new, old
         assert client.get(new).status_code == 200, new
+
+
+def test_a_redirect_can_never_leave_our_own_origin(client):
+    """The trailing-slash rule opened an actual open redirect.
+
+    `request.url.path` for `//evil.example/` is `//evil.example/`, and stripping
+    the slash left `//evil.example` — which a browser reads as a *host*, not a
+    path, so the site handed out 301s to anywhere. Every Location this middleware
+    emits has to be origin-relative by construction.
+    """
+    for hostile in ("//evil.example/", "/%2Fevil.example/", "///evil.example/",
+                    "//evil.example/authors/"):
+        r = client.get(hostile, follow_redirects=False)
+        location = r.headers.get("location", "")
+        assert not location.startswith("//"), (hostile, location)
+        assert not location or location.startswith("/"), (hostile, location)
+
+
+def test_a_browse_page_links_to_its_own_hub(client):
+    """The crumb on browse.html was hard-coded to "Alle genres".
+
+    A publisher page has nothing to do with the genre hub, and neither do
+    /e-books and /luisterboeken — which have carried that link since they landed.
+    The site header links /genres from every page, so this reads the crumb only.
+    """
+    import re
+
+    def crumb(path):
+        m = re.search(r'<div class="crumb">(.*?)</div>', client.get(path).text, re.S)
+        return m.group(1) if m else ""
+
+    assert 'href="/genres">Alle genres' in crumb("/genre/spanning-thrillers")
+    for path in ("/uitgever/querido-amsterdam", "/e-books", "/luisterboeken"):
+        assert "/genres" not in crumb(path), path
+        assert 'href="/"' in crumb(path), path          # still gets its way back
+
+
+def test_autocomplete_offers_one_row_per_publisher_page(tmp_path):
+    """Five spellings of one publisher are one destination, not five suggestions.
+
+    They all fold to the same slug, so publisherHref() sends every one of them to
+    the same URL — offering them separately just crowds out distinct results.
+    """
+    from obc import db
+    from obc.web import queries
+    path = tmp_path / "pub.db"
+    conn = db.connect(path)
+    db.bulk_load(conn, [
+        {"ppn": "1", "title": "Een", "format": "ebook",
+         "publisher": "Keuken Pers, Utrecht"},
+        {"ppn": "2", "title": "Twee", "format": "ebook",
+         "publisher": "keuken pers, utrecht"},
+        {"ppn": "3", "title": "Drie", "format": "ebook",
+         "publisher": "Keuken Pers, Utrecht"},
+        {"ppn": "4", "title": "Vier", "format": "ebook", "publisher": "Kookboeken BV"}])
+    db.build_genre_taxonomy(conn)
+    conn.close()
+
+    ro = queries.connect_ro(path)
+    assert queries.suggest(ro, "keuken")["publishers"] == ["Keuken Pers, Utrecht"]
+    # and that one row is the spelling the publisher page itself puts in its heading
+    assert queries.publisher_page(ro, "keuken-pers-utrecht")["name"] == \
+        "Keuken Pers, Utrecht"
+    ro.close()

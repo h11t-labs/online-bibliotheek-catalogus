@@ -27,7 +27,10 @@
 {% block body %}
 <main>
   <div class="pagehead">
-    <div class="crumb"><a href="/">‹ Terug naar zoeken</a> · <a href="/genres">Alle genres</a>{% if parent %} · <a href="/genre/{{ parent.slug }}">{{ parent.name }}</a>{% endif %}</div>
+    {# The hub link follows the page. It was hard-coded to "Alle genres", which a
+       publisher page has nothing to do with — and which /e-books and
+       /luisterboeken have never had anything to do with either. #}
+    <div class="crumb"><a href="/">‹ Terug naar zoeken</a>{% if crumb %} · <a href="{{ crumb[1] }}">Alle {{ crumb[0]|lower }}</a>{% endif %}{% if parent %} · <a href="/genre/{{ parent.slug }}">{{ parent.name }}</a>{% endif %}</div>
     <h1>{{ heading }}</h1>
     <div class="sub">{{ total|nlnum }} {{ 'titel' if total == 1 else 'titels' }}
       · <a class="flink" style="text-decoration:underline dotted" rel="nofollow" href="{{ search_url }}">filter in zoeken ›</a></div>

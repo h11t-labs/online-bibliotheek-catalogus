@@ -337,6 +337,12 @@ async def _headers_and_canonical_host(request: Request, call_next):
     if not moved and path != "/" and path.endswith("/") \
             and not path.startswith(_NO_REDIRECT):
         moved = path.rstrip("/")
+    # A Location starting with "//" is scheme-relative: the browser reads
+    # "//evil.example" as a host, not a path, and this middleware would hand any
+    # crafted `//evil.example/` an open redirect off our own domain. Collapsing
+    # the leading slashes keeps every target origin-relative by construction.
+    if moved.startswith("//"):
+        moved = "/" + moved.lstrip("/")
     suffix = f"?{_renamed_query(query) if moved else query}" if query else ""
     if (_is_alias(request.headers.get("host", ""))
             and not path.startswith(_NO_REDIRECT)):
@@ -576,7 +582,7 @@ def _browse_page(request: Request, conn: sqlite3.Connection, *, heading: str,
         "total": result.total, "summary": summary, "search_url": search_url,
         "shown": len(result.rows),
         "lists_map": queries.lists_map(conn, result.rows),
-        "parent": parent, "children": children or [],
+        "parent": parent, "children": children or [], "crumb": crumb,
         "breadcrumbs": seo.breadcrumbs(
             request, *([crumb] if crumb else []),
             *([(parent["name"], f"/genre/{parent['slug']}")] if parent else []),

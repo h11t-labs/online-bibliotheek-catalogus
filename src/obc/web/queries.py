@@ -313,9 +313,14 @@ def suggest(conn: sqlite3.Connection, q: str, limit: int = 7) -> dict | None:
     authors = [r["name"] for r in conn.execute(
         "SELECT name FROM authors WHERE name_fold LIKE ? "
         "ORDER BY n_works DESC LIMIT 5", (like,))]
+    # Grouped by fold, because that is what a publisher page is: five spellings of
+    # "De Crime Compagnie, Laren NH" are one destination, and offering all five
+    # would fill the dropdown with rows that go to the same URL. SQLite hands the
+    # bare `name` from the max(n) row, so the label is the most-used spelling —
+    # the same one publisher_page() puts in the heading.
     publishers = [r["name"] for r in conn.execute(
-        "SELECT name FROM publishers WHERE name_fold LIKE ? "
-        "ORDER BY n DESC LIMIT 4", (like,))]
+        "SELECT name, max(n) AS n FROM publishers WHERE name_fold LIKE ? "
+        "GROUP BY name_fold ORDER BY n DESC LIMIT 4", (like,))]
     genres = [r["name"] for r in conn.execute(
         "SELECT name FROM genres WHERE fold(name) LIKE ? "
         "ORDER BY n_works DESC LIMIT 4", (like,))]
