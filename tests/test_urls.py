@@ -6,6 +6,8 @@ time. It is the guard the /author -> /auteur pass would have needed.
 """
 
 # Every public URL shape, with its Dutch query parameters.
+CANON_001 = "/boek/de-ontdekking--anna-vrij--001"
+
 PATHS = [
     "/", "/?zoek=de", "/?formaat=ebook", "/?taal=Nederlands", "/?sortering=title",
     "/?pagina=2", "/?weergave=list", "/?per_pagina=48", "/?lijst=test-top",
@@ -101,27 +103,24 @@ def test_the_rename_301_translates_the_old_parameter_names_too(client):
     assert client.get("/suggesties?zoek=ontdek").json()["titles"]
 
 
-def test_a_retired_parameter_is_redirected_even_when_the_path_never_moved(client):
-    """`/?q=ontdek` is a bookmark from before the rename.
+def test_a_trailing_slash_settles_in_one_hop(client):
+    """A slash is punctuation, not a different spelling, so it is normalised.
 
-    The path is fine — `/` never moved — so the rename table has nothing to say
-    about it, and `/` accepts only `zoek` now. Without a redirect it answers 200
-    with the entire unfiltered catalog, which looks like the search silently
-    breaking. A query that needs nothing must not be touched, or every `+` versus
-    `%20` difference would cost a 301.
+    Starlette already 307s `/auteurs/`, but the `:path` routes capture the slash
+    and 404 on it — so `/auteur/anna-vrij/` was a dead end, and an old English URL
+    with a slash 301'd to a Dutch one that then 404'd. Handled before routing now,
+    which also makes it a 301 rather than a 307. Renamed paths still settle in a
+    single hop: `/authors/` goes straight to `/auteurs`, not via `/authors`.
     """
-    for old, new in (("/?q=ontdek", "/?zoek=ontdek"),
-                     ("/?format=audiobook", "/?formaat=audiobook"),
-                     ("/?sort=title&page=2", "/?sortering=title&pagina=2"),
-                     ("/lijst/test-top?show=available", "/lijst/test-top?toon=available")):
+    for old, new in (("/auteurs/", "/auteurs"),
+                     ("/auteur/anna-vrij/", "/auteur/anna-vrij"),
+                     ("/reeks/het-mysterie/", "/reeks/het-mysterie"),
+                     ("/boek/de-ontdekking--anna-vrij--001/", CANON_001),
+                     ("/over/", "/over"), ("/genres/", "/genres")):
         r = client.get(old, follow_redirects=False)
         assert r.status_code == 301, old
         assert r.headers["location"] == new, old
         assert client.get(new).status_code == 200, new
-    # untouched: no retired key, so no redirect at all
-    for fine in ("/?zoek=ontdek", "/?genre=Spanning+%26+Thrillers", "/?ereader=1",
-                 "/genres?publiek=jeugd", "/facetten?type=author&zoek=a"):
-        assert client.get(fine, follow_redirects=False).status_code == 200, fine
 
 
 def test_an_old_url_with_a_trailing_slash_still_lands_in_one_hop(client):

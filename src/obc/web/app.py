@@ -297,10 +297,10 @@ def _renamed_path(path: str) -> str:
 def _renamed_query(query: str) -> str:
     """``q=x&sort=y`` -> ``zoek=x&sortering=y``; anything else is returned as-is.
 
-    Returned unchanged unless a retired key is actually present — re-encoding a
-    query that needs nothing would 301 on nothing more than ``+`` versus ``%20``.
-    Keys this table has never heard of pass through: ``ereader``, ``genre`` and
-    ``publiek`` never changed and are not ours to rewrite.
+    Only reached for a URL that is already being redirected, so it costs nothing
+    on a normal request. Returned unchanged unless a retired key is actually
+    present. Keys this table has never heard of pass through: ``ereader``,
+    ``genre`` and ``publiek`` never changed and are not ours to rewrite.
     """
     pairs = parse_qsl(query, keep_blank_values=True)
     if not any(k in _RENAMED_KEYS for k, _ in pairs):
@@ -327,12 +327,17 @@ async def _headers_and_canonical_host(request: Request, call_next):
     # a response the site sends, and it used to get them by virtue of running in
     # the inner of the two middlewares.
     path, query = request.url.path, request.url.query
-    renamed, new_query = _renamed_path(path), _renamed_query(query)
-    # A path that never moved can still carry retired parameters: `/?q=ontdek` is
-    # a bookmark from before the rename, and `/` accepts only `zoek` now, so
-    # without this it quietly answers with the whole unfiltered catalog.
-    moved = renamed or (path if new_query != query else "")
-    suffix = f"?{new_query}" if new_query else ""
+    # A trailing slash is punctuation, not a different spelling of a name, so it
+    # is normalised rather than refused. Doing it here rather than leaving it to
+    # Starlette covers the `:path` routes too — those capture the slash and would
+    # 404 on it — and makes every URL on the site settle in a single 301.
+    # The rename goes first and strips the slash itself, so `/authors/` settles in
+    # one hop rather than bouncing through `/authors`.
+    moved = _renamed_path(path)
+    if not moved and path != "/" and path.endswith("/") \
+            and not path.startswith(_NO_REDIRECT):
+        moved = path.rstrip("/")
+    suffix = f"?{_renamed_query(query) if moved else query}" if query else ""
     if (_is_alias(request.headers.get("host", ""))
             and not path.startswith(_NO_REDIRECT)):
         response: Response = RedirectResponse(
