@@ -5,6 +5,22 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v2.0.2...v3.0.0) (2026-08-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **web:** Dutch URLs, and one redirect layer instead of six ([#46](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/46))
+
+### Features
+
+* **web:** Dutch URLs, and one redirect layer instead of six ([#46](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/46)) ([306a3c8](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/306a3c87ec173f875ef3c018a7475a0185c7eb89))
+
+
+### Bug Fixes
+
+* **scrape:** enumerate the years before 1900 ([#45](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/45)) ([5392df7](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/5392df7d37e343ece0dbf059f4124faaa5756b57))
+
 ## [2.0.2](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v2.0.1...v2.0.2) (2026-07-30)
 
 
