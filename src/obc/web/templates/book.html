@@ -258,8 +258,13 @@
           {{ r('Omvang', e['size']) }}
           {{ r('Bestandstype', e['features']) }}
           {% if not audio and e['ereader'] is not none %}{{ r('Voor e-reader', 'Ja' if e['ereader'] else 'Nee (alleen in de app)') }}{% endif %}
-          {# only what this edition says differently from the book as a whole #}
-          {% if e['publisher'] and e['publisher'] != b['publisher'] %}{{ rpub('Uitgever', e['publisher']) }}{% endif %}
+          {# Only what this edition says differently from the book as a whole. The
+             publisher here is stated, never linked: publisher pages are built from
+             `works.publisher`, which is the representative edition's, so an
+             edition-only publisher either has no page at all (38 of them) or has
+             one that does not list this book (5.838). A link that lands somewhere
+             the reader's book isn't is worse than plain text. #}
+          {% if e['publisher'] and e['publisher'] != b['publisher'] %}{{ r('Uitgever', e['publisher']) }}{% endif %}
           {% if e['year'] and e['year'] != b['year'] %}{{ r('Verschenen', e['year']) }}{% endif %}
         </div>
         {# no button for the lead edition of a format: the CTA under the cover is

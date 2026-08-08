@@ -255,14 +255,18 @@ def test_everything_that_ranks_publishers_merges_them_the_way_the_page_does():
         "Gesplitst, Amsterdam"
 
 
-def test_an_edition_row_links_the_publisher_page_too(client, monkeypatch):
-    """The book page carries *two* Uitgever rows, and only one had been renamed.
+def test_an_edition_only_publisher_is_stated_not_linked(client, monkeypatch):
+    """The book page carries *two* Uitgever rows, and neither may point at a filter.
 
-    An edition that names a different publisher from the work gets its own row in
-    its own block, and that one still pointed at `/?publisher=` — the English
-    parameter the search route stopped accepting, so it opened the unfiltered
-    catalog. The fixture has no edition that disagrees with its work, which is
-    exactly why a walk over the real catalog found it and this suite did not.
+    The work's row links its publisher page. The edition's row — shown when an
+    edition names a different publisher — links nothing at all: publisher pages
+    are built from `works.publisher`, the representative edition's, so on the live
+    catalog 38 edition-only publishers have no page and 5.838 have one that does
+    not list this book. It used to point at `/?publisher=`, the English parameter
+    the search route stopped accepting, so it opened the unfiltered catalog.
+
+    The fixture has no edition that disagrees with its work, which is why a walk
+    over the real catalog found this and the suite did not.
     """
     from obc.web import app as appmod
 
@@ -276,6 +280,8 @@ def test_an_edition_row_links_the_publisher_page_too(client, monkeypatch):
 
     monkeypatch.setattr(appmod.queries, "book_detail", with_a_differing_edition)
     body = client.get(CANON_001).text
-    assert 'href="/uitgever/luistereffect-prinsenbeek"' in body
+    assert "LuisterEffect, Prinsenbeek" in body            # still stated
+    assert "/uitgever/luistereffect-prinsenbeek" not in body   # but not linked
+    assert 'href="/uitgever/querido-amsterdam"' in body    # the work's still is
     for key in RETIRED_KEYS:
         assert f"?{key}=" not in body, key
