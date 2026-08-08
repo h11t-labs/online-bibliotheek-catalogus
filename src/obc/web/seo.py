@@ -60,6 +60,16 @@ def genre_path(name: str) -> str:
     return f"/genre/{slugify(name) or quote(name, safe='')}"
 
 
+def publisher_path(name: str) -> str:
+    """Canonical URL path for a publisher: ``/uitgever/de-bezige-bij-amsterdam``.
+
+    Every publisher in the catalog has a slug (they all carry Latin characters),
+    but the fallback stays for symmetry with the helpers above — a name that
+    folds to nothing would otherwise build ``/uitgever/``.
+    """
+    return f"/uitgever/{slugify(name) or quote(name, safe='')}"
+
+
 def book_href(slug: str | None, work_id: str) -> str:
     """``/boek/de-ontdekking--anna-vrij--001`` — the one canonical URL per book.
 
@@ -203,6 +213,8 @@ def sitemap_browse(request: Request,
         queries.series_index(conn), key=lambda r: r["slug"])
         if r["titles"] >= queries.MIN_INDEXABLE_TITLES]
     paths += [f"/genre/{r['slug']}" for r in queries.genre_pages(conn)
+              if r["titles"] >= queries.MIN_INDEXABLE_TITLES]
+    paths += [f"/uitgever/{r['slug']}" for r in queries.publisher_pages(conn)
               if r["titles"] >= queries.MIN_INDEXABLE_TITLES]
     return _sitemap(origin(request), paths)
 

@@ -533,6 +533,45 @@ def author_index(conn: sqlite3.Connection,
 
 
 # --------------------------------------------------------------------------- #
+# publisher pages
+# --------------------------------------------------------------------------- #
+def publisher_page(conn: sqlite3.Connection, slug: str) -> dict | None:
+    """One publisher page: display name, every spelling of it, and its title count.
+
+    No new column and no new table: ``publishers`` already stores ``name_fold``
+    under an index, and a slug round-trips into a fold by swapping dashes for
+    spaces — the same lookup the author pages do.
+
+    A publisher reaches the catalog under more than one spelling ("Ambo|Anthos
+    Uitgevers, Amsterdam" and "Ambo|Anthos uitgevers, Amsterdam"; five variants of
+    "De Crime Compagnie, Laren NH"), and those all fold together. The page filters
+    on every one of them, or its heading would promise more titles than it shows.
+    The display name is the spelling the catalog actually uses most — ties go to
+    the longest, which is the fuller form rather than a truncation.
+    """
+    rows = conn.execute(
+        "SELECT name, n FROM publishers WHERE name_fold = ?",
+        (slug.replace("-", " "),)).fetchall()
+    if not rows:
+        return None
+    best = max(rows, key=lambda r: (r["n"], len(r["name"])))
+    return {"name": best["name"], "titles": sum(r["n"] for r in rows),
+            "spellings": tuple(r["name"] for r in rows)}
+
+
+def publisher_pages(conn: sqlite3.Connection) -> list[dict]:
+    """Every publisher page, folded spellings already merged — for the sitemap.
+
+    Grouped in SQL on the indexed ``name_fold`` so the read path stays a scan of
+    one small table rather than 1.5k per-publisher lookups.
+    """
+    return [{"slug": r["name_fold"].replace(" ", "-"), "titles": r["titles"]}
+            for r in conn.execute(
+                "SELECT name_fold, SUM(n) AS titles FROM publishers "
+                "WHERE name_fold != '' GROUP BY name_fold ORDER BY name_fold")]
+
+
+# --------------------------------------------------------------------------- #
 # genre pages (taxonomy built by obc.db.build_genre_taxonomy)
 # --------------------------------------------------------------------------- #
 def genre_page(conn: sqlite3.Connection, slug: str) -> sqlite3.Row | None:

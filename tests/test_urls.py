@@ -13,6 +13,7 @@ PATHS = [
     "/boek/de-ontdekking--anna-vrij--001",
     "/auteurs", "/auteurs/w", "/auteur/anna-vrij", "/reeks/het-mysterie",
     "/genres", "/genres?publiek=jeugd", "/genre/spanning-thrillers",
+    "/uitgever/querido-amsterdam",
     "/lijsten", "/lijsten?sortering=total", "/lijst/test-top",
     "/lijst/test-top?toon=available", "/over", "/statistieken",
     "/e-books", "/luisterboeken",

@@ -163,6 +163,7 @@ _templates.env.filters["nldate"] = _nldate
 _templates.env.filters["author_path"] = seo.author_path
 _templates.env.filters["series_path"] = seo.series_path
 _templates.env.filters["genre_path"] = seo.genre_path
+_templates.env.filters["publisher_path"] = seo.publisher_path
 _templates.env.filters["nlnum"] = _nlnum
 _templates.env.filters["dur_short"] = _dur_short
 _templates.env.globals["url_with"] = _url_with
@@ -206,7 +207,7 @@ app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan
 # The rename 301s below are in here too: a redirect is cacheable, and these are the
 # ones a crawler will keep re-fetching until it has moved its index over.
 _CACHE_PREFIXES = ("/boek/", "/auteur", "/reeks/", "/lijst", "/statistieken",
-                   "/over", "/genre", "/e-books", "/luisterboeken",
+                   "/over", "/genre", "/uitgever/", "/e-books", "/luisterboeken",
                    "/author", "/series/", "/list", "/about", "/stats")
 
 
@@ -386,6 +387,9 @@ _NOT_FOUND_COPY = {
     "genre": ("Genre niet gevonden",
               "Dit genre staat niet in de catalogus — kijk in het overzicht welke er "
               "wel zijn."),
+    "publisher": ("Uitgever niet gevonden",
+                  "Deze uitgever staat niet in de catalogus — of de naam wordt net "
+                  "iets anders geschreven."),
     "series": ("Reeks niet gevonden",
                "Deze reeks staat niet in de catalogus, of de delen staan er onder een "
                "andere reeksnaam."),
@@ -439,6 +443,8 @@ def _near_matches(term: str, limit: int = 6, titles: bool = True) -> list[dict]:
            for name in data["authors"]]
     out += [{"kind": "list", "icon": "list", "label": lst["name"],
              "url": f"/lijst/{lst['slug']}"} for lst in data["lists"]]
+    out += [{"kind": "publisher", "icon": "publisher", "label": name,
+             "url": seo.publisher_path(name)} for name in data["publishers"]]
     # A genre does have a page of its own now, so the 404 page's near matches send
     # you there instead of into the robots-disallowed ?genre= space — unless the
     # name folds to no slug, which build_genre_taxonomy skips, so there is no page
@@ -764,6 +770,29 @@ def genre_page(request: Request, slug: str,
         parent=({"name": parent["name"], "slug": entry["parent_slug"]} if parent else None),
         children=[{"name": c["name"], "slug": c["slug"], "titles": c["titles"]}
                   for c in queries.genre_children(conn, slugify(slug))])
+
+
+@app.get("/uitgever/{slug}", response_class=HTMLResponse)
+def publisher_page(request: Request, slug: str,
+                   conn: sqlite3.Connection = Depends(get_conn)):
+    """One publisher's catalog.
+
+    "Uitgever" on a book page used to point at ``/?uitgever=…`` — a filtered
+    search that is noindex and robots-disallowed, so the 1.5k publishers in the
+    catalog had no page a reader could link to or a crawler could keep. Same shape
+    as the genre pages: one URL per publisher, every folded spelling of the name
+    filtered onto it.
+    """
+    entry = queries.publisher_page(conn, slugify(slug))
+    if entry is None or slug != slugify(slug):   # one spelling, the rest is a miss
+        return _not_found(request, "publisher", _slug_words(slug))
+    name = entry["name"]
+    return _browse_page(
+        request, conn, heading=name,
+        lead=f"Alle e-books en luisterboeken van uitgever {name} in de collectie "
+             f"van de online Bibliotheek.",
+        filters=queries.SearchFilters(publishers=entry["spellings"], sort="year_desc"),
+        search_url=f"/?uitgever={quote(name, safe='')}")
 
 
 # The format landing pages, back and honest this time. They were removed in #27

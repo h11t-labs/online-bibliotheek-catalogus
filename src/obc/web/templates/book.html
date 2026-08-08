@@ -218,13 +218,16 @@
 
       <div class="meta">
         {% macro r(label, val) %}{% if val %}<div class="r"><div class="k">{{ label }}</div><div class="v">{{ val }}</div></div>{% endif %}{% endmacro %}
-        {# Language and publisher have no page of their own, only a filtered search.
-           rel=nofollow so a crawler doesn't queue tens of thousands of ?-URLs it is
-           then told to skip — the reader still gets the filter. #}
+        {# A language has no page of its own, only a filtered search: rel=nofollow so
+           a crawler doesn't queue ?-URLs it is then told to skip. The reader still
+           gets the filter. A publisher does have a page, so it links there. #}
         {% macro rlink(label, val, param) %}{% if val %}<div class="r"><div class="k">{{ label }}</div><div class="v"><a class="flink" rel="nofollow" href="/?{{ param }}={{ val|urlencode }}">{{ val }}</a></div></div>{% endif %}{% endmacro %}
+        {# The filter runs inside the guard, not in the argument: a book with no
+           publisher would otherwise build a path out of None. #}
+        {% macro rpub(label, val) %}{% if val %}<div class="r"><div class="k">{{ label }}</div><div class="v"><a class="flink" href="{{ val|publisher_path }}">{{ val }}</a></div></div>{% endif %}{% endmacro %}
         {{ rlink('Taal', b['language'], 'taal') }}
         {{ r('Verschenen', b['year']) }}
-        {{ rlink('Uitgever', b['publisher'], 'uitgever') }}
+        {{ rpub('Uitgever', b['publisher']) }}
         {{ r('Doelgroep', b['audience']) }}
         {{ r('Leeftijd', b['age']) }}
         {{ r('Trefwoorden', b['keywords']) }}

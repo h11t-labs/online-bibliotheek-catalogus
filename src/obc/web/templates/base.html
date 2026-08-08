@@ -590,10 +590,13 @@
     // page. A genre with no slug has no page at all, so it falls back to the filter.
     const authorPath=n=>'/auteur/'+(slugOf(n)||encodeURIComponent(n));
     const genreHref=n=>slugOf(n)?'/genre/'+slugOf(n):'/?genre='+encodeURIComponent(n);
+    // Every publisher in the catalog carries Latin characters, so slugOf never
+    // comes back empty here — the filter fallback is belt and braces.
+    const publisherHref=n=>slugOf(n)?'/uitgever/'+slugOf(n):'/?uitgever='+encodeURIComponent(n);
     function go(it){
       if(it.kind==='title') location.href=it.url;
       else if(it.kind==='author') location.href=authorPath(it.value);
-      else if(it.kind==='publisher') location.href='/?uitgever='+encodeURIComponent(it.value);
+      else if(it.kind==='publisher') location.href=publisherHref(it.value);
       else if(it.kind==='genre') location.href=genreHref(it.value);
       else if(it.kind==='language') location.href='/?taal='+encodeURIComponent(it.value);
       else if(it.kind==='list') location.href='/lijst/'+encodeURIComponent(it.value);

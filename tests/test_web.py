@@ -340,6 +340,62 @@ def test_browse_pages_carry_more_than_a_wall_of_covers(client):
 
 
 
+def test_publisher_pages(client):
+    """"Uitgever" on a book page went to ?uitgever= — noindex and robots-disallowed,
+    so the 1.5k publishers in the catalog had no page to link to. Now they do, and
+    the book page links it directly instead of pointing at a filtered search."""
+    book = client.get(CANON_001).text
+    assert 'href="/uitgever/querido-amsterdam"' in book
+    assert 'href="/?uitgever=' not in book
+
+    page = client.get("/uitgever/querido-amsterdam")
+    assert page.status_code == 200
+    assert "<h1>Querido, Amsterdam</h1>" in page.text
+    assert CANON_001 in page.text                          # 001 is the Querido title
+    assert "/boek/koken-met-liefde--dirk-kok--005" not in page.text   # Keuken Pers
+    # one spelling per publisher, as everywhere else — no second URL for this page
+    assert client.get("/uitgever/Querido-Amsterdam").status_code == 404
+    assert client.get("/uitgever/bestaat-niet").status_code == 404
+    # and it is nominated to search engines on the same terms as the other
+    # aggregation pages: two titles or more, or it is a weaker copy of one book
+    browse = client.get("/sitemap-browse.xml").text
+    assert "/uitgever/spanning-bv<" in browse               # 003 + 004
+    assert "/uitgever/querido-amsterdam<" not in browse      # one work only
+
+
+def test_publisher_page_merges_the_spellings_that_fold_together():
+    """One publisher reaches the catalog under several spellings.
+
+    The live catalog holds "Ambo|Anthos Uitgevers, Amsterdam" twice (capital and
+    lowercase "uitgevers") and five variants of "De Crime Compagnie, Laren NH".
+    They fold to one slug, so the page has to filter on every spelling or it shows
+    fewer titles than its own heading claims. The fixture catalog spells each
+    publisher one way, so the merge is exercised here directly.
+    """
+    import sqlite3
+
+    from obc.web import queries
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE publishers (name TEXT, name_fold TEXT, n INTEGER)")
+    conn.executemany("INSERT INTO publishers VALUES (?, ?, ?)", [
+        ("Ambo|Anthos uitgevers, Amsterdam", "ambo anthos uitgevers amsterdam", 3),
+        ("Ambo|Anthos Uitgevers, Amsterdam", "ambo anthos uitgevers amsterdam", 9),
+        ("Losse Uitgever", "losse uitgever", 1)])
+
+    entry = queries.publisher_page(conn, "ambo-anthos-uitgevers-amsterdam")
+    assert entry["name"] == "Ambo|Anthos Uitgevers, Amsterdam"   # the one most used
+    assert entry["titles"] == 12                                 # every variant counted
+    assert set(entry["spellings"]) == {"Ambo|Anthos uitgevers, Amsterdam",
+                                       "Ambo|Anthos Uitgevers, Amsterdam"}
+    assert queries.publisher_page(conn, "bestaat-niet") is None
+    # the sitemap sees one page per fold, not one per spelling
+    pages = queries.publisher_pages(conn)
+    assert [p["slug"] for p in pages] == ["ambo-anthos-uitgevers-amsterdam",
+                                          "losse-uitgever"]
+    assert pages[0]["titles"] == 12
+
+
 def test_authors_hub(client):
     hub = client.get("/auteurs")
     assert hub.status_code == 200
