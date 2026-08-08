@@ -222,9 +222,9 @@
            rel=nofollow so a crawler doesn't queue tens of thousands of ?-URLs it is
            then told to skip — the reader still gets the filter. #}
         {% macro rlink(label, val, param) %}{% if val %}<div class="r"><div class="k">{{ label }}</div><div class="v"><a class="flink" rel="nofollow" href="/?{{ param }}={{ val|urlencode }}">{{ val }}</a></div></div>{% endif %}{% endmacro %}
-        {{ rlink('Taal', b['language'], 'language') }}
+        {{ rlink('Taal', b['language'], 'taal') }}
         {{ r('Verschenen', b['year']) }}
-        {{ rlink('Uitgever', b['publisher'], 'publisher') }}
+        {{ rlink('Uitgever', b['publisher'], 'uitgever') }}
         {{ r('Doelgroep', b['audience']) }}
         {{ r('Leeftijd', b['age']) }}
         {{ r('Trefwoorden', b['keywords']) }}

@@ -381,7 +381,7 @@ def test_per_page_and_toolbar(client):
     assert 'rail-toggle' in body                            # collapsible filter block header
     assert 'IntersectionObserver' in body                   # infinite-scroll enhancement
     assert 'nav-toggle' in body                             # mobile header hamburger
-    assert 'name="per_page"' in body                        # carried on the filter form
+    assert 'name="per_pagina"' in body                      # carried on the filter form
     assert client.get("/?per_pagina=48").status_code == 200    # a valid option
     assert client.get("/?per_pagina=999").status_code == 200   # invalid -> clamped, no error
 

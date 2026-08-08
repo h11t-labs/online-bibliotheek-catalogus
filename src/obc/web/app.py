@@ -24,7 +24,7 @@ import re
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import quote, unquote, urlencode
+from urllib.parse import parse_qsl, quote, unquote, urlencode
 
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
@@ -258,12 +258,35 @@ _RENAMED = (("/authors", "/auteurs"), ("/author", "/auteur"),
             ("/suggest", "/suggesties"), ("/facet", "/facetten"))
 
 
+# The parameters renamed alongside the paths. An old URL carries old keys, and a
+# 301 that drops them lands the visitor on an unfiltered page — which reads as the
+# redirect being broken. Translated on the way out, once.
+_RENAMED_KEYS = {"q": "zoek", "format": "formaat", "language": "taal",
+                 "publisher": "uitgever", "author": "auteur", "list": "lijst",
+                 "year_from": "jaar_van", "year_to": "jaar_tot",
+                 "sort": "sortering", "view": "weergave", "page": "pagina",
+                 "per_page": "per_pagina", "show": "toon"}
+
+
 def _renamed_path(path: str) -> str:
     """The Dutch path for an old English one, or "" when it was never renamed."""
     for old, new in _RENAMED:
         if path == old or path.startswith(old + "/"):
             return new + path[len(old):]
     return ""
+
+
+def _renamed_query(query: str) -> str:
+    """``?q=x&sort=y`` -> ``?zoek=x&sortering=y``; "" stays "".
+
+    Unknown keys pass through untouched: ``ereader``, ``genre`` and ``publiek``
+    never changed, and a key this table has never heard of is not ours to rewrite.
+    """
+    if not query:
+        return ""
+    pairs = [(_RENAMED_KEYS.get(k, k), v)
+             for k, v in parse_qsl(query, keep_blank_values=True)]
+    return "?" + urlencode(pairs)
 
 
 def _is_alias(host: str) -> bool:
@@ -289,10 +312,13 @@ async def _headers_and_canonical_host(request: Request, call_next):
     if (_is_alias(request.headers.get("host", ""))
             and not request.url.path.startswith(_NO_REDIRECT)):
         response: Response = RedirectResponse(
-            seo.SITE_URL + (renamed or request.url.path) + query, status_code=301)
+            seo.SITE_URL + (renamed or request.url.path)
+            + (_renamed_query(request.url.query) if renamed else query),
+            status_code=301)
     elif renamed:
         # One hop, so an alias host on an old path doesn't cost two.
-        response = RedirectResponse(renamed + query, status_code=301)
+        response = RedirectResponse(
+            renamed + _renamed_query(request.url.query), status_code=301)
     else:
         response = await call_next(request)
     # Security headers on every response (cheap, no per-user state).
@@ -750,7 +776,7 @@ def ebooks_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         request, conn, heading="E-books",
         lead="Alle e-books uit de collectie van de online Bibliotheek.",
         filters=queries.SearchFilters(format="ebook", sort="year_desc"),
-        search_url="/?format=ebook", crumb=None)
+        search_url="/?formaat=ebook", crumb=None)
 
 
 @app.get("/luisterboeken", response_class=HTMLResponse)
@@ -759,7 +785,7 @@ def audiobooks_page(request: Request, conn: sqlite3.Connection = Depends(get_con
         request, conn, heading="Luisterboeken",
         lead="Alle luisterboeken uit de collectie van de online Bibliotheek.",
         filters=queries.SearchFilters(format="audiobook", sort="year_desc"),
-        search_url="/?format=audiobook", crumb=None)
+        search_url="/?formaat=audiobook", crumb=None)
 
 
 @app.get("/auteurs", response_class=HTMLResponse)

@@ -54,3 +54,47 @@ def test_nothing_the_site_renders_points_at_a_redirect_or_a_404(client):
                 bad.append((path, href, code))
     assert bad == [], bad
     assert len(seen) > 40, f"only walked {len(seen)} links — did the crawl break?"
+
+
+# Every parameter name the routes stopped accepting. FastAPI ignores an unknown
+# key silently, so a page emitting one of these still answers 200 — it just does
+# nothing the reader asked for. That is invisible to a status-code walk.
+RETIRED_KEYS = ("q", "format", "language", "publisher", "author", "list",
+                "year_from", "year_to", "sort", "view", "page", "per_page", "show")
+
+
+def test_no_page_emits_a_parameter_the_routes_no_longer_accept(client):
+    """The filter form submitted `format`, `sort`, `language`, … after the rename.
+
+    Nothing 404s and no link is broken: Apply just silently dropped most of what
+    was ticked. The href walk above cannot see that, so this reads the retired
+    names straight out of the rendered HTML — query keys and form fields both.
+    """
+    bad = []
+    for path in PATHS:
+        r = client.get(path)
+        if "html" not in r.headers.get("content-type", ""):
+            continue
+        for key in RETIRED_KEYS:
+            for pattern in (f"?{key}=", f"&{key}=", f'name="{key}"'):
+                if pattern in r.text:
+                    bad.append((path, pattern))
+    assert bad == [], bad
+
+
+def test_the_rename_301_translates_the_old_parameter_names_too(client):
+    """A 301 that keeps `?q=` lands you on a page that ignores it.
+
+    The parameters were renamed in the same pass as the paths, so an old URL
+    carries old keys — dropping them turns the redirect into a page that quietly
+    answers the wrong question. Keys that never changed pass through untouched.
+    """
+    cases = (("/list/test-top?show=available", "/lijst/test-top?toon=available"),
+             ("/authors/w?sort=voornaam", "/auteurs/w?sortering=voornaam"),
+             ("/suggest?q=ontdek", "/suggesties?zoek=ontdek"),
+             ("/about?ereader=1", "/over?ereader=1"))
+    for old, new in cases:
+        r = client.get(old, follow_redirects=False)
+        assert r.status_code == 301, old
+        assert r.headers["location"] == new, old
+    assert client.get("/suggesties?zoek=ontdek").json()["titles"]
