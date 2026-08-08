@@ -253,3 +253,29 @@ def test_everything_that_ranks_publishers_merges_them_the_way_the_page_does():
     # the label is the spelling the publisher page itself would show
     assert queries.publisher_page(conn, "gesplitst-amsterdam")["name"] == \
         "Gesplitst, Amsterdam"
+
+
+def test_an_edition_row_links_the_publisher_page_too(client, monkeypatch):
+    """The book page carries *two* Uitgever rows, and only one had been renamed.
+
+    An edition that names a different publisher from the work gets its own row in
+    its own block, and that one still pointed at `/?publisher=` — the English
+    parameter the search route stopped accepting, so it opened the unfiltered
+    catalog. The fixture has no edition that disagrees with its work, which is
+    exactly why a walk over the real catalog found it and this suite did not.
+    """
+    from obc.web import app as appmod
+
+    real = appmod.queries.book_detail
+
+    def with_a_differing_edition(conn, ppn):
+        detail = real(conn, ppn)
+        editions = [dict(e) for e in detail["editions"]]
+        editions[-1]["publisher"] = "LuisterEffect, Prinsenbeek"
+        return {**detail, "editions": editions}
+
+    monkeypatch.setattr(appmod.queries, "book_detail", with_a_differing_edition)
+    body = client.get(CANON_001).text
+    assert 'href="/uitgever/luistereffect-prinsenbeek"' in body
+    for key in RETIRED_KEYS:
+        assert f"?{key}=" not in body, key

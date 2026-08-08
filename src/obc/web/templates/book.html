@@ -259,7 +259,7 @@
           {{ r('Bestandstype', e['features']) }}
           {% if not audio and e['ereader'] is not none %}{{ r('Voor e-reader', 'Ja' if e['ereader'] else 'Nee (alleen in de app)') }}{% endif %}
           {# only what this edition says differently from the book as a whole #}
-          {% if e['publisher'] and e['publisher'] != b['publisher'] %}{{ rlink('Uitgever', e['publisher'], 'publisher') }}{% endif %}
+          {% if e['publisher'] and e['publisher'] != b['publisher'] %}{{ rpub('Uitgever', e['publisher']) }}{% endif %}
           {% if e['year'] and e['year'] != b['year'] %}{{ r('Verschenen', e['year']) }}{% endif %}
         </div>
         {# no button for the lead edition of a format: the CTA under the cover is
