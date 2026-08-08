@@ -586,13 +586,15 @@
     // for an encoded name. Names that hold no a-z0-9 keep their encoded form.
     const slugOf=n=>n.normalize('NFKD').replace(/[\u0300-\u036f]/g,'')
       .toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
-    const slugPath=(prefix,n)=>prefix+(slugOf(n)||encodeURIComponent(n));
-    const authorPath=n=>slugPath('/author/',n);
+    // An author with no slug stays on the encoded URL — that route still serves the
+    // page. A genre with no slug has no page at all, so it falls back to the filter.
+    const authorPath=n=>'/author/'+(slugOf(n)||encodeURIComponent(n));
+    const genreHref=n=>slugOf(n)?'/genre/'+slugOf(n):'/?genre='+encodeURIComponent(n);
     function go(it){
       if(it.kind==='title') location.href=it.url;
       else if(it.kind==='author') location.href=authorPath(it.value);
       else if(it.kind==='publisher') location.href='/?publisher='+encodeURIComponent(it.value);
-      else if(it.kind==='genre') location.href=slugPath('/genre/',it.value);
+      else if(it.kind==='genre') location.href=genreHref(it.value);
       else if(it.kind==='language') location.href='/?language='+encodeURIComponent(it.value);
       else if(it.kind==='list') location.href='/list/'+encodeURIComponent(it.value);
     }

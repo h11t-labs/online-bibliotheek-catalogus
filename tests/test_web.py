@@ -531,6 +531,19 @@ def test_404_offers_matching_genres(client, monkeypatch):
     assert "Spanning &amp; Thrillers" in body
 
 
+def test_404_genre_without_a_slug_keeps_the_filter_link(client, monkeypatch):
+    # build_genre_taxonomy skips names that fold to nothing, so /genre/<encoded>
+    # would 404. The filtered search still finds them, so that is where they go.
+    from obc.web import app as appmod
+
+    monkeypatch.setattr(appmod.queries, "suggest", lambda *a, **k: {
+        "title_rows": [], "authors": [], "publishers": [], "languages": [],
+        "lists": [], "genres": ["Θρίλερ"]})
+    body = client.get("/list/thriller").text
+    assert 'href="/genre/' not in body
+    assert 'href="/?genre=%CE%98%CF%81%CE%AF%CE%BB%CE%B5%CF%81"' in body
+
+
 def test_pagination_is_bounded(client):
     """`LIMIT n OFFSET m` walks and discards m rows, so depth costs linearly:
     measured over "de" (51,980 matches) page 1 is 373ms, page 100 657ms and the
