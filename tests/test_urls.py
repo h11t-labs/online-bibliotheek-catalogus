@@ -140,20 +140,42 @@ def test_an_old_url_with_a_trailing_slash_still_lands_in_one_hop(client):
         assert client.get(new).status_code == 200, new
 
 
-def test_a_redirect_can_never_leave_our_own_origin(client):
+def test_a_redirect_can_never_leave_our_own_origin():
     """The trailing-slash rule opened an actual open redirect.
 
     `request.url.path` for `//evil.example/` is `//evil.example/`, and stripping
-    the slash left `//evil.example` — which a browser reads as a *host*, not a
-    path, so the site handed out 301s to anywhere. Every Location this middleware
-    emits has to be origin-relative by construction.
+    the trailing slash left `//evil.example` — which a browser reads as a *host*,
+    not a path. Against the running server that was a real
+    `301 Location: http://evil.example/`.
+
+    Asserted on the guard rather than through TestClient, which normalises some
+    of these shapes away before the app ever sees them — the shapes still reach a
+    real server, so the guard is what has to hold.
     """
-    for hostile in ("//evil.example/", "/%2Fevil.example/", "///evil.example/",
-                    "//evil.example/authors/"):
-        r = client.get(hostile, follow_redirects=False)
-        location = r.headers.get("location", "")
-        assert not location.startswith("//"), (hostile, location)
-        assert not location or location.startswith("/"), (hostile, location)
+    from obc.web.app import _is_own_path
+
+    for hostile in ("//evil.example",              # read as a host outright
+                    "///evil.example",
+                    "/.//evil.example",            # a host once RFC 3986 drops the "."
+                    "/auteurs/..//evil.example",   # ... even after the rename rewrote it
+                    "/\\evil.example",             # browsers fold a backslash to a slash
+                    "/auteurs/\\/evil.example",
+                    "evil.example",                # not rooted at all
+                    "https://evil.example"):
+        assert not _is_own_path(hostile), hostile
+    for ours in ("/auteurs", "/auteur/anna-vrij", "/boek/de-ontdekking--anna-vrij--001",
+                 "/uitgever/querido-amsterdam", "/genre/spanning-thrillers", "/over"):
+        assert _is_own_path(ours), ours
+
+
+def test_the_shapes_that_are_ours_still_move(client):
+    """The guard must not cost the redirects it sits in front of."""
+    for path, target in (("/authors/", "/auteurs"), ("/authors//", "/auteurs"),
+                         ("/auteur/anna-vrij/", "/auteur/anna-vrij"),
+                         ("/boek/de-ontdekking--anna-vrij--001/", CANON_001)):
+        r = client.get(path, follow_redirects=False)
+        assert r.status_code == 301, path
+        assert r.headers["location"] == target, path
 
 
 def test_a_browse_page_links_to_its_own_hub(client):

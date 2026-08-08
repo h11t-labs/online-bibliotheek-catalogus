@@ -308,6 +308,21 @@ def _renamed_query(query: str) -> str:
     return urlencode([(_RENAMED_KEYS.get(k, k), v) for k, v in pairs])
 
 
+def _is_own_path(path: str) -> bool:
+    """Can this go in a ``Location`` without the browser reading it as a *host*?
+
+    A relative Location that resolves to a host is an open redirect, and there is
+    more than one way to write one. ``//evil.example`` is read as a host outright.
+    ``/.//evil.example`` becomes one after RFC 3986 strips the dot segment.
+    ``/\\evil.example`` becomes one in browsers that fold a backslash into a
+    slash. None of those shapes occurs in a real URL of this site — every path we
+    emit is built from slugs — so the rule is to refuse rather than to rewrite,
+    and the request falls through to the 404 page it was always going to get.
+    """
+    return (path.startswith("/") and "//" not in path
+            and "/." not in path and "\\" not in path)
+
+
 def _is_alias(host: str) -> bool:
     """Is ``host`` a known alias of the canonical one (so safe to 301 away)?"""
     host = _hostname(host)
@@ -337,12 +352,8 @@ async def _headers_and_canonical_host(request: Request, call_next):
     if not moved and path != "/" and path.endswith("/") \
             and not path.startswith(_NO_REDIRECT):
         moved = path.rstrip("/")
-    # A Location starting with "//" is scheme-relative: the browser reads
-    # "//evil.example" as a host, not a path, and this middleware would hand any
-    # crafted `//evil.example/` an open redirect off our own domain. Collapsing
-    # the leading slashes keeps every target origin-relative by construction.
-    if moved.startswith("//"):
-        moved = "/" + moved.lstrip("/")
+    if moved and not _is_own_path(moved):
+        moved = ""      # not ours to redirect to — let it fall through to the 404
     suffix = f"?{_renamed_query(query) if moved else query}" if query else ""
     if (_is_alias(request.headers.get("host", ""))
             and not path.startswith(_NO_REDIRECT)):
