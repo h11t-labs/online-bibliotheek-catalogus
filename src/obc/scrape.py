@@ -26,6 +26,7 @@ import json
 import re
 import sys
 from collections.abc import Iterable, Iterator
+from datetime import date
 from pathlib import Path
 
 from . import raw
@@ -68,9 +69,16 @@ LANGS = ["dut", "eng", "fre", "ger", "fry", "spa", "ita", "lat", "gre",
 # the catalog is well inside it and 500 extra empty queries cost ~90s against a
 # Dutch walk of 26 minutes.
 #
+# The ceiling comes off the clock for the same reason the floor moved. It used to
+# be a hardcoded 2027, written when that was next year, and nothing would have
+# bumped it: every 2028 title would have fallen in no cell either, the same loss
+# at the other end. Evaluated at import, so a run that spans New Year keeps the
+# ceiling it started with — the scheduler restarts often enough for that not to
+# matter, and +2 leaves a year of slack anyway.
+#
 # Only Dutch is split this way — every other language fits under the 10k cap and
 # is walked whole, which is why the loss was 88 Dutch titles and one English.
-YEARS = list(range(2027, 1399, -1))
+YEARS = list(range(date.today().year + 2, 1399, -1))
 
 # onderwerp (subject) facet code -> genre name, per audience. These ARE the
 # site's genres; tagging books via the facet avoids fetching detail pages.

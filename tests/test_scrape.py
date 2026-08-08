@@ -9,6 +9,7 @@ the next run would then enumerate nothing and wipe the catalog.
 from __future__ import annotations
 
 import json
+from datetime import date
 
 import pytest
 
@@ -418,8 +419,12 @@ def test_the_year_split_reaches_the_classics():
 
     Only Dutch is split by year (every other language fits under the 10k cap and
     is walked whole), which is why the loss was 88 Dutch titles and one English.
+
+    The ceiling is asserted against the clock, not against a literal. A literal
+    was what let the old upper bound rot: `>= 2027` stays true forever, so the
+    test would have kept passing through the same loss at the other end.
     """
     assert 1851 in scrape.YEARS, "Moby Dick"
     assert 1889 in scrape.YEARS, "Couperus, Eline Vere"
     assert 1605 in scrape.YEARS, "Don Quijote"
-    assert max(scrape.YEARS) >= 2027                  # and still covers new licences
+    assert max(scrape.YEARS) >= date.today().year + 1  # and still covers new licences
