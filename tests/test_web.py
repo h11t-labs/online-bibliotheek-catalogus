@@ -519,15 +519,15 @@ def test_404_skips_suggestions_for_scanner_paths(client):
 
 def test_404_offers_matching_genres(client, monkeypatch):
     # The fixture catalog carries no genres, so the suggester is stubbed: what is
-    # asserted here is the shape of the link a genre match produces — a browse
-    # filter (genres have no page of their own), with the name safely encoded.
+    # asserted here is the shape of the link a genre match produces — the genre's
+    # own page, not the ?genre= filter, which is noindex and robots-disallowed.
     from obc.web import app as appmod
 
     monkeypatch.setattr(appmod.queries, "suggest", lambda *a, **k: {
         "title_rows": [], "authors": [], "publishers": [], "languages": [],
         "lists": [], "genres": ["Spanning & Thrillers"]})
     body = client.get("/list/thriller").text
-    assert 'href="/?genre=Spanning%20%26%20Thrillers"' in body
+    assert 'href="/genre/spanning-thrillers"' in body
     assert "Spanning &amp; Thrillers" in body
 
 

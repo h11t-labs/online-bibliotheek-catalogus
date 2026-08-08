@@ -366,8 +366,12 @@ def book_detail(conn: sqlite3.Connection, ppn: str) -> dict | None:
     if work is None:
         row = conn.execute("SELECT work_id FROM editions WHERE ppn = ?", (ppn,)).fetchone()
         return {"redirect": row["work_id"]} if row else None
-    # genres with their parent (resolved per this work's audience)
-    genres = [{"name": r["name"], "parent": r["parent_name"]} for r in conn.execute(
+    # genres with their parent (resolved per this work's audience). The slug is
+    # what the chip links to: /genre/<slug> is the indexable page, while the
+    # ?genre= variant it used to point at is noindex and robots-disallowed. Names
+    # that fold to nothing have no page, so their chip renders unlinked.
+    genres = [{"name": r["name"], "parent": r["parent_name"],
+               "slug": _slug(r["name"])} for r in conn.execute(
         "SELECT g.name, p.name AS parent_name "
         "FROM work_genres wg JOIN genres g ON g.id = wg.genre_id "
         "LEFT JOIN genres p ON p.id = wg.parent_id "

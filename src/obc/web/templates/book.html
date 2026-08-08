@@ -200,13 +200,17 @@
 
       {% if work_lists %}
       <div class="editions">
-        {% for l in work_lists %}<a class="badge listbadge" href="/?list={{ l.slug }}"><svg width="12" height="12" style="vertical-align:-2px"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% elif l.position %} #{{ l.position }}{% endif %}{% if l.won == 1 %} · gewonnen{% elif l.won == 0 %} · genomineerd{% endif %}</a>{% endfor %}
+        {% for l in work_lists %}<a class="badge listbadge" href="/list/{{ l.slug }}"><svg width="12" height="12" style="vertical-align:-2px"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% elif l.position %} #{{ l.position }}{% endif %}{% if l.won == 1 %} · gewonnen{% elif l.won == 0 %} · genomineerd{% endif %}</a>{% endfor %}
       </div>
       {% endif %}
 
+      {# A genre chip goes to /genre/<slug> — the page that is in the sitemap and
+         indexable — not to ?genre=, which every crawler is told to skip. These
+         56k book pages are the only real supply of internal links the genre
+         pages have. A name that folds to no slug has no page: chip, no link. #}
       {% if genres %}
       <div class="genres">
-        {% for g in genres %}<a class="chip" href="/?genre={{ g.name|urlencode }}">{% if g.parent %}<span style="opacity:.6">{{ g.parent }} › </span>{% endif %}{{ g.name }}</a>{% endfor %}
+        {% for g in genres %}{% if g.slug %}<a class="chip" href="/genre/{{ g.slug }}">{% if g.parent %}<span style="opacity:.6">{{ g.parent }} › </span>{% endif %}{{ g.name }}</a>{% else %}<span class="chip">{% if g.parent %}<span style="opacity:.6">{{ g.parent }} › </span>{% endif %}{{ g.name }}</span>{% endif %}{% endfor %}
       </div>
       {% endif %}
 
@@ -214,7 +218,10 @@
 
       <div class="meta">
         {% macro r(label, val) %}{% if val %}<div class="r"><div class="k">{{ label }}</div><div class="v">{{ val }}</div></div>{% endif %}{% endmacro %}
-        {% macro rlink(label, val, param) %}{% if val %}<div class="r"><div class="k">{{ label }}</div><div class="v"><a class="flink" href="/?{{ param }}={{ val|urlencode }}">{{ val }}</a></div></div>{% endif %}{% endmacro %}
+        {# Language and publisher have no page of their own, only a filtered search.
+           rel=nofollow so a crawler doesn't queue tens of thousands of ?-URLs it is
+           then told to skip — the reader still gets the filter. #}
+        {% macro rlink(label, val, param) %}{% if val %}<div class="r"><div class="k">{{ label }}</div><div class="v"><a class="flink" rel="nofollow" href="/?{{ param }}={{ val|urlencode }}">{{ val }}</a></div></div>{% endif %}{% endmacro %}
         {{ rlink('Taal', b['language'], 'language') }}
         {{ r('Verschenen', b['year']) }}
         {{ rlink('Uitgever', b['publisher'], 'publisher') }}

@@ -584,14 +584,15 @@
     // Mirror of textnorm.slugify(): lowercase, drop diacritics, collapse the rest
     // to dashes. Jumping straight to the slug saves the 301 the server would send
     // for an encoded name. Names that hold no a-z0-9 keep their encoded form.
-    const authorPath=n=>'/author/'+(n.normalize('NFKD').replace(/[\u0300-\u036f]/g,'')
-      .toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')
-      || encodeURIComponent(n));
+    const slugOf=n=>n.normalize('NFKD').replace(/[\u0300-\u036f]/g,'')
+      .toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    const slugPath=(prefix,n)=>prefix+(slugOf(n)||encodeURIComponent(n));
+    const authorPath=n=>slugPath('/author/',n);
     function go(it){
       if(it.kind==='title') location.href=it.url;
       else if(it.kind==='author') location.href=authorPath(it.value);
       else if(it.kind==='publisher') location.href='/?publisher='+encodeURIComponent(it.value);
-      else if(it.kind==='genre') location.href='/?genre='+encodeURIComponent(it.value);
+      else if(it.kind==='genre') location.href=slugPath('/genre/',it.value);
       else if(it.kind==='language') location.href='/?language='+encodeURIComponent(it.value);
       else if(it.kind==='list') location.href='/list/'+encodeURIComponent(it.value);
     }

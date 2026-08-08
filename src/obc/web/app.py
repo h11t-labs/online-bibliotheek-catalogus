@@ -384,9 +384,10 @@ def _near_matches(term: str, limit: int = 6, titles: bool = True) -> list[dict]:
            for name in data["authors"]]
     out += [{"kind": "list", "icon": "list", "label": lst["name"],
              "url": f"/list/{lst['slug']}"} for lst in data["lists"]]
-    # A genre has no page of its own; it is a filter on the browse view.
+    # A genre does have a page of its own now, so the 404 page's near matches send
+    # you there instead of into the robots-disallowed ?genre= space.
     out += [{"kind": "genre", "icon": "genre", "label": name,
-             "url": f"/?genre={quote(name, safe='')}"} for name in data["genres"]]
+             "url": seo.genre_path(name)} for name in data["genres"]]
     if titles:
         out += [{"kind": "book", "icon": "book", "label": row["title"] or "—",
                  "sub": row["author"] or "", "url": seo.book_path(row)}

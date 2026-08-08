@@ -102,6 +102,43 @@ def test_seo_meta_and_jsonld(client):
     assert 'property="og:image"' in book             # cover as OG image
 
 
+def test_book_page_links_to_pages_not_to_the_blocked_filter_space(client):
+    """A book page is the site's only bulk supply of internal links.
+
+    It used to spend them on ``/?list=`` and ``/?genre=`` — URLs robots.txt tells
+    every crawler to skip — while ``/list/<slug>`` and ``/genre/<slug>`` sat in the
+    sitemap with almost nothing pointing at them. The ones that keep a ?-URL
+    because no page exists for them (language, publisher) carry rel=nofollow, so a
+    crawler is not sent to fetch what it is then told to ignore.
+    """
+    book = client.get("/book/001").text
+    assert 'href="/list/test-top"' in book
+    assert 'href="/?list=' not in book and 'href="/?genre=' not in book
+    for row in re.findall(r'<a class="flink"[^>]*href="/\?[^"]*"', book):
+        assert 'rel="nofollow"' in row, row
+
+
+def test_genre_chips_link_to_the_genre_page(client, monkeypatch):
+    """The fixture catalog carries no genres, so the detail row is stubbed.
+
+    Both halves matter: a genre that has a slug has a page and gets the link; one
+    that folds to nothing (Greek script, say) has no page in ``genre_pages``, so it
+    stays a chip rather than pointing at ``/genre/``.
+    """
+    from obc.web import app as appmod
+
+    real = appmod.queries.book_detail
+    monkeypatch.setattr(appmod.queries, "book_detail", lambda conn, ppn: {
+        **real(conn, ppn),
+        "genres": [{"name": "Spanning & Thrillers", "parent": None,
+                    "slug": "spanning-thrillers"},
+                   {"name": "Θρίλερ", "parent": "Spanning & Thrillers", "slug": ""}]})
+    book = client.get("/book/001").text
+    assert 'href="/genre/spanning-thrillers"' in book
+    assert '<span class="chip">' in book
+    assert 'href="/genre/"' not in book
+
+
 def test_site_name_signals_on_home(client):
     # Google prints the site name above the result off WebSite structured data
     # first and og:site_name second — without them it falls back to the domain.
