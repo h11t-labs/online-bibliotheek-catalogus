@@ -9,6 +9,7 @@ the next run would then enumerate nothing and wipe the catalog.
 from __future__ import annotations
 
 import json
+from datetime import date
 
 import pytest
 
@@ -406,3 +407,24 @@ def test_reading_records_leaves_the_pages_on_disk(paths):
     assert next(raw.iter_records(conn))["title"] == "De Ontdekking"
     # …and the page is still there for the one reader that does want it
     assert raw.detail_html(conn, "001").startswith("<html>")
+
+
+def test_the_year_split_reaches_the_classics():
+    """`jaar` is the *original* publication year, not the edition's.
+
+    So Moby Dick sits under 1851 and Couperus under 1889, and a range starting at
+    1900 put them in no cell at all — reachable only by whatever the maker-sort
+    window happened to catch. That silently lost 84 titles from the live catalog,
+    found only by comparing against an older copy that no longer exists.
+
+    Only Dutch is split by year (every other language fits under the 10k cap and
+    is walked whole), which is why the loss was 88 Dutch titles and one English.
+
+    The ceiling is asserted against the clock, not against a literal. A literal
+    was what let the old upper bound rot: `>= 2027` stays true forever, so the
+    test would have kept passing through the same loss at the other end.
+    """
+    assert 1851 in scrape.YEARS, "Moby Dick"
+    assert 1889 in scrape.YEARS, "Couperus, Eline Vere"
+    assert 1605 in scrape.YEARS, "Don Quijote"
+    assert max(scrape.YEARS) >= date.today().year + 1  # and still covers new licences
