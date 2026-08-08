@@ -24,10 +24,10 @@
   .empty{color:var(--ink-soft);padding:40px 0}
 {% endblock %}
 {% block body %}
-{% set q = '?sort=voornaam' if sort == 'voornaam' else '' %}
+{% set q = '?sortering=voornaam' if sort == 'voornaam' else '' %}
 <main>
   <div class="pagehead">
-    <div class="crumb"><a href="/">‹ Terug naar zoeken</a>{% if letter %} · <a href="/authors{{ q }}">Alle auteurs</a>{% endif %}</div>
+    <div class="crumb"><a href="/">‹ Terug naar zoeken</a>{% if letter %} · <a href="/auteurs{{ q }}">Alle auteurs</a>{% endif %}</div>
     <h1 class="page-h">{% if letter %}Auteurs met {{ label }}{% else %}Auteurs{% endif %}</h1>
     <p class="page-sub">
       {%- if letter -%}
@@ -42,15 +42,15 @@
 
   <div class="sortbar">
     <span class="lbl">Alfabetisch op:</span>
-    <a href="{{ ('/authors/' ~ letter|lower) if letter else '/authors' }}"
+    <a href="{{ ('/auteurs/' ~ letter|lower) if letter else '/auteurs' }}"
        class="{{ 'on' if sort != 'voornaam' }}">Achternaam</a>
-    <a href="{{ ('/authors/' ~ letter|lower) if letter else '/authors' }}?sort=voornaam"
+    <a href="{{ ('/auteurs/' ~ letter|lower) if letter else '/auteurs' }}?sortering=voornaam"
        class="{{ 'on' if sort == 'voornaam' }}">Voornaam</a>
   </div>
 
   <nav class="alpha" aria-label="Auteurs per letter">
     {% for l in letters %}
-    <a href="/authors/{{ l|lower }}{{ q }}" class="{{ 'on' if l == letter }}">
+    <a href="/auteurs/{{ l|lower }}{{ q }}" class="{{ 'on' if l == letter }}">
       {{ 'Overig' if l == 'overig' else l }}<span class="n">{{ counts[l] }}</span>
     </a>
     {% endfor %}

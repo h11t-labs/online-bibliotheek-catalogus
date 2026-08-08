@@ -87,21 +87,33 @@ languages and lists. Logs use loguru.
 | URL | What it is |
 |---|---|
 | `/` | search + faceted browse (grid or list, 12–96 per page) |
-| `/book/{ppn}` | one title: editions, genres, curated lists, "meer zoals dit" |
-| `/authors`, `/authors/{letter}` | A-Z author hub, sortable by surname or first name |
-| `/author/{slug}` | everything by one author, with a Wikipedia blurb when there is one |
-| `/series/{slug}` | one series, in reading order |
+| `/boek/{titel}--{auteur}--{id}` | one title: editions, genres, curated lists, "meer zoals dit" |
+| `/auteurs`, `/auteurs/{letter}` | A-Z author hub, sortable by surname or first name |
+| `/auteur/{slug}` | everything by one author, with a Wikipedia blurb when there is one |
+| `/reeks/{slug}` | one series, in reading order |
 | `/genres`, `/genre/{slug}` | genre hub per audience (jeugd / volwassenen), and one genre |
-| `/lists`, `/list/{slug}` | curated lists (Bestseller 60, NYT, prizes) |
-| `/stats`, `/about` | catalog dashboard, and what this thing is |
-| `/suggest`, `/facet` | JSON for the autocomplete and the searchable facets |
+| `/lijsten`, `/lijst/{slug}` | curated lists (Bestseller 60, NYT, prizes) |
+| `/statistieken`, `/over` | catalog dashboard, and what this thing is |
+| `/suggesties`, `/facetten` | JSON for the autocomplete and the searchable facets |
 | `/robots.txt`, `/sitemap.xml` | crawler-facing; the sitemap is an index over paginated children |
 | `/healthz`, `/admin/refresh` | liveness probe, and the token-protected refresh trigger |
 
-Author, series and genre pages are addressed by **slug** (`/author/lisbeth-imbo`);
-the older percent-encoded name URLs still resolve and 301 to the slug, and spelling
-variants that fold together share one page. Unknown URLs get a real 404 page that
-suggests close matches from the catalog rather than a bare "not found".
+The URLs are Dutch, like everything else the site says. Query parameters are too:
+`?zoek=`, `?formaat=`, `?taal=`, `?uitgever=`, `?auteur=`, `?lijst=`, `?jaar_van=`,
+`?jaar_tot=`, `?sortering=`, `?weergave=`, `?pagina=`, `?per_pagina=`.
+
+Author, series and genre pages are addressed by **slug** (`/auteur/lisbeth-imbo`),
+and that slug is the *only* spelling that answers: a percent-encoded name, a stale
+book slug or a capitalised letter is a 404, not a redirect, so no page is reachable
+at a second address. Spelling variants that fold together share one page. The one
+redirect the site keeps is the English→Dutch rename below. Unknown URLs get a real
+404 page that suggests close matches from the catalog rather than a bare "not found".
+
+The English paths (`/author`, `/authors`, `/series`, `/list`, `/lists`, `/about`,
+`/stats`, `/suggest`, `/facet`) 301 to their Dutch names — ~11.3k of them were
+indexed, so they move over rather than being dropped. `_RENAMED` in `web/app.py`
+is that whole layer and is deletable in one commit once Search has caught up.
+`/book/{ppn}`, the old per-edition URL space, is gone outright.
 
 Add dependencies with `uv add <pkg>`; run tests with `uv run pytest`. Run
 `obc normalize` after any scrape to refresh what the UI serves. Set `OBC_DB` to
@@ -124,7 +136,7 @@ point at a different DB.
   current lists via the official Books API — set a free `NYT_API_KEY` from
   developer.nytimes.com; without it the NYT provider just skips). The full list (incl. titles
   *not* in the library) is kept in `list_items`; matched ones go to `book_lists`.
-  UI: a `/lists` overview, a `/list/{slug}` page showing every title in rank order
+  UI: a `/lijsten` overview, a `/lijst/{slug}` page showing every title in rank order
   (unavailable ones greyed out), a "Lijsten" filter, a cover ribbon, and detail badges.
   - **Add an automated list**: write a `fetch_all()` provider and append it to
     `lists/__init__.py:PROVIDERS`.
@@ -192,7 +204,7 @@ narrowed with `--formats`, because neither has seen the whole catalog — and
   library's own "ook beschikbaar als" cross-links first, then a conservative
   title + surname + language key, then `data/raw/work_overrides.json` — and audited
   with `obc works --report`. Each book has exactly **one URL**,
-  `/boek/{titel}--{auteur}--{work_id}`; every old `/book/{ppn}` 301s to it.
+  `/boek/{titel}--{auteur}--{work_id}`; the old `/book/{ppn}` space is retired.
   The DB is written by **full rebuild**, never per-row: `normalize` streams the
   records into a temporary DB and atomically swaps it over the live file, so
   readers keep seeing the old catalog until the swap.
@@ -202,12 +214,12 @@ narrowed with `--formats`, because neither has seen the whole catalog — and
   swap publishes a catalog and its recommendations together.
 - **UI** (`web/app.py` + `web/queries.py`): FTS5 `bm25` ranking weighted toward
   title/author, plus facet filters (format, language, genre, year) and sorting.
-  `?format=` means "available as", so it counts books rather than files — which is
+  `?formaat=` means "available as", so it counts books rather than files — which is
   what makes the `/e-books` and `/luisterboeken` landing pages honest. Routes stay
   thin: every SQL statement lives in `queries.py`. Pages: the search/browse home,
-  `/boek/…`, `/e-books`, `/luisterboeken`, `/genres` + `/genre/{slug}`, `/authors`
-  + `/author/{slug}`, `/series/{slug}`, `/lists` + `/list/{slug}`, `/stats`,
-  `/about`.
+  `/boek/…`, `/e-books`, `/luisterboeken`, `/genres` + `/genre/{slug}`, `/auteurs`
+  + `/auteur/{slug}`, `/reeks/{slug}`, `/lijsten` + `/lijst/{slug}`,
+  `/statistieken`, `/over`.
 - **No derived state in the web process** (`web/indexes.py`): everything derivable
   from the catalog is derived in the rebuild — facet counts, author sort keys, the
   series map, the genre taxonomy — so the read path does indexed lookups only.

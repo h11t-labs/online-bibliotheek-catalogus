@@ -51,7 +51,7 @@
     {% if author_lists %}
     <div class="awards">
       {% for l in author_lists %}
-      <a href="/list/{{ l.slug }}"><svg width="13" height="13"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% endif %}{% if l.won == 1 %} · gewonnen{% elif l.won == 0 %} · genomineerd{% endif %}</a>
+      <a href="/lijst/{{ l.slug }}"><svg width="13" height="13"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% endif %}{% if l.won == 1 %} · gewonnen{% elif l.won == 0 %} · genomineerd{% endif %}</a>
       {% endfor %}
     </div>
     {% endif %}

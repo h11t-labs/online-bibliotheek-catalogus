@@ -313,12 +313,18 @@ def suggest(conn: sqlite3.Connection, q: str, limit: int = 7) -> dict | None:
     authors = [r["name"] for r in conn.execute(
         "SELECT name FROM authors WHERE name_fold LIKE ? "
         "ORDER BY n_works DESC LIMIT 5", (like,))]
+    # One row per publisher *page*, ranked on the page's own total: two spellings
+    # of six titles are a bigger destination than one spelling of ten, and ranking
+    # on the largest spelling would drop it off the end of the LIMIT instead.
     publishers = [r["name"] for r in conn.execute(
-        "SELECT name FROM publishers WHERE name_fold LIKE ? "
-        "ORDER BY n DESC LIMIT 4", (like,))]
+        _MERGED_PUBLISHERS.format(where="p.name_fold LIKE ?"), (like, 4))]
+    # Same merge for genres: they have their own page keyed on the fold, and the
+    # catalog has held one genre under two spellings before ("Biografieën", once
+    # precomposed and once with a combining diaeresis). None today, but the page
+    # merges them, so the suggester has to agree with it.
     genres = [r["name"] for r in conn.execute(
-        "SELECT name FROM genres WHERE fold(name) LIKE ? "
-        "ORDER BY n_works DESC LIMIT 4", (like,))]
+        "SELECT name, SUM(n_works) AS n FROM genres WHERE fold(name) LIKE ? "
+        "GROUP BY fold(name) ORDER BY n DESC, name LIMIT 4", (like,))]
     lists = [{"slug": r["slug"], "name": r["name"]} for r in conn.execute(
         "SELECT slug, name FROM lists WHERE fold(name) LIKE ? ORDER BY name LIMIT 4",
         (like,))]
@@ -366,8 +372,12 @@ def book_detail(conn: sqlite3.Connection, ppn: str) -> dict | None:
     if work is None:
         row = conn.execute("SELECT work_id FROM editions WHERE ppn = ?", (ppn,)).fetchone()
         return {"redirect": row["work_id"]} if row else None
-    # genres with their parent (resolved per this work's audience)
-    genres = [{"name": r["name"], "parent": r["parent_name"]} for r in conn.execute(
+    # genres with their parent (resolved per this work's audience). The slug is
+    # what the chip links to: /genre/<slug> is the indexable page, while the
+    # ?genre= variant it used to point at is noindex and robots-disallowed. Names
+    # that fold to nothing have no page, so their chip renders unlinked.
+    genres = [{"name": r["name"], "parent": r["parent_name"],
+               "slug": _slug(r["name"])} for r in conn.execute(
         "SELECT g.name, p.name AS parent_name "
         "FROM work_genres wg JOIN genres g ON g.id = wg.genre_id "
         "LEFT JOIN genres p ON p.id = wg.parent_id "
@@ -526,6 +536,60 @@ def author_index(conn: sqlite3.Connection,
     return conn.execute(
         "SELECT name, name_fold, surname_sort, first_sort, n_works AS titles "
         f"FROM authors WHERE n_works > 0 ORDER BY {order}").fetchall()
+
+
+# --------------------------------------------------------------------------- #
+# publisher pages
+# --------------------------------------------------------------------------- #
+# A publisher page merges every spelling that folds onto it, so anything that
+# ranks or lists publishers has to merge them the same way — or it splits one
+# publisher's titles across rows that all link to the same page. The label is
+# picked exactly as publisher_page() picks it: most-used spelling, ties to the
+# longest.
+_MERGED_PUBLISHERS = """
+    SELECT (SELECT p2.name FROM publishers p2 WHERE p2.name_fold = p.name_fold
+            ORDER BY p2.n DESC, length(p2.name) DESC LIMIT 1) AS name,
+           SUM(p.n) AS n
+    FROM publishers p
+    WHERE {where}
+    GROUP BY p.name_fold ORDER BY n DESC LIMIT ?
+"""
+
+
+def publisher_page(conn: sqlite3.Connection, slug: str) -> dict | None:
+    """One publisher page: display name, every spelling of it, and its title count.
+
+    No new column and no new table: ``publishers`` already stores ``name_fold``
+    under an index, and a slug round-trips into a fold by swapping dashes for
+    spaces — the same lookup the author pages do.
+
+    A publisher reaches the catalog under more than one spelling ("Ambo|Anthos
+    Uitgevers, Amsterdam" and "Ambo|Anthos uitgevers, Amsterdam"; five variants of
+    "De Crime Compagnie, Laren NH"), and those all fold together. The page filters
+    on every one of them, or its heading would promise more titles than it shows.
+    The display name is the spelling the catalog actually uses most — ties go to
+    the longest, which is the fuller form rather than a truncation.
+    """
+    rows = conn.execute(
+        "SELECT name, n FROM publishers WHERE name_fold = ?",
+        (slug.replace("-", " "),)).fetchall()
+    if not rows:
+        return None
+    best = max(rows, key=lambda r: (r["n"], len(r["name"])))
+    return {"name": best["name"], "titles": sum(r["n"] for r in rows),
+            "spellings": tuple(r["name"] for r in rows)}
+
+
+def publisher_pages(conn: sqlite3.Connection) -> list[dict]:
+    """Every publisher page, folded spellings already merged — for the sitemap.
+
+    Grouped in SQL on the indexed ``name_fold`` so the read path stays a scan of
+    one small table rather than 1.5k per-publisher lookups.
+    """
+    return [{"slug": r["name_fold"].replace(" ", "-"), "titles": r["titles"]}
+            for r in conn.execute(
+                "SELECT name_fold, SUM(n) AS titles FROM publishers "
+                "WHERE name_fold != '' GROUP BY name_fold ORDER BY name_fold")]
 
 
 # --------------------------------------------------------------------------- #
@@ -704,7 +768,9 @@ def web_stats(conn: sqlite3.Connection) -> dict:
         "audiobooks": one("SELECT COUNT(*) FROM works WHERE has_audiobook = 1"),
         "ereader": one("SELECT COUNT(*) FROM works WHERE ereader = 1"),
         "authors": one("SELECT COUNT(*) FROM authors"),
-        "publishers": one("SELECT COUNT(*) FROM publishers"),
+        # Pages, not spellings: 1.581 rows are 1.527 publishers, and the number
+        # sits next to links that go to the merged pages.
+        "publishers": one("SELECT COUNT(DISTINCT name_fold) FROM publishers"),
         "lists": one("SELECT COUNT(*) FROM lists"),
         "languages": many("SELECT name, n FROM languages ORDER BY n DESC LIMIT 8"),
         "genres": genres,
@@ -712,5 +778,5 @@ def web_stats(conn: sqlite3.Connection) -> dict:
                       "GROUP BY year ORDER BY year"),
         "top_authors": many("SELECT name, n_works AS n FROM authors "
                             "ORDER BY n_works DESC LIMIT 12"),
-        "top_publishers": many("SELECT name, n FROM publishers ORDER BY n DESC LIMIT 12"),
+        "top_publishers": many(_MERGED_PUBLISHERS.format(where="1"), 12),
     }

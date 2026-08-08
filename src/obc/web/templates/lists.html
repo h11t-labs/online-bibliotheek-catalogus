@@ -28,14 +28,14 @@
   {% if lists %}
   <div class="sortbar">
     <span class="lbl">Sorteer:</span>
-    <a href="/lists?sort=name" class="{{ 'on' if sort=='name' }}">Naam</a>
-    <a href="/lists?sort=available" class="{{ 'on' if sort=='available' }}">Meeste beschikbaar</a>
-    <a href="/lists?sort=total" class="{{ 'on' if sort=='total' }}">Meeste titels</a>
-    <a href="/lists?sort=pct" class="{{ 'on' if sort=='pct' }}">Hoogste dekking</a>
+    <a href="/lijsten?sortering=name" class="{{ 'on' if sort=='name' }}">Naam</a>
+    <a href="/lijsten?sortering=available" class="{{ 'on' if sort=='available' }}">Meeste beschikbaar</a>
+    <a href="/lijsten?sortering=total" class="{{ 'on' if sort=='total' }}">Meeste titels</a>
+    <a href="/lijsten?sortering=pct" class="{{ 'on' if sort=='pct' }}">Hoogste dekking</a>
   </div>
   <div class="listcards">
     {% for l in lists %}
-    <a class="listcard" href="/list/{{ l['slug'] }}">
+    <a class="listcard" href="/lijst/{{ l['slug'] }}">
       <div class="ic"><svg width="18" height="18"><use href="#ic-award"/></svg></div>
       <h2>{{ l['name'] }}</h2>
       {% if l['description'] %}<p>{{ l['description'] }}</p>{% endif %}

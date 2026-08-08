@@ -57,7 +57,8 @@
   <div class="panel"><h2>{{ title }}</h2><div class="bars">
     {% for it in items %}
     <div class="bar">
-      <span class="lbl">{% if link %}<a class="flink" style="text-decoration:underline dotted" href="{% if link == 'author' %}{{ it[0]|author_path }}{% else %}{{ link }}{{ it[0]|urlencode }}{% endif %}">{{ it[0] }}</a>{% else %}{{ it[0] }}{% endif %}</span>
+      {%- set page = {'author': 'author_path', 'publisher': 'publisher_path'}.get(link) -%}
+      <span class="lbl">{% if link %}<a class="flink" style="text-decoration:underline dotted"{% if not page %} rel="nofollow"{% endif %} href="{% if link == 'author' %}{{ it[0]|author_path }}{% elif link == 'publisher' %}{{ it[0]|publisher_path }}{% else %}{{ link }}{{ it[0]|urlencode }}{% endif %}">{{ it[0] }}</a>{% else %}{{ it[0] }}{% endif %}</span>
       <div class="track"><div class="fill" style="width:{{ (it[1]*100//m) }}%"></div></div>
       <span class="num">{{ "{:,}".format(it[1]).replace(",", ".") }}</span>
     </div>
@@ -82,8 +83,8 @@
   {% endmacro %}
 
   {{ genrelist(s.genres) }}
-  {{ barlist('Talen', s.languages, '/?language=') }}
+  {{ barlist('Talen', s.languages, '/?taal=') }}
   {{ barlist('Topauteurs', s.top_authors, 'author') }}
-  {{ barlist('Topuitgevers', s.top_publishers, '/?publisher=') }}
+  {{ barlist('Topuitgevers', s.top_publishers, 'publisher') }}
 </main>
 {% endblock %}

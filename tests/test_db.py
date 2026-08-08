@@ -254,7 +254,7 @@ def test_browse_sorts_are_indexed(tmp_path):
 
 def test_rebuild_collects_index_statistics(tmp_path):
     """Both rebuild paths must leave sqlite_stat1 populated. Without statistics the
-    planner may drive a genre/author/list filter off the works side and walk every
+    planner may drive a genre/auteur/list filter off the works side and walk every
     row instead of the few thousand link entries for that value."""
     for stream in (False, True):
         path = tmp_path / f"c{int(stream)}.db"

@@ -17,8 +17,8 @@ def test_hub_lists_one_entry_per_slug(client, ro_conn):
     entries = [e for rows in index.values() for e in rows]
     slugs = [slugify(e["name"]) for e in entries]
     assert len(set(slugs)) == len(slugs), "two hub entries share a slug"
-    hub = client.get("/authors/w").text
-    assert hub.count('href="/author/bob-de-wit"') == 1
+    hub = client.get("/auteurs/w").text
+    assert hub.count('href="/auteur/bob-de-wit"') == 1
 
 
 def test_authors_are_alphabetised_on_surname(client):
@@ -64,8 +64,8 @@ def test_authors_are_alphabetised_on_surname(client):
     # a single letter can genuinely be the surname, so it is left alone
     assert surname_key("Christiane F") == "f"
     assert surname_key("Drs. P") == "p"
-    assert client.get("/authors/w").status_code == 200     # Bob de Wit lives here
-    assert client.get("/authors/b").status_code == 404     # ...and not here
+    assert client.get("/auteurs/w").status_code == 200     # Bob de Wit lives here
+    assert client.get("/auteurs/b").status_code == 404     # ...and not here
 
 
 def test_hub_can_alphabetise_on_first_name_too(client, ro_conn):
@@ -76,16 +76,16 @@ def test_hub_can_alphabetise_on_first_name_too(client, ro_conn):
     by_first = indexmod.authors_by_letter(ro_conn, indexmod.BY_FIRST)
     assert sorted(by_surname) == ["K", "L", "S", "V", "W"]   # Kok, Licht, Sol, Vrij, de Wit
     assert sorted(by_first) == ["A", "B", "C", "D", "E"]     # ...same five, by first name
-    hub = client.get("/authors/w").text
-    assert 'href="/author/bob-de-wit"' in hub
-    assert 'href="/author/bob-de-wit"' in client.get("/authors/b?sort=voornaam").text
-    hub = client.get("/authors?sort=voornaam").text
-    assert 'href="/authors/b?sort=voornaam"' in hub     # letter links keep the order
+    hub = client.get("/auteurs/w").text
+    assert 'href="/auteur/bob-de-wit"' in hub
+    assert 'href="/auteur/bob-de-wit"' in client.get("/auteurs/b?sortering=voornaam").text
+    hub = client.get("/auteurs?sortering=voornaam").text
+    assert 'href="/auteurs/b?sortering=voornaam"' in hub     # letter links keep the order
     assert 'class="on"' in hub
     # an unknown value falls back rather than 404s, and the canonical stays clean
-    assert client.get("/authors?sort=onzin").status_code == 200
-    assert '<link rel="canonical" href="http://testserver/authors">' in \
-        client.get("/authors?sort=voornaam").text
+    assert client.get("/auteurs?sortering=onzin").status_code == 200
+    assert '<link rel="canonical" href="http://testserver/auteurs">' in \
+        client.get("/auteurs?sortering=voornaam").text
 
 
 def test_hub_counts_match_the_page_they_link_to(client, ro_conn):
@@ -249,7 +249,7 @@ def test_the_hub_orders_on_the_stamped_keys(ro_conn):
     `surname_sort` and `first_sort` are `surname_key(name)` and `slugify(name)`,
     stamped at build time. The hub used to call both again for every row it
     returned — 22,383 calls per request on the live catalog, to rebuild what the
-    columns already held, which is most of the 7.5s the /authors page took. This
+    columns already held, which is most of the 7.5s the /auteurs page took. This
     asserts the ordering is the same as doing it the slow way, so the speed-up
     cannot quietly reshuffle a reader-facing index.
     """

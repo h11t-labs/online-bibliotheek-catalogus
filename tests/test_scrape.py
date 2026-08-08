@@ -26,7 +26,7 @@ def _listing_html(rows: list[tuple[str, str]]) -> str:
 
 
 def _rich_listing_html(items: list[dict]) -> str:
-    """Like _listing_html but with optional title/author/summary spans, so sync's
+    """Like _listing_html but with optional title/auteur/summary spans, so sync's
     merge/signature logic has real fields to compare."""
     lis = []
     for it in items:

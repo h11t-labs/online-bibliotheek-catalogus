@@ -431,7 +431,7 @@
         </button>
         <noscript>
           <form class="searchform" action="/" method="get" role="search">
-            <input type="search" name="q" value="{{ q|default('') }}"
+            <input type="search" name="zoek" value="{{ q|default('') }}"
                    placeholder="Zoek op titel, auteur of onderwerp…" aria-label="Zoeken">
             <button type="submit">Zoeken</button>
           </form>
@@ -451,19 +451,19 @@
           <svg width="16" height="16"><use href="#ic-genre"/></svg>
           <span class="navlink-text"><span class="navlink-title">Genres</span><span class="navlink-desc">Van thrillers tot filosofie</span></span>
         </a>
-        <a class="navlink" href="/authors">
+        <a class="navlink" href="/auteurs">
           <svg width="16" height="16"><use href="#ic-author"/></svg>
           <span class="navlink-text"><span class="navlink-title">Auteurs</span><span class="navlink-desc">Blader op naam door alle schrijvers</span></span>
         </a>
-        <a class="navlink" href="/lists">
+        <a class="navlink" href="/lijsten">
           <svg width="16" height="16"><use href="#ic-award"/></svg>
           <span class="navlink-text"><span class="navlink-title">Lijsten</span><span class="navlink-desc">Bestsellers, prijzen &amp; nominaties</span></span>
         </a>
-        <a class="navlink" href="/stats">
+        <a class="navlink" href="/statistieken">
           <svg width="16" height="16"><use href="#ic-chart"/></svg>
           <span class="navlink-text"><span class="navlink-title">Statistieken</span><span class="navlink-desc">Cijfers over de hele catalogus</span></span>
         </a>
-        <a class="navlink" href="/about">
+        <a class="navlink" href="/over">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
           <span class="navlink-text"><span class="navlink-title">Over</span><span class="navlink-desc">Wat dit is en hoe het werkt</span></span>
         </a>
@@ -493,7 +493,7 @@
       <div class="inner">
         <form class="big-form" id="search-form" action="/" method="get" role="search" autocomplete="off">
           <svg class="mag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input id="q" type="text" name="q" value="{{ q|default('') }}"
+          <input id="q" type="text" name="zoek" value="{{ q|default('') }}"
                  placeholder="Zoek op titel, auteur of onderwerp…" aria-label="Zoeken" autocomplete="off">
         </form>
         <button class="so-close" id="search-close" type="button" aria-label="Sluit zoeken">
@@ -584,16 +584,22 @@
     // Mirror of textnorm.slugify(): lowercase, drop diacritics, collapse the rest
     // to dashes. Jumping straight to the slug saves the 301 the server would send
     // for an encoded name. Names that hold no a-z0-9 keep their encoded form.
-    const authorPath=n=>'/author/'+(n.normalize('NFKD').replace(/[\u0300-\u036f]/g,'')
-      .toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')
-      || encodeURIComponent(n));
+    const slugOf=n=>n.normalize('NFKD').replace(/[\u0300-\u036f]/g,'')
+      .toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+    // An author with no slug stays on the encoded URL — that route still serves the
+    // page. A genre with no slug has no page at all, so it falls back to the filter.
+    const authorPath=n=>'/auteur/'+(slugOf(n)||encodeURIComponent(n));
+    const genreHref=n=>slugOf(n)?'/genre/'+slugOf(n):'/?genre='+encodeURIComponent(n);
+    // Every publisher in the catalog carries Latin characters, so slugOf never
+    // comes back empty here — the filter fallback is belt and braces.
+    const publisherHref=n=>slugOf(n)?'/uitgever/'+slugOf(n):'/?uitgever='+encodeURIComponent(n);
     function go(it){
       if(it.kind==='title') location.href=it.url;
       else if(it.kind==='author') location.href=authorPath(it.value);
-      else if(it.kind==='publisher') location.href='/?publisher='+encodeURIComponent(it.value);
-      else if(it.kind==='genre') location.href='/?genre='+encodeURIComponent(it.value);
-      else if(it.kind==='language') location.href='/?language='+encodeURIComponent(it.value);
-      else if(it.kind==='list') location.href='/list/'+encodeURIComponent(it.value);
+      else if(it.kind==='publisher') location.href=publisherHref(it.value);
+      else if(it.kind==='genre') location.href=genreHref(it.value);
+      else if(it.kind==='language') location.href='/?taal='+encodeURIComponent(it.value);
+      else if(it.kind==='list') location.href='/lijst/'+encodeURIComponent(it.value);
     }
     const icon=id=>`<span class="ic"><svg><use href="#ic-${id}"/></svg></span>`;
     function group(label){ return `<div class="ac-group-label">${label}</div>`; }
@@ -662,7 +668,7 @@
       if(on) el.scrollIntoView({block:'nearest'}); }); }
     async function fetchSug(q){
       const my=++seq;
-      try{ const r=await fetch('/suggest?q='+encodeURIComponent(q));
+      try{ const r=await fetch('/suggesties?zoek='+encodeURIComponent(q));
         const d=await r.json(); if(my===seq) render(d); }catch(e){}
     }
 
@@ -728,7 +734,7 @@
       async function serverFetch(q){
         const my=++seq;
         try{
-          const r=await fetch('/facet?type='+encodeURIComponent(src)+'&q='+encodeURIComponent(q));
+          const r=await fetch('/facetten?type='+encodeURIComponent(src)+'&zoek='+encodeURIComponent(q));
           const d=await r.json(); if(my!==seq) return;
           const vals=[...selected].filter(v=>!q||v.toLowerCase().includes(q.toLowerCase()))
             .concat(d.values.filter(v=>!selected.has(v)));

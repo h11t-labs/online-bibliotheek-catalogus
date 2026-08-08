@@ -2,9 +2,12 @@
 {# Brand first: it doubles as the site-name signal Google reads off the home page. #}
 {% block title %}{% if q %}{{ q }} · Online Bibliotheek Catalogus{% else %}Online Bibliotheek Catalogus — {{ total_rounded }} e-books & luisterboeken{% endif %}{% endblock %}
 
-{% macro combo(name, all_label, options, selected, icon, server=False, labels=None) -%}
+{# `name` is the query parameter this filter submits (Dutch, like every other
+   URL on the site); `src` is the /facetten `type` it looks options up under,
+   which is an internal enum and stays English. #}
+{% macro combo(name, all_label, options, selected, icon, src='', labels=None) -%}
 {%- set lab = labels or {} -%}
-<div class="combo" data-combo data-name="{{ name }}" data-all="{{ all_label }}" {% if server %}data-src="{{ name }}"{% endif %}>
+<div class="combo" data-combo data-name="{{ name }}" data-all="{{ all_label }}" {% if src %}data-src="{{ src }}"{% endif %}>
   <button type="button" class="combo-btn field">
     <svg class="ci"><use href="#ic-{{ icon }}"/></svg>
     <span class="lbl">{% if selected|length == 1 %}{{ lab.get(selected[0], selected[0]) }}{% elif selected|length > 1 %}{{ selected|length }} gekozen{% else %}{{ all_label }}{% endif %}</span>
@@ -192,13 +195,13 @@
       </button>
       <div class="rail-body">
       <div class="seg" role="group" aria-label="Soort">
-        <a class="seg-opt {{ 'on' if not format }}" href="{{ url_with(state, format='', page=1) }}">Alles</a>
-        <a class="seg-opt {{ 'on' if format=='ebook' }}" href="{{ url_with(state, format='ebook', page=1) }}"><svg><use href="#ic-book"/></svg> E-books</a>
-        <a class="seg-opt {{ 'on' if format=='audiobook' }}" href="{{ url_with(state, format='audiobook', page=1) }}"><svg><use href="#ic-audio"/></svg> Luister</a>
+        <a class="seg-opt {{ 'on' if not format }}" href="{{ url_with(state, formaat='', pagina=1) }}">Alles</a>
+        <a class="seg-opt {{ 'on' if format=='ebook' }}" href="{{ url_with(state, formaat='ebook', pagina=1) }}"><svg><use href="#ic-book"/></svg> E-books</a>
+        <a class="seg-opt {{ 'on' if format=='audiobook' }}" href="{{ url_with(state, formaat='audiobook', pagina=1) }}"><svg><use href="#ic-audio"/></svg> Luister</a>
       </div>
       <form action="/" method="get">
-        <input type="hidden" name="q" value="{{ q }}">
-        <input type="hidden" name="format" value="{{ format }}">
+        <input type="hidden" name="zoek" value="{{ q }}">
+        <input type="hidden" name="formaat" value="{{ format }}">
         <label class="ereader-toggle">
           <input type="checkbox" name="ereader" value="1" {{ 'checked' if ereader=='1' }}
                  onchange="this.form.submit()">
@@ -207,23 +210,23 @@
         </label>
         {% if facets.lists %}
         <h3><svg><use href="#ic-award"/></svg> Lijsten</h3>
-        {{ combo('list', 'Alle lijsten', list_options, list, 'list', labels=list_labels) }}
+        {{ combo('lijst', 'Alle lijsten', list_options, list, 'list', labels=list_labels) }}
         {% endif %}
         {# sort + per-page live in the toolbar above the results; keep them on Apply #}
-        <input type="hidden" name="sort" value="{{ sort }}">
-        <input type="hidden" name="per_page" value="{{ page_size }}">
+        <input type="hidden" name="sortering" value="{{ sort }}">
+        <input type="hidden" name="per_pagina" value="{{ page_size }}">
         <h3><svg><use href="#ic-lang"/></svg> Taal</h3>
-        {{ combo('language', 'Alle talen', facets.languages, language, 'lang') }}
+        {{ combo('taal', 'Alle talen', facets.languages, language, 'lang') }}
         <h3><svg><use href="#ic-genre"/></svg> Genre</h3>
         {{ combo('genre', 'Alle genres', facets.genres, genre, 'genre') }}
         <h3><svg><use href="#ic-author"/></svg> Auteur</h3>
-        {{ combo('author', 'Alle auteurs', facets.authors, author, 'author', server=True) }}
+        {{ combo('auteur', 'Alle auteurs', facets.authors, author, 'author', src='author') }}
         <h3><svg><use href="#ic-publisher"/></svg> Uitgever</h3>
-        {{ combo('publisher', 'Alle uitgevers', facets.publishers, publisher, 'publisher', server=True) }}
+        {{ combo('uitgever', 'Alle uitgevers', facets.publishers, publisher, 'publisher', src='publisher') }}
         <h3><svg><use href="#ic-cal"/></svg> Jaar</h3>
         <div class="yearrow">
-          <input class="field" type="number" name="year_from" value="{{ year_from }}" placeholder="van">
-          <input class="field" type="number" name="year_to" value="{{ year_to }}" placeholder="tot">
+          <input class="field" type="number" name="jaar_van" value="{{ year_from }}" placeholder="van">
+          <input class="field" type="number" name="jaar_tot" value="{{ year_to }}" placeholder="tot">
         </div>
         <button class="btn" type="submit">Toepassen</button>
       </form>
@@ -236,29 +239,29 @@
           {{ 'titel' if total==1 else 'titels' }}{% if q %} voor “{{ q }}”{% endif %}</span>
         <div class="toolbar">
           <div class="seg viewseg" role="group" aria-label="Weergave">
-            <a class="seg-opt {{ 'on' if view != 'list' }}" href="{{ url_with(state, view='grid', page=1) }}" aria-label="Raster" title="Raster">
+            <a class="seg-opt {{ 'on' if view != 'list' }}" href="{{ url_with(state, weergave='grid', pagina=1) }}" aria-label="Raster" title="Raster">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/></svg>
             </a>
-            <a class="seg-opt {{ 'on' if view == 'list' }}" href="{{ url_with(state, view='list', page=1) }}" aria-label="Lijst" title="Lijst">
+            <a class="seg-opt {{ 'on' if view == 'list' }}" href="{{ url_with(state, weergave='list', pagina=1) }}" aria-label="Lijst" title="Lijst">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><line x1="3.5" y1="6" x2="3.6" y2="6"/><line x1="3.5" y1="12" x2="3.6" y2="12"/><line x1="3.5" y1="18" x2="3.6" y2="18"/></svg>
             </a>
           </div>
           <select class="field" onchange="if(this.value)location.href=this.value" aria-label="Sorteren">
-            <option value="{{ url_with(state, sort='added', page=1) }}"     {{ 'selected' if sort=='added' }}>Recent toegevoegd</option>
-            <option value="{{ url_with(state, sort='year_desc', page=1) }}" {{ 'selected' if sort=='year_desc' }}>Nieuwste eerst</option>
-            <option value="{{ url_with(state, sort='year_asc', page=1) }}"  {{ 'selected' if sort=='year_asc' }}>Oudste eerst</option>
-            <option value="{{ url_with(state, sort='title', page=1) }}"     {{ 'selected' if sort=='title' }}>Titel A–Z</option>
-            <option value="{{ url_with(state, sort='relevance', page=1) }}" {{ 'selected' if sort=='relevance' }}>Relevantie</option>
+            <option value="{{ url_with(state, sortering='added', pagina=1) }}"     {{ 'selected' if sort=='added' }}>Recent toegevoegd</option>
+            <option value="{{ url_with(state, sortering='year_desc', pagina=1) }}" {{ 'selected' if sort=='year_desc' }}>Nieuwste eerst</option>
+            <option value="{{ url_with(state, sortering='year_asc', pagina=1) }}"  {{ 'selected' if sort=='year_asc' }}>Oudste eerst</option>
+            <option value="{{ url_with(state, sortering='title', pagina=1) }}"     {{ 'selected' if sort=='title' }}>Titel A–Z</option>
+            <option value="{{ url_with(state, sortering='relevance', pagina=1) }}" {{ 'selected' if sort=='relevance' }}>Relevantie</option>
           </select>
           <select class="field" onchange="if(this.value)location.href=this.value" aria-label="Aantal per pagina">
-            {% for n in per_page_options %}<option value="{{ url_with(state, per_page=n, page=1) }}" {{ 'selected' if n == page_size }}>{{ n }} per pagina</option>{% endfor %}
+            {% for n in per_page_options %}<option value="{{ url_with(state, per_pagina=n, pagina=1) }}" {{ 'selected' if n == page_size }}>{{ n }} per pagina</option>{% endfor %}
           </select>
         </div>
       </div>
 
       {% if chips or q %}
       <div class="active-chips">
-        {% if q %}<a class="chip" href="{{ url_with(state, q='', page=1) }}">“{{ q }}” <span class="x">×</span></a>{% endif %}
+        {% if q %}<a class="chip" href="{{ url_with(state, zoek='', pagina=1) }}">“{{ q }}” <span class="x">×</span></a>{% endif %}
         {% for c in chips %}
         <a class="chip" href="{{ c.url }}"><svg><use href="#ic-{{ c.icon }}"/></svg>{{ c.label }} <span class="x">×</span></a>
         {% endfor %}
@@ -305,13 +308,13 @@
 
       {% if pages > 1 %}
       <nav class="pager">
-        {% if page > 1 %}<a rel="prev" href="{{ url_with(state, page=page-1) }}">‹</a>{% endif %}
-        {% if page > 3 %}<a href="{{ url_with(state, page=1) }}">1</a><span class="dots">…</span>{% endif %}
+        {% if page > 1 %}<a rel="prev" href="{{ url_with(state, pagina=page-1) }}">‹</a>{% endif %}
+        {% if page > 3 %}<a href="{{ url_with(state, pagina=1) }}">1</a><span class="dots">…</span>{% endif %}
         {% for p in range([1,page-2]|max, [pages,page+2]|min + 1) %}
-          {% if p == page %}<span class="cur">{{ p }}</span>{% else %}<a href="{{ url_with(state, page=p) }}">{{ p }}</a>{% endif %}
+          {% if p == page %}<span class="cur">{{ p }}</span>{% else %}<a href="{{ url_with(state, pagina=p) }}">{{ p }}</a>{% endif %}
         {% endfor %}
-        {% if page < pages-2 %}<span class="dots">…</span><a href="{{ url_with(state, page=pages) }}">{{ pages }}</a>{% endif %}
-        {% if page < pages %}<a rel="next" href="{{ url_with(state, page=page+1) }}">›</a>{% endif %}
+        {% if page < pages-2 %}<span class="dots">…</span><a href="{{ url_with(state, pagina=pages) }}">{{ pages }}</a>{% endif %}
+        {% if page < pages %}<a rel="next" href="{{ url_with(state, pagina=page+1) }}">›</a>{% endif %}
       </nav>
       {% endif %}
 

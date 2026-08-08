@@ -41,23 +41,33 @@ router = APIRouter(include_in_schema=False)
 # canonical paths
 # --------------------------------------------------------------------------- #
 def author_path(name: str) -> str:
-    """The canonical URL path for an author: ``/author/lisbeth-imbo``.
+    """The canonical URL path for an author: ``/auteur/lisbeth-imbo``.
 
     A handful of names (Greek script, a stray "|" row) hold no Latin characters
     and fold to nothing, so they have no slug and keep their encoded name. One
     helper so links, breadcrumbs and sitemaps can never drift apart.
     """
-    return f"/author/{slugify(name) or quote(name, safe='')}"
+    return f"/auteur/{slugify(name) or quote(name, safe='')}"
 
 
 def series_path(name: str) -> str:
     """Canonical URL path for a series, mirroring :func:`author_path`."""
-    return f"/series/{slugify(name) or quote(name, safe='')}"
+    return f"/reeks/{slugify(name) or quote(name, safe='')}"
 
 
 def genre_path(name: str) -> str:
     """Canonical URL path for a genre, mirroring :func:`author_path`."""
     return f"/genre/{slugify(name) or quote(name, safe='')}"
+
+
+def publisher_path(name: str) -> str:
+    """Canonical URL path for a publisher: ``/uitgever/de-bezige-bij-amsterdam``.
+
+    Every publisher in the catalog has a slug (they all carry Latin characters),
+    but the fallback stays for symmetry with the helpers above — a name that
+    folds to nothing would otherwise build ``/uitgever/``.
+    """
+    return f"/uitgever/{slugify(name) or quote(name, safe='')}"
 
 
 def book_href(slug: str | None, work_id: str) -> str:
@@ -145,7 +155,7 @@ def robots_txt(request: Request):
              # the catalog took more than a week, so most of it was never seen.
              # Detail pages are public-cacheable for an hour, so 1s is affordable.
              "Crawl-delay: 1",
-             "Disallow: /suggest", "Disallow: /facet", "Disallow: /admin/",
+             "Disallow: /suggesties", "Disallow: /facetten", "Disallow: /admin/",
              "Disallow: /*?",  # the infinite filtered-search URL space
              f"Sitemap: {origin(request)}/sitemap.xml"]
     return Response("\n".join(lines) + "\n", media_type="text/plain")
@@ -174,7 +184,7 @@ def sitemap_index(request: Request,
 def sitemap_static(request: Request,
                    conn: sqlite3.Connection = Depends(indexes.get_conn)):
     slugs = [r["slug"] for r in conn.execute("SELECT slug FROM lists ORDER BY slug")]
-    paths = ["/", "/about", "/lists", "/stats", *[f"/list/{s}" for s in slugs]]
+    paths = ["/", "/over", "/lijsten", "/statistieken", *[f"/lijst/{s}" for s in slugs]]
     # These really are rewritten by every rebuild (new titles, new list positions).
     return _sitemap(origin(request), paths, lastmod=_w3c(indexes.data_updated()))
 
@@ -190,8 +200,8 @@ def sitemap_browse(request: Request,
     """
     index = indexes.authors_by_letter(conn)
     letters = indexes.letter_order(index)
-    paths = ["/authors", "/genres", "/e-books", "/luisterboeken"]
-    paths += [f"/authors/{letter.lower()}" for letter in letters]
+    paths = ["/auteurs", "/genres", "/e-books", "/luisterboeken"]
+    paths += [f"/auteurs/{letter.lower()}" for letter in letters]
     # The hubs list everything; the sitemap only nominates pages that aggregate
     # something, so single-title pages stay reachable without being advertised as
     # destinations. Slugs, never encoded names: a sitemap full of URLs that
@@ -199,10 +209,12 @@ def sitemap_browse(request: Request,
     paths += [author_path(row["name"])
               for letter in letters for row in index[letter]
               if row["titles"] >= queries.MIN_INDEXABLE_TITLES]
-    paths += [f"/series/{r['slug']}" for r in sorted(
+    paths += [f"/reeks/{r['slug']}" for r in sorted(
         queries.series_index(conn), key=lambda r: r["slug"])
         if r["titles"] >= queries.MIN_INDEXABLE_TITLES]
     paths += [f"/genre/{r['slug']}" for r in queries.genre_pages(conn)
+              if r["titles"] >= queries.MIN_INDEXABLE_TITLES]
+    paths += [f"/uitgever/{r['slug']}" for r in queries.publisher_pages(conn)
               if r["titles"] >= queries.MIN_INDEXABLE_TITLES]
     return _sitemap(origin(request), paths)
 

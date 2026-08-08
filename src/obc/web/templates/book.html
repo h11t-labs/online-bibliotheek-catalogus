@@ -200,13 +200,17 @@
 
       {% if work_lists %}
       <div class="editions">
-        {% for l in work_lists %}<a class="badge listbadge" href="/?list={{ l.slug }}"><svg width="12" height="12" style="vertical-align:-2px"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% elif l.position %} #{{ l.position }}{% endif %}{% if l.won == 1 %} · gewonnen{% elif l.won == 0 %} · genomineerd{% endif %}</a>{% endfor %}
+        {% for l in work_lists %}<a class="badge listbadge" href="/lijst/{{ l.slug }}"><svg width="12" height="12" style="vertical-align:-2px"><use href="#ic-award"/></svg> {{ l.name }}{% if l.year %} {{ l.year }}{% elif l.position %} #{{ l.position }}{% endif %}{% if l.won == 1 %} · gewonnen{% elif l.won == 0 %} · genomineerd{% endif %}</a>{% endfor %}
       </div>
       {% endif %}
 
+      {# A genre chip goes to /genre/<slug> — the page that is in the sitemap and
+         indexable — not to ?genre=, which every crawler is told to skip. These
+         56k book pages are the only real supply of internal links the genre
+         pages have. A name that folds to no slug has no page: chip, no link. #}
       {% if genres %}
       <div class="genres">
-        {% for g in genres %}<a class="chip" href="/?genre={{ g.name|urlencode }}">{% if g.parent %}<span style="opacity:.6">{{ g.parent }} › </span>{% endif %}{{ g.name }}</a>{% endfor %}
+        {% for g in genres %}{% if g.slug %}<a class="chip" href="/genre/{{ g.slug }}">{% if g.parent %}<span style="opacity:.6">{{ g.parent }} › </span>{% endif %}{{ g.name }}</a>{% else %}<span class="chip">{% if g.parent %}<span style="opacity:.6">{{ g.parent }} › </span>{% endif %}{{ g.name }}</span>{% endif %}{% endfor %}
       </div>
       {% endif %}
 
@@ -214,10 +218,16 @@
 
       <div class="meta">
         {% macro r(label, val) %}{% if val %}<div class="r"><div class="k">{{ label }}</div><div class="v">{{ val }}</div></div>{% endif %}{% endmacro %}
-        {% macro rlink(label, val, param) %}{% if val %}<div class="r"><div class="k">{{ label }}</div><div class="v"><a class="flink" href="/?{{ param }}={{ val|urlencode }}">{{ val }}</a></div></div>{% endif %}{% endmacro %}
-        {{ rlink('Taal', b['language'], 'language') }}
+        {# A language has no page of its own, only a filtered search: rel=nofollow so
+           a crawler doesn't queue ?-URLs it is then told to skip. The reader still
+           gets the filter. A publisher does have a page, so it links there. #}
+        {% macro rlink(label, val, param) %}{% if val %}<div class="r"><div class="k">{{ label }}</div><div class="v"><a class="flink" rel="nofollow" href="/?{{ param }}={{ val|urlencode }}">{{ val }}</a></div></div>{% endif %}{% endmacro %}
+        {# The filter runs inside the guard, not in the argument: a book with no
+           publisher would otherwise build a path out of None. #}
+        {% macro rpub(label, val) %}{% if val %}<div class="r"><div class="k">{{ label }}</div><div class="v"><a class="flink" href="{{ val|publisher_path }}">{{ val }}</a></div></div>{% endif %}{% endmacro %}
+        {{ rlink('Taal', b['language'], 'taal') }}
         {{ r('Verschenen', b['year']) }}
-        {{ rlink('Uitgever', b['publisher'], 'publisher') }}
+        {{ rpub('Uitgever', b['publisher']) }}
         {{ r('Doelgroep', b['audience']) }}
         {{ r('Leeftijd', b['age']) }}
         {{ r('Trefwoorden', b['keywords']) }}
@@ -248,8 +258,13 @@
           {{ r('Omvang', e['size']) }}
           {{ r('Bestandstype', e['features']) }}
           {% if not audio and e['ereader'] is not none %}{{ r('Voor e-reader', 'Ja' if e['ereader'] else 'Nee (alleen in de app)') }}{% endif %}
-          {# only what this edition says differently from the book as a whole #}
-          {% if e['publisher'] and e['publisher'] != b['publisher'] %}{{ rlink('Uitgever', e['publisher'], 'publisher') }}{% endif %}
+          {# Only what this edition says differently from the book as a whole. The
+             publisher here is stated, never linked: publisher pages are built from
+             `works.publisher`, which is the representative edition's, so an
+             edition-only publisher either has no page at all (38 of them) or has
+             one that does not list this book (5.838). A link that lands somewhere
+             the reader's book isn't is worse than plain text. #}
+          {% if e['publisher'] and e['publisher'] != b['publisher'] %}{{ r('Uitgever', e['publisher']) }}{% endif %}
           {% if e['year'] and e['year'] != b['year'] %}{{ r('Verschenen', e['year']) }}{% endif %}
         </div>
         {# no button for the lead edition of a format: the CTA under the cover is
