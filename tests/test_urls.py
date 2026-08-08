@@ -224,3 +224,32 @@ def test_autocomplete_offers_one_row_per_publisher_page(tmp_path):
     assert queries.publisher_page(ro, "keuken-pers-utrecht")["name"] == \
         "Keuken Pers, Utrecht"
     ro.close()
+
+
+def test_everything_that_ranks_publishers_merges_them_the_way_the_page_does():
+    """A publisher page merges its spellings; the lists that link to it must too.
+
+    Otherwise one publisher occupies several rows that all go to the same URL,
+    with its titles split across them — and ranking on the largest spelling drops
+    a merged publisher below a smaller single-spelling one. Live catalog: three
+    of the top twelve had a second spelling, and the dashboard counted 1.581
+    publishers where there are 1.527 pages.
+    """
+    import sqlite3
+
+    from obc.web import queries
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE publishers (name TEXT, name_fold TEXT, n INTEGER)")
+    conn.executemany("INSERT INTO publishers VALUES (?, ?, ?)", [
+        ("Gesplitst, Amsterdam", "gesplitst amsterdam", 6),
+        ("gesplitst, amsterdam", "gesplitst amsterdam", 6),
+        ("Heel, Utrecht", "heel utrecht", 10)])
+
+    rows = conn.execute(queries._MERGED_PUBLISHERS.format(where="1"), (12,)).fetchall()
+    # 6 + 6 outranks 10, and there is one row per page, not one per spelling
+    assert [(r["name"], r["n"]) for r in rows] == [
+        ("Gesplitst, Amsterdam", 12), ("Heel, Utrecht", 10)]
+    # the label is the spelling the publisher page itself would show
+    assert queries.publisher_page(conn, "gesplitst-amsterdam")["name"] == \
+        "Gesplitst, Amsterdam"

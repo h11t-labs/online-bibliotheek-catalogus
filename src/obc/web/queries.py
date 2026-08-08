@@ -313,17 +313,18 @@ def suggest(conn: sqlite3.Connection, q: str, limit: int = 7) -> dict | None:
     authors = [r["name"] for r in conn.execute(
         "SELECT name FROM authors WHERE name_fold LIKE ? "
         "ORDER BY n_works DESC LIMIT 5", (like,))]
-    # Grouped by fold, because that is what a publisher page is: five spellings of
-    # "De Crime Compagnie, Laren NH" are one destination, and offering all five
-    # would fill the dropdown with rows that go to the same URL. SQLite hands the
-    # bare `name` from the max(n) row, so the label is the most-used spelling —
-    # the same one publisher_page() puts in the heading.
+    # One row per publisher *page*, ranked on the page's own total: two spellings
+    # of six titles are a bigger destination than one spelling of ten, and ranking
+    # on the largest spelling would drop it off the end of the LIMIT instead.
     publishers = [r["name"] for r in conn.execute(
-        "SELECT name, max(n) AS n FROM publishers WHERE name_fold LIKE ? "
-        "GROUP BY name_fold ORDER BY n DESC LIMIT 4", (like,))]
+        _MERGED_PUBLISHERS.format(where="p.name_fold LIKE ?"), (like, 4))]
+    # Same merge for genres: they have their own page keyed on the fold, and the
+    # catalog has held one genre under two spellings before ("Biografieën", once
+    # precomposed and once with a combining diaeresis). None today, but the page
+    # merges them, so the suggester has to agree with it.
     genres = [r["name"] for r in conn.execute(
-        "SELECT name FROM genres WHERE fold(name) LIKE ? "
-        "ORDER BY n_works DESC LIMIT 4", (like,))]
+        "SELECT name, SUM(n_works) AS n FROM genres WHERE fold(name) LIKE ? "
+        "GROUP BY fold(name) ORDER BY n DESC, name LIMIT 4", (like,))]
     lists = [{"slug": r["slug"], "name": r["name"]} for r in conn.execute(
         "SELECT slug, name FROM lists WHERE fold(name) LIKE ? ORDER BY name LIMIT 4",
         (like,))]
@@ -540,6 +541,21 @@ def author_index(conn: sqlite3.Connection,
 # --------------------------------------------------------------------------- #
 # publisher pages
 # --------------------------------------------------------------------------- #
+# A publisher page merges every spelling that folds onto it, so anything that
+# ranks or lists publishers has to merge them the same way — or it splits one
+# publisher's titles across rows that all link to the same page. The label is
+# picked exactly as publisher_page() picks it: most-used spelling, ties to the
+# longest.
+_MERGED_PUBLISHERS = """
+    SELECT (SELECT p2.name FROM publishers p2 WHERE p2.name_fold = p.name_fold
+            ORDER BY p2.n DESC, length(p2.name) DESC LIMIT 1) AS name,
+           SUM(p.n) AS n
+    FROM publishers p
+    WHERE {where}
+    GROUP BY p.name_fold ORDER BY n DESC LIMIT ?
+"""
+
+
 def publisher_page(conn: sqlite3.Connection, slug: str) -> dict | None:
     """One publisher page: display name, every spelling of it, and its title count.
 
@@ -752,7 +768,9 @@ def web_stats(conn: sqlite3.Connection) -> dict:
         "audiobooks": one("SELECT COUNT(*) FROM works WHERE has_audiobook = 1"),
         "ereader": one("SELECT COUNT(*) FROM works WHERE ereader = 1"),
         "authors": one("SELECT COUNT(*) FROM authors"),
-        "publishers": one("SELECT COUNT(*) FROM publishers"),
+        # Pages, not spellings: 1.581 rows are 1.527 publishers, and the number
+        # sits next to links that go to the merged pages.
+        "publishers": one("SELECT COUNT(DISTINCT name_fold) FROM publishers"),
         "lists": one("SELECT COUNT(*) FROM lists"),
         "languages": many("SELECT name, n FROM languages ORDER BY n DESC LIMIT 8"),
         "genres": genres,
@@ -760,5 +778,5 @@ def web_stats(conn: sqlite3.Connection) -> dict:
                       "GROUP BY year ORDER BY year"),
         "top_authors": many("SELECT name, n_works AS n FROM authors "
                             "ORDER BY n_works DESC LIMIT 12"),
-        "top_publishers": many("SELECT name, n FROM publishers ORDER BY n DESC LIMIT 12"),
+        "top_publishers": many(_MERGED_PUBLISHERS.format(where="1"), 12),
     }
