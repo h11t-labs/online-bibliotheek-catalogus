@@ -192,12 +192,12 @@
       </button>
       <div class="rail-body">
       <div class="seg" role="group" aria-label="Soort">
-        <a class="seg-opt {{ 'on' if not format }}" href="{{ url_with(state, format='', page=1) }}">Alles</a>
-        <a class="seg-opt {{ 'on' if format=='ebook' }}" href="{{ url_with(state, format='ebook', page=1) }}"><svg><use href="#ic-book"/></svg> E-books</a>
-        <a class="seg-opt {{ 'on' if format=='audiobook' }}" href="{{ url_with(state, format='audiobook', page=1) }}"><svg><use href="#ic-audio"/></svg> Luister</a>
+        <a class="seg-opt {{ 'on' if not format }}" href="{{ url_with(state, formaat='', pagina=1) }}">Alles</a>
+        <a class="seg-opt {{ 'on' if format=='ebook' }}" href="{{ url_with(state, formaat='ebook', pagina=1) }}"><svg><use href="#ic-book"/></svg> E-books</a>
+        <a class="seg-opt {{ 'on' if format=='audiobook' }}" href="{{ url_with(state, formaat='audiobook', pagina=1) }}"><svg><use href="#ic-audio"/></svg> Luister</a>
       </div>
       <form action="/" method="get">
-        <input type="hidden" name="q" value="{{ q }}">
+        <input type="hidden" name="zoek" value="{{ q }}">
         <input type="hidden" name="format" value="{{ format }}">
         <label class="ereader-toggle">
           <input type="checkbox" name="ereader" value="1" {{ 'checked' if ereader=='1' }}
@@ -236,29 +236,29 @@
           {{ 'titel' if total==1 else 'titels' }}{% if q %} voor “{{ q }}”{% endif %}</span>
         <div class="toolbar">
           <div class="seg viewseg" role="group" aria-label="Weergave">
-            <a class="seg-opt {{ 'on' if view != 'list' }}" href="{{ url_with(state, view='grid', page=1) }}" aria-label="Raster" title="Raster">
+            <a class="seg-opt {{ 'on' if view != 'list' }}" href="{{ url_with(state, weergave='grid', pagina=1) }}" aria-label="Raster" title="Raster">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/></svg>
             </a>
-            <a class="seg-opt {{ 'on' if view == 'list' }}" href="{{ url_with(state, view='list', page=1) }}" aria-label="Lijst" title="Lijst">
+            <a class="seg-opt {{ 'on' if view == 'list' }}" href="{{ url_with(state, weergave='list', pagina=1) }}" aria-label="Lijst" title="Lijst">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><line x1="3.5" y1="6" x2="3.6" y2="6"/><line x1="3.5" y1="12" x2="3.6" y2="12"/><line x1="3.5" y1="18" x2="3.6" y2="18"/></svg>
             </a>
           </div>
           <select class="field" onchange="if(this.value)location.href=this.value" aria-label="Sorteren">
-            <option value="{{ url_with(state, sort='added', page=1) }}"     {{ 'selected' if sort=='added' }}>Recent toegevoegd</option>
-            <option value="{{ url_with(state, sort='year_desc', page=1) }}" {{ 'selected' if sort=='year_desc' }}>Nieuwste eerst</option>
-            <option value="{{ url_with(state, sort='year_asc', page=1) }}"  {{ 'selected' if sort=='year_asc' }}>Oudste eerst</option>
-            <option value="{{ url_with(state, sort='title', page=1) }}"     {{ 'selected' if sort=='title' }}>Titel A–Z</option>
-            <option value="{{ url_with(state, sort='relevance', page=1) }}" {{ 'selected' if sort=='relevance' }}>Relevantie</option>
+            <option value="{{ url_with(state, sortering='added', pagina=1) }}"     {{ 'selected' if sort=='added' }}>Recent toegevoegd</option>
+            <option value="{{ url_with(state, sortering='year_desc', pagina=1) }}" {{ 'selected' if sort=='year_desc' }}>Nieuwste eerst</option>
+            <option value="{{ url_with(state, sortering='year_asc', pagina=1) }}"  {{ 'selected' if sort=='year_asc' }}>Oudste eerst</option>
+            <option value="{{ url_with(state, sortering='title', pagina=1) }}"     {{ 'selected' if sort=='title' }}>Titel A–Z</option>
+            <option value="{{ url_with(state, sortering='relevance', pagina=1) }}" {{ 'selected' if sort=='relevance' }}>Relevantie</option>
           </select>
           <select class="field" onchange="if(this.value)location.href=this.value" aria-label="Aantal per pagina">
-            {% for n in per_page_options %}<option value="{{ url_with(state, per_page=n, page=1) }}" {{ 'selected' if n == page_size }}>{{ n }} per pagina</option>{% endfor %}
+            {% for n in per_page_options %}<option value="{{ url_with(state, per_pagina=n, pagina=1) }}" {{ 'selected' if n == page_size }}>{{ n }} per pagina</option>{% endfor %}
           </select>
         </div>
       </div>
 
       {% if chips or q %}
       <div class="active-chips">
-        {% if q %}<a class="chip" href="{{ url_with(state, q='', page=1) }}">“{{ q }}” <span class="x">×</span></a>{% endif %}
+        {% if q %}<a class="chip" href="{{ url_with(state, zoek='', pagina=1) }}">“{{ q }}” <span class="x">×</span></a>{% endif %}
         {% for c in chips %}
         <a class="chip" href="{{ c.url }}"><svg><use href="#ic-{{ c.icon }}"/></svg>{{ c.label }} <span class="x">×</span></a>
         {% endfor %}
@@ -305,13 +305,13 @@
 
       {% if pages > 1 %}
       <nav class="pager">
-        {% if page > 1 %}<a rel="prev" href="{{ url_with(state, page=page-1) }}">‹</a>{% endif %}
-        {% if page > 3 %}<a href="{{ url_with(state, page=1) }}">1</a><span class="dots">…</span>{% endif %}
+        {% if page > 1 %}<a rel="prev" href="{{ url_with(state, pagina=page-1) }}">‹</a>{% endif %}
+        {% if page > 3 %}<a href="{{ url_with(state, pagina=1) }}">1</a><span class="dots">…</span>{% endif %}
         {% for p in range([1,page-2]|max, [pages,page+2]|min + 1) %}
-          {% if p == page %}<span class="cur">{{ p }}</span>{% else %}<a href="{{ url_with(state, page=p) }}">{{ p }}</a>{% endif %}
+          {% if p == page %}<span class="cur">{{ p }}</span>{% else %}<a href="{{ url_with(state, pagina=p) }}">{{ p }}</a>{% endif %}
         {% endfor %}
-        {% if page < pages-2 %}<span class="dots">…</span><a href="{{ url_with(state, page=pages) }}">{{ pages }}</a>{% endif %}
-        {% if page < pages %}<a rel="next" href="{{ url_with(state, page=page+1) }}">›</a>{% endif %}
+        {% if page < pages-2 %}<span class="dots">…</span><a href="{{ url_with(state, pagina=pages) }}">{{ pages }}</a>{% endif %}
+        {% if page < pages %}<a rel="next" href="{{ url_with(state, pagina=page+1) }}">›</a>{% endif %}
       </nav>
       {% endif %}
 

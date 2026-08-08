@@ -19,7 +19,7 @@ def test_browse_all_newest_first(ro_conn):
 
 
 def test_format_filter_counts_works_available_in_that_format(ro_conn):
-    """``?format=audiobook`` means "books you can listen to", not "audiobook rows".
+    """``?formaat=audiobook`` means "books you can listen to", not "audiobook rows".
 
     The old model skipped its own collapse whenever a format filter was set, on
     the assumption that a work then has only that one edition — false for work 001
@@ -66,7 +66,7 @@ def test_ereader_author_genre_list_filters(ro_conn):
 
 
 def test_author_filter_matches_a_variant_spelling(ro_conn):
-    """Only the canonical spelling survives as authors.name now, so an ?author= URL
+    """Only the canonical spelling survives as authors.name now, so an ?auteur= URL
     carrying a variant — a link someone already has, or a stale crawl — has to keep
     working. The filter matches on the fold."""
     for spelling in ("Bob de Wit", "Bob De Wit", "BOB DE WIT"):
@@ -125,7 +125,7 @@ def test_facet_values(ro_conn):
 
 
 def test_limit_clamps_hostile_values(ro_conn):
-    # SQLite treats LIMIT -1 as unlimited, so callers must clamp. suggest/facet_values
+    # SQLite treats LIMIT -1 as unlimited, so callers must clamp. suggest/facetten_values
     # do this defensively even when reached outside the (validated) HTTP routes.
     assert Q._limit(-1, 7, 20) == 1
     assert Q._limit(999, 30, 50) == 50
@@ -329,7 +329,7 @@ def test_relevance_weights_subjects_above_summary(tmp_path):
 
 
 def test_the_format_filter_counts_without_touching_the_table(ro_conn):
-    """The exact total behind /e-books and every ?format= search.
+    """The exact total behind /e-books and every ?formaat= search.
 
     Unindexed, `COUNT(*) FROM works WHERE has_ebook = 1` is a full scan: 175ms
     locally over 50,373 rows, and seconds on a 512MB VM where the 593MB table is

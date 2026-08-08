@@ -14,7 +14,7 @@ Nine *editions* forming five *works*, chosen to exercise the interesting paths:
   person grain has a spelling variant to merge (majority "Bob de Wit", 2 vs 1).
 * 005 + 008 — one work **only** via ``strip_format_noise``: 008's title carries a
   "- luisterboek" suffix. 005 has keywords not present in the title/subjects (so
-  full-text/suggest matching on keywords has something to exercise).
+  full-text/suggesties matching on keywords has something to exercise).
 * 006 — Spanish, diacritics in the title.
 
 Truth the tests assert against: 9 editions, 5 works; work 001 = {001, 002, 007}

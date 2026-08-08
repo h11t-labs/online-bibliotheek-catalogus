@@ -35,16 +35,16 @@
 {% block body %}
 <main>
   <div class="lh">
-    <div class="crumb"><a href="/lists">‹ Lijsten</a></div>
+    <div class="crumb"><a href="/lijsten">‹ Lijsten</a></div>
     <h1>{{ lst['name'] }}</h1>
     {% if lst['description'] %}<p>{{ lst['description'] }}</p>{% endif %}
     <div class="stat"><b>{{ available }}</b> van {{ total }} titels beschikbaar in de bibliotheek</div>
     {% if lst['updated_at'] %}<div class="src" style="opacity:.7">Lijst bijgewerkt op {{ lst['updated_at'] | nldate }}</div>{% endif %}
     {% if lst['url'] %}<div class="src"><a class="flink" href="{{ lst['url'] }}" target="_blank" rel="noopener" style="text-decoration:underline dotted">bron: {{ lst['url'] }} ↗</a></div>{% endif %}
     <div class="seg avail-filter">
-      <a class="seg-opt {{ 'on' if not show }}" href="/list/{{ lst['slug'] }}">Alles ({{ total }})</a>
-      <a class="seg-opt {{ 'on' if show=='available' }}" href="/list/{{ lst['slug'] }}?show=available">Beschikbaar ({{ available }})</a>
-      <a class="seg-opt {{ 'on' if show=='unavailable' }}" href="/list/{{ lst['slug'] }}?show=unavailable">Niet beschikbaar ({{ total - available }})</a>
+      <a class="seg-opt {{ 'on' if not show }}" href="/lijst/{{ lst['slug'] }}">Alles ({{ total }})</a>
+      <a class="seg-opt {{ 'on' if show=='available' }}" href="/lijst/{{ lst['slug'] }}?toon=available">Beschikbaar ({{ available }})</a>
+      <a class="seg-opt {{ 'on' if show=='unavailable' }}" href="/lijst/{{ lst['slug'] }}?toon=unavailable">Niet beschikbaar ({{ total - available }})</a>
     </div>
   </div>
 

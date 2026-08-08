@@ -82,8 +82,8 @@
   {% endmacro %}
 
   {{ genrelist(s.genres) }}
-  {{ barlist('Talen', s.languages, '/?language=') }}
+  {{ barlist('Talen', s.languages, '/?taal=') }}
   {{ barlist('Topauteurs', s.top_authors, 'author') }}
-  {{ barlist('Topuitgevers', s.top_publishers, '/?publisher=') }}
+  {{ barlist('Topuitgevers', s.top_publishers, '/?uitgever=') }}
 </main>
 {% endblock %}

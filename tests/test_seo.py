@@ -19,28 +19,28 @@ def test_author_urls_are_slugs(client):
     assert slugify("Lisbeth Imbo") == "lisbeth-imbo"
     assert slugify("Λήδα Βάρβαρούση") == ""     # no Latin characters to slug
 
-    assert client.get("/author/anna-vrij").status_code == 200
-    # the old percent-encoded links keep working and move to the slug
-    for legacy in ("/author/Anna Vrij", "/author/Anna%20Vrij", "/author/ANNA-VRIJ"):
-        r = client.get(legacy, follow_redirects=False)
-        assert r.status_code == 301, legacy
-        assert r.headers["location"] == "/author/anna-vrij", legacy
-    # and nothing links to the encoded form any more
-    book = client.get("/book/001").text
-    assert 'href="/author/anna-vrij"' in book
-    assert "/author/Anna%20Vrij" not in book
+    assert client.get("/auteur/anna-vrij").status_code == 200
+    # the slug is the only spelling that answers: the encoded and capitalised
+    # forms used to 301 here, and a page reachable at four URLs is exactly the
+    # duplication this scheme exists to prevent
+    for other in ("/auteur/Anna Vrij", "/auteur/Anna%20Vrij", "/auteur/ANNA-VRIJ"):
+        assert client.get(other, follow_redirects=False).status_code == 404, other
+    # and nothing links to the encoded form anyway
+    book = client.get("/boek/de-ontdekking--anna-vrij--001").text
+    assert 'href="/auteur/anna-vrij"' in book
+    assert "/auteur/Anna%20Vrij" not in book
     crumbs = [d for d in jsonld(book) if d.get("@type") == "BreadcrumbList"][0]
-    assert any(i.get("item", "").endswith("/author/anna-vrij")
+    assert any(i.get("item", "").endswith("/auteur/anna-vrij")
                for i in crumbs["itemListElement"])
 
 
 def test_series_urls_are_slugs(client):
-    # the encoded form keeps working and moves to the slug, as with authors
-    r = client.get("/series/Het Mysterie", follow_redirects=False)
-    assert r.status_code == 301 and r.headers["location"] == "/series/het-mysterie"
-    book = client.get("/book/004").text
-    assert 'href="/series/het-mysterie"' in book
-    assert "/series/Het%20Mysterie" not in book
+    # one spelling only, as with authors
+    assert client.get("/reeks/het-mysterie").status_code == 200
+    assert client.get("/reeks/Het Mysterie", follow_redirects=False).status_code == 404
+    book = client.get("/boek/het-mysterie-deel-2--bob-de-wit--004").text
+    assert 'href="/reeks/het-mysterie"' in book
+    assert "/reeks/Het%20Mysterie" not in book
 
 
 def test_robots_and_sitemaps(client):
@@ -50,7 +50,7 @@ def test_robots_and_sitemaps(client):
     idx = client.get("/sitemap.xml")
     assert idx.status_code == 200 and "<sitemapindex" in idx.text
     stat = client.get("/sitemap-static.xml")
-    assert stat.status_code == 200 and "/about" in stat.text
+    assert stat.status_code == 200 and "/over" in stat.text
     books = client.get("/sitemap-books-1.xml")
     assert books.status_code == 200 and "/boek/de-ontdekking--anna-vrij--001" in books.text
 
@@ -62,10 +62,10 @@ def test_sitemap_lists_the_aggregation_pages(client):
     assert "/sitemap-browse.xml" in idx
     browse = client.get("/sitemap-browse.xml")
     assert browse.status_code == 200
-    assert "/authors<" in browse.text and "/authors/w<" in browse.text
-    assert "/author/bob-de-wit<" in browse.text     # 2 works -> its own page
+    assert "/auteurs<" in browse.text and "/auteurs/w<" in browse.text
+    assert "/auteur/bob-de-wit<" in browse.text     # 2 works -> its own page
     # Anna Vrij has one work in two formats: one card, so not its own page
-    assert "/author/anna-vrij<" not in browse.text
+    assert "/auteur/anna-vrij<" not in browse.text
     # slugs, never encoded names: a sitemap of URLs that immediately 301 wastes
     # exactly the crawl budget this sitemap exists to spend well
     assert "%20" not in browse.text and "%2F" not in browse.text
@@ -76,10 +76,10 @@ def test_sitemap_skips_single_title_aggregations(client, ro_conn):
     # title's own page; thousands of them dilute the ones that do add something
     from obc.web import queries
     browse = client.get("/sitemap-browse.xml").text
-    assert "/author/dirk-kok" not in browse         # 1 title
-    assert client.get("/author/dirk-kok").status_code == 200   # still reachable
+    assert "/auteur/dirk-kok" not in browse         # 1 title
+    assert client.get("/auteur/dirk-kok").status_code == 200   # still reachable
     # the fixture's only series has a single part, so it's held back as well
-    assert "/series/" not in browse
+    assert "/reeks/" not in browse
     assert [r["name"] for r in queries.series_index(ro_conn)] == ["Het Mysterie"]
 
 
@@ -96,8 +96,8 @@ def test_seo_meta_and_jsonld(client):
     assert '<meta name="description"' in home
     assert '<link rel="canonical"' in home
     assert 'content="index,follow"' in home          # bare browse is indexable
-    assert 'content="noindex,follow"' in client.get("/?q=de").text  # filtered -> noindex
-    book = client.get("/book/001").text
+    assert 'content="noindex,follow"' in client.get("/?zoek=de").text  # filtered -> noindex
+    book = client.get("/boek/de-ontdekking--anna-vrij--001").text
     assert "application/ld+json" in book and "Book" in book
     assert 'property="og:image"' in book             # cover as OG image
 
@@ -105,15 +105,15 @@ def test_seo_meta_and_jsonld(client):
 def test_book_page_links_to_pages_not_to_the_blocked_filter_space(client):
     """A book page is the site's only bulk supply of internal links.
 
-    It used to spend them on ``/?list=`` and ``/?genre=`` — URLs robots.txt tells
-    every crawler to skip — while ``/list/<slug>`` and ``/genre/<slug>`` sat in the
+    It used to spend them on ``/?lijst=`` and ``/?genre=`` — URLs robots.txt tells
+    every crawler to skip — while ``/lijst/<slug>`` and ``/genre/<slug>`` sat in the
     sitemap with almost nothing pointing at them. The ones that keep a ?-URL
     because no page exists for them (language, publisher) carry rel=nofollow, so a
     crawler is not sent to fetch what it is then told to ignore.
     """
-    book = client.get("/book/001").text
-    assert 'href="/list/test-top"' in book
-    assert 'href="/?list=' not in book and 'href="/?genre=' not in book
+    book = client.get("/boek/de-ontdekking--anna-vrij--001").text
+    assert 'href="/lijst/test-top"' in book
+    assert 'href="/?lijst=' not in book and 'href="/?genre=' not in book
     for row in re.findall(r'<a class="flink"[^>]*href="/\?[^"]*"', book):
         assert 'rel="nofollow"' in row, row
 
@@ -133,7 +133,7 @@ def test_genre_chips_link_to_the_genre_page(client, monkeypatch):
         "genres": [{"name": "Spanning & Thrillers", "parent": None,
                     "slug": "spanning-thrillers"},
                    {"name": "Θρίλερ", "parent": "Spanning & Thrillers", "slug": ""}]})
-    book = client.get("/book/001").text
+    book = client.get("/boek/de-ontdekking--anna-vrij--001").text
     assert 'href="/genre/spanning-thrillers"' in book
     assert '<span class="chip">' in book
     assert 'href="/genre/"' not in book
@@ -153,10 +153,10 @@ def test_site_name_signals_on_home(client):
 def test_website_jsonld_only_on_bare_home(client):
     # the ?-carrying variants are noindex and robots-disallowed; marking them up as
     # "the site" too would hand Search competing copies of the same entity.
-    # ?sort= and ?view= carry no chips and no query text, so they'd slip through a
+    # ?sortering= and ?weergave= carry no chips and no query text, so they'd slip through a
     # filters-only check — the rule keys off the query string itself.
-    for path in ("/?q=de", "/?format=ebook", "/?page=2", "/?sort=title",
-                 "/?view=list", "/?per_page=48", "/about", "/book/001"):
+    for path in ("/?zoek=de", "/?formaat=ebook", "/?pagina=2", "/?sortering=title",
+                 "/?weergave=list", "/?per_pagina=48", "/over", "/boek/de-ontdekking--anna-vrij--001"):
         assert not [d for d in jsonld(client.get(path).text)
                     if d.get("@type") == "WebSite"], path
 
@@ -168,12 +168,12 @@ def test_book_jsonld_uses_a_language_code_and_a_tidy_description(client):
     assert language_code("Klingon") is None
     assert language_code("Schots") is None            # Scots vs Gaelic — ambiguous
     assert language_code(None) is None
-    book = [d for d in jsonld(client.get("/book/001").text)
+    book = [d for d in jsonld(client.get("/boek/de-ontdekking--anna-vrij--001").text)
             if d.get("@type") == "Book"][0]
     assert book["inLanguage"] == "nl"                 # not "Nederlands"
     assert not book["description"].startswith('"')    # no wrapping quote mark
     assert "\n" not in book["description"]
-    spanish = [d for d in jsonld(client.get("/book/006").text)
+    spanish = [d for d in jsonld(client.get("/boek/poesia-espanola--elena-sol--006").text)
                if d.get("@type") == "Book"][0]
     assert spanish["inLanguage"] == "es"
 
@@ -183,12 +183,12 @@ def test_author_pages_survive_a_slash_in_the_name(client):
     # plain {name} route their page 404s, so both the book-page link and the
     # breadcrumb item URL would point at a dead URL
     # our handler answers (route matched) rather than FastAPI's routing 404
-    for path in ("/author/Elizabeth August/Dreamshield",
-                 "/author/Elizabeth%20August%2FDreamshield"):
+    for path in ("/auteur/Elizabeth August/Dreamshield",
+                 "/auteur/Elizabeth%20August%2FDreamshield"):
         r = client.get(path)
         assert r.status_code == 404 and "Auteur niet gevonden" in r.text, path
     # every breadcrumb item URL must resolve — a trail into a 404 is worse than none
-    body = client.get("/book/001").text
+    body = client.get("/boek/de-ontdekking--anna-vrij--001").text
     crumbs = [d for d in jsonld(body) if d.get("@type") == "BreadcrumbList"][0]
     for item in crumbs["itemListElement"]:
         if "item" in item:
@@ -203,7 +203,7 @@ def test_home_title_and_description_quote_the_catalog_size(client):
 
 
 def test_breadcrumbs_jsonld(client):
-    crumbs = [d for d in jsonld(client.get("/book/001").text)
+    crumbs = [d for d in jsonld(client.get("/boek/de-ontdekking--anna-vrij--001").text)
               if d.get("@type") == "BreadcrumbList"]
     assert len(crumbs) == 1
     items = crumbs[0]["itemListElement"]
@@ -211,9 +211,9 @@ def test_breadcrumbs_jsonld(client):
     assert items[0]["name"] == "Home" and items[0]["item"].endswith("/")
     assert "item" not in items[-1]                   # the page you're on gets no link
     # a book by a known author routes through that author's page
-    assert any(i.get("item", "").startswith(items[0]["item"] + "author/") for i in items)
+    assert any(i.get("item", "").startswith(items[0]["item"] + "auteur/") for i in items)
     # and the other detail pages carry a trail too
-    for path in ("/author/Anna Vrij", "/list/test-top", "/about", "/stats"):
+    for path in ("/auteur/anna-vrij", "/lijst/test-top", "/over", "/statistieken"):
         body = client.get(path).text
         assert any(d.get("@type") == "BreadcrumbList" for d in jsonld(body)), path
 
@@ -225,7 +225,7 @@ def test_book_meta_description_is_snippet_clean(client):
     assert _snippet("a" * 40 + " " + "b" * 200, limit=50).endswith("…")
     assert len(_snippet("woord " * 100)) <= 156
     assert not _snippet('"geciteerd"').startswith('"')
-    body = client.get("/book/001").text
+    body = client.get("/boek/de-ontdekking--anna-vrij--001").text
     desc = re.search(r'<meta name="description" content="(.*?)">', body).group(1)
     assert desc and "\n" not in desc and not desc.startswith("&#34;")
 
@@ -241,7 +241,7 @@ def test_crawl_delay_lets_bing_finish_a_pass(client):
 def test_head_is_answered_like_get(client):
     # FastAPI's APIRoute doesn't add HEAD to GET routes, so every page used to
     # answer 405 — link checkers and monitors read that as a broken URL.
-    for path in ("/", "/book/001", "/about", "/robots.txt", "/sitemap.xml", "/healthz"):
+    for path in ("/", "/boek/de-ontdekking--anna-vrij--001", "/over", "/robots.txt", "/sitemap.xml", "/healthz"):
         head, get = client.head(path), client.get(path)
         assert head.status_code == 200, path
         assert head.status_code == get.status_code
@@ -268,17 +268,18 @@ def test_alternate_hosts_redirect_to_the_canonical_one(client, monkeypatch):
     monkeypatch.setattr(seomod, "SITE_URL", "https://example.nl")
     monkeypatch.setattr(appmod, "_CANONICAL_HOST", "example.nl")
 
-    r = client.get("/book/001", headers={"host": "www.example.nl"},
+    r = client.get("/boek/de-ontdekking--anna-vrij--001", headers={"host": "www.example.nl"},
                    follow_redirects=False)
     assert r.status_code == 301
-    assert r.headers["location"] == "https://example.nl/book/001"
+    assert r.headers["location"] == (
+        "https://example.nl/boek/de-ontdekking--anna-vrij--001")
     # the bounce is a response the site sends, so it carries the same security
     # headers as any other — it gets them in the same middleware pass
     assert r.headers["X-Content-Type-Options"] == "nosniff"
     assert "Content-Security-Policy" in r.headers
     # the query string survives the bounce
-    r = client.get("/?q=de", headers={"host": "app.fly.dev"}, follow_redirects=False)
-    assert r.headers["location"] == "https://example.nl/?q=de"
+    r = client.get("/?zoek=de", headers={"host": "app.fly.dev"}, follow_redirects=False)
+    assert r.headers["location"] == "https://example.nl/?zoek=de"
     # the canonical host itself is served, not bounced (port and case ignored)
     assert client.get("/", headers={"host": "example.nl"}).status_code == 200
     assert client.get("/", headers={"host": "Example.NL:443"}).status_code == 200
@@ -326,7 +327,7 @@ def test_no_host_redirect_without_a_configured_site_url(client):
 
 def test_cache_control(client):
     # stable detail pages are publicly cacheable, offloading repeat/crawler hits
-    assert "public" in client.get("/book/001").headers.get("cache-control", "")
+    assert "public" in client.get("/boek/de-ontdekking--anna-vrij--001").headers.get("cache-control", "")
     # volatile / non-content endpoints stay uncached
     assert "cache-control" not in client.get("/healthz").headers
-    assert "cache-control" not in client.get("/suggest?q=a").headers
+    assert "cache-control" not in client.get("/suggesties?zoek=a").headers

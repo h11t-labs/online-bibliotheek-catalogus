@@ -83,7 +83,7 @@ def _url_with(state: dict, **over) -> str:
 def _url_without(state: dict, key: str, value: str) -> str:
     """Return a URL with ``value`` removed from the list-valued ``key``."""
     remaining = [v for v in (state.get(key) or []) if v != value]
-    return _url_with({**state, key: remaining}, page=1)
+    return _url_with({**state, key: remaining}, pagina=1)
 
 
 _NL_MONTHS = ("", "januari", "februari", "maart", "april", "mei", "juni", "juli",
@@ -203,9 +203,11 @@ app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan
 # Pages with no per-user state and a catalog that only changes on the daily rebuild,
 # so they're safe to cache publicly — this offloads repeat hits and crawler traffic
 # from the single small VM. Detail pages cache an hour; the browse home a few minutes.
-# "/book/" stays: those are permanent redirects now, and a redirect is cacheable too.
-_CACHE_PREFIXES = ("/boek/", "/book/", "/author", "/series/", "/list", "/stats",
-                   "/about", "/genre", "/e-books", "/luisterboeken")
+# The rename 301s below are in here too: a redirect is cacheable, and these are the
+# ones a crawler will keep re-fetching until it has moved its index over.
+_CACHE_PREFIXES = ("/boek/", "/auteur", "/reeks/", "/lijst", "/statistieken",
+                   "/over", "/genre", "/e-books", "/luisterboeken",
+                   "/author", "/series/", "/list", "/about", "/stats")
 
 
 # Templates use inline <script>/<style> blocks (base.html), GoatCounter loads its
@@ -241,6 +243,29 @@ _CANONICAL_HOST = _hostname(seo.SITE_URL) if seo.SITE_URL else ""
 _NO_REDIRECT = ("/healthz", "/admin/")
 
 
+# The site is a Dutch catalog read by Dutch readers, so its URLs are Dutch. The
+# English halves of the scheme were renamed in one pass; this table is the entire
+# cost of that, and it exists for one reason: ~11.3k /author/ and /series/ URLs
+# were already indexed, and a 301 moves them over instead of throwing them away.
+#
+# Longest first — "/authors" has to win before "/author" sees it, and "/lists"
+# before "/list". Nothing else redirects: a wrong slug, a capitalised letter or a
+# retired /book/{ppn} is a 404, because one page answering at two URLs is the
+# problem this whole change is here to stop.
+_RENAMED = (("/authors", "/auteurs"), ("/author", "/auteur"),
+            ("/series", "/reeks"), ("/lists", "/lijsten"), ("/list", "/lijst"),
+            ("/about", "/over"), ("/stats", "/statistieken"),
+            ("/suggest", "/suggesties"), ("/facet", "/facetten"))
+
+
+def _renamed_path(path: str) -> str:
+    """The Dutch path for an old English one, or "" when it was never renamed."""
+    for old, new in _RENAMED:
+        if path == old or path.startswith(old + "/"):
+            return new + path[len(old):]
+    return ""
+
+
 def _is_alias(host: str) -> bool:
     """Is ``host`` a known alias of the canonical one (so safe to 301 away)?"""
     host = _hostname(host)
@@ -259,11 +284,15 @@ async def _headers_and_canonical_host(request: Request, call_next):
     # The alias 301 skips the routing pass but still gets the headers below — it is
     # a response the site sends, and it used to get them by virtue of running in
     # the inner of the two middlewares.
+    query = f"?{request.url.query}" if request.url.query else ""
+    renamed = _renamed_path(request.url.path)
     if (_is_alias(request.headers.get("host", ""))
             and not request.url.path.startswith(_NO_REDIRECT)):
-        query = f"?{request.url.query}" if request.url.query else ""
         response: Response = RedirectResponse(
-            seo.SITE_URL + request.url.path + query, status_code=301)
+            seo.SITE_URL + (renamed or request.url.path) + query, status_code=301)
+    elif renamed:
+        # One hop, so an alias host on an old path doesn't cost two.
+        response = RedirectResponse(renamed + query, status_code=301)
     else:
         response = await call_next(request)
     # Security headers on every response (cheap, no per-user state).
@@ -317,7 +346,7 @@ async def _db_unavailable(request: Request, exc: sqlite3.OperationalError):
 # --------------------------------------------------------------------------- #
 # 404
 # --------------------------------------------------------------------------- #
-# Heading + explanation per kind of miss. A dead /book/… link is a different
+# Heading + explanation per kind of miss. A dead /boek/… link is a different
 # situation from a mistyped URL, and saying which one it is beats one generic
 # "niet gevonden" for every case.
 _NOT_FOUND_COPY = {
@@ -383,7 +412,7 @@ def _near_matches(term: str, limit: int = 6, titles: bool = True) -> list[dict]:
     out = [{"kind": "author", "icon": "author", "label": name, "url": seo.author_path(name)}
            for name in data["authors"]]
     out += [{"kind": "list", "icon": "list", "label": lst["name"],
-             "url": f"/list/{lst['slug']}"} for lst in data["lists"]]
+             "url": f"/lijst/{lst['slug']}"} for lst in data["lists"]]
     # A genre does have a page of its own now, so the 404 page's near matches send
     # you there instead of into the robots-disallowed ?genre= space — unless the
     # name folds to no slug, which build_genre_taxonomy skips, so there is no page
@@ -505,20 +534,22 @@ def _browse_page(request: Request, conn: sqlite3.Connection, *, heading: str,
 @app.get("/", response_class=HTMLResponse)
 def search(
     request: Request,
-    q: str = "",
-    format_: str = Query("", alias="format"),
-    language: list[str] = Query(default=[]),
+    # The wire names are Dutch like the rest of the URLs; the Python names stay
+    # English, so the query builders below read the same as the SQL they feed.
+    q: str = Query("", alias="zoek"),
+    format_: str = Query("", alias="formaat"),
+    language: list[str] = Query(default=[], alias="taal"),
     genre: list[str] = Query(default=[]),
-    publisher: list[str] = Query(default=[]),
-    author: list[str] = Query(default=[]),
-    list_: list[str] = Query(default=[], alias="list"),
+    publisher: list[str] = Query(default=[], alias="uitgever"),
+    author: list[str] = Query(default=[], alias="auteur"),
+    list_: list[str] = Query(default=[], alias="lijst"),
     ereader: str = "",
-    year_from: str = "",
-    year_to: str = "",
-    sort: str = "",
-    view: str = "",
-    page: int = Query(1, ge=1),
-    per_page: int = Query(PAGE_SIZE, alias="per_page"),
+    year_from: str = Query("", alias="jaar_van"),
+    year_to: str = Query("", alias="jaar_tot"),
+    sort: str = Query("", alias="sortering"),
+    view: str = Query("", alias="weergave"),
+    page: int = Query(1, ge=1, alias="pagina"),
+    per_page: int = Query(PAGE_SIZE, alias="per_pagina"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     q = q.strip()
@@ -551,37 +582,39 @@ def search(
     pages = min(max(1, (total + page_size - 1) // page_size), MAX_PAGES)
     list_labels = {lst["slug"]: lst["name"] for lst in facets["lists"]}
 
-    state = {"q": q, "format": format_, "language": language, "genre": genre,
-             "publisher": publisher, "author": author, "list": lists_,
-             "ereader": ereader if ereader == "1" else "", "sort": sort,
-             "year_from": year_from if yf is not None else "",
-             "year_to": year_to if yt is not None else "",
-             "view": view if view == "list" else "",   # empty = default grid (clean URLs)
-             "per_page": str(page_size) if page_size != PAGE_SIZE else ""}
+    # ``state`` is keyed by the *wire* names: _url_with urlencodes it straight into
+    # the query string, so these keys are the URL.
+    state = {"zoek": q, "formaat": format_, "taal": language, "genre": genre,
+             "uitgever": publisher, "auteur": author, "lijst": lists_,
+             "ereader": ereader if ereader == "1" else "", "sortering": sort,
+             "jaar_van": year_from if yf is not None else "",
+             "jaar_tot": year_to if yt is not None else "",
+             "weergave": view if view == "list" else "",  # empty = grid (clean URLs)
+             "per_pagina": str(page_size) if page_size != PAGE_SIZE else ""}
 
     # active-filter chips (each with a remove URL + icon)
     chips = []
     if format_:
         chips.append({"label": "E-book" if format_ == "ebook" else "Luisterboek",
                       "icon": "book" if format_ == "ebook" else "audio",
-                      "url": _url_with(state, format="", page=1)})
-    for key, icon in (("language", "lang"), ("genre", "genre"),
-                      ("publisher", "publisher"), ("author", "author")):
+                      "url": _url_with(state, formaat="", pagina=1)})
+    for key, icon in (("taal", "lang"), ("genre", "genre"),
+                      ("uitgever", "publisher"), ("auteur", "author")):
         for v in state[key]:
             chips.append({"label": v, "icon": icon,
                           "url": _url_without(state, key, v)})
-    for slug in state["list"]:
+    for slug in state["lijst"]:
         chips.append({"label": list_labels.get(slug, slug), "icon": "list",
-                      "url": _url_without(state, "list", slug)})
+                      "url": _url_without(state, "lijst", slug)})
     if yf is not None:
         chips.append({"label": f"vanaf {yf}", "icon": "cal",
-                      "url": _url_with(state, year_from="", page=1)})
+                      "url": _url_with(state, jaar_van="", pagina=1)})
     if yt is not None:
         chips.append({"label": f"t/m {yt}", "icon": "cal",
-                      "url": _url_with(state, year_to="", page=1)})
+                      "url": _url_with(state, jaar_tot="", pagina=1)})
     if ereader == "1":
         chips.append({"label": "Voor e-reader", "icon": "ereader",
-                      "url": _url_with(state, ereader="", page=1)})
+                      "url": _url_with(state, ereader="", pagina=1)})
 
     # WebSite structured data belongs on the home page only, and only on the bare
     # browse: every ?-carrying variant is noindex and robots-disallowed, so marking
@@ -603,7 +636,7 @@ def search(
                     "inLanguage": "nl-NL"} if is_home else None),
         "format": format_, "language": language, "genre": genre,
         "publisher": publisher, "author": author, "list": lists_, "ereader": ereader,
-        "year_from": state["year_from"], "year_to": state["year_to"], "sort": sort,
+        "year_from": state["jaar_van"], "year_to": state["jaar_tot"], "sort": sort,
         "page": page, "pages": pages, "facets": facets, "page_size": page_size,
         "view": view, "per_page_options": list(PER_PAGE_OPTIONS),
         "chips": chips, "has_filters": bool(q or chips), "state": state,
@@ -617,17 +650,18 @@ def search(
 # --------------------------------------------------------------------------- #
 # detail / browse pages
 # --------------------------------------------------------------------------- #
-@app.get("/series/{name:path}", response_class=HTMLResponse)
+@app.get("/reeks/{name:path}", response_class=HTMLResponse)
 def series_page(request: Request, name: str, conn: sqlite3.Connection = Depends(get_conn)):
-    """Series page, addressed by slug: /series/het-mysterie.
+    """Series page, addressed by slug: /reeks/het-mysterie.
 
-    Like the author pages, the encoded-name URLs keep working and redirect.
+    The slug is the only spelling that answers. An encoded name used to 301 here;
+    it is a 404 now, so this page has exactly one URL and nothing to canonicalise.
     """
     slug = slugify(name)
     entry = queries.series_row(conn, slug)
     if entry:
         if name != slug:
-            return RedirectResponse(f"/series/{slug}", status_code=301)
+            return _not_found(request, "series", _slug_words(name))
         name = entry["name"]
     rows = queries.series_books(conn, slug)
     if not rows:
@@ -639,28 +673,18 @@ def series_page(request: Request, name: str, conn: sqlite3.Connection = Depends(
                             f"Bibliotheek — op volgorde, met e-book en luisterboek."})
 
 
-@app.get("/stats", response_class=HTMLResponse)
+@app.get("/statistieken", response_class=HTMLResponse)
 def stats_page(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     data = queries.web_stats(conn)
     return _templates.TemplateResponse(request, "stats.html", {
         "s": data, "breadcrumbs": seo.breadcrumbs(request, ("Statistieken", ""))})
 
 
-@app.get("/about", response_class=HTMLResponse)
+@app.get("/over", response_class=HTMLResponse)
 def about(request: Request):
     """Static 'about' page — independent of the catalog DB so it always renders."""
     return _templates.TemplateResponse(request, "about.html", {
         "breadcrumbs": seo.breadcrumbs(request, ("Over deze catalogus", ""))})
-
-
-# /over shipped in v1.1.2 and is in the live sitemap, so unlike the other URLs
-# renamed alongside it this one owes a permanent redirect.
-# Both spellings, so /over/ lands on /about in one hop instead of taking
-# Starlette's trailing-slash 307 first.
-@app.get("/over", include_in_schema=False)
-@app.get("/over/", include_in_schema=False)
-def about_legacy():
-    return RedirectResponse("/about", status_code=301)
 
 
 @app.get("/genres", response_class=HTMLResponse)
@@ -699,8 +723,8 @@ def genre_page(request: Request, slug: str,
     entry = queries.genre_page(conn, slugify(slug))
     if entry is None:
         return _not_found(request, "genre", _slug_words(slug))
-    if slug != slugify(slug):   # one canonical spelling per genre
-        return RedirectResponse(f"/genre/{slugify(slug)}", status_code=301)
+    if slug != slugify(slug):   # one spelling per genre, the rest is a miss
+        return _not_found(request, "genre", _slug_words(slug))
     name = entry["name"]
     parent = queries.genre_page(conn, entry["parent_slug"]) if entry["parent_slug"] else None
     return _browse_page(
@@ -738,8 +762,8 @@ def audiobooks_page(request: Request, conn: sqlite3.Connection = Depends(get_con
         search_url="/?format=audiobook", crumb=None)
 
 
-@app.get("/authors", response_class=HTMLResponse)
-def authors_index(request: Request, sort: str = BY_SURNAME,
+@app.get("/auteurs", response_class=HTMLResponse)
+def authors_index(request: Request, sort: str = Query(BY_SURNAME, alias="sortering"),
                   conn: sqlite3.Connection = Depends(get_conn)):
     """A-Z hub over the author pages.
 
@@ -759,21 +783,19 @@ def authors_index(request: Request, sort: str = BY_SURNAME,
                             f"in de online Bibliotheek — e-books en luisterboeken."})
 
 
-@app.get("/authors/{letter}", response_class=HTMLResponse)
-def authors_letter(request: Request, letter: str, sort: str = BY_SURNAME,
+@app.get("/auteurs/{letter}", response_class=HTMLResponse)
+def authors_letter(request: Request, letter: str,
+                   sort: str = Query(BY_SURNAME, alias="sortering"),
                    conn: sqlite3.Connection = Depends(get_conn)):
     sort = sort if sort in AUTHOR_SORTS else BY_SURNAME
     counts = indexes.letter_counts(conn, sort)
     key = letter.upper() if len(letter) == 1 else letter.lower()
     if key not in counts:
         return _not_found(request, "letter")
-    # One canonical spelling per letter, so /authors/A and /authors/a don't become
-    # two URLs with the same content.
-    canonical = key.lower()
-    if letter != canonical:
-        return RedirectResponse(f"/authors/{canonical}" +
-                                (f"?sort={sort}" if sort != BY_SURNAME else ""),
-                                status_code=301)
+    # One spelling per letter: /auteurs/a is the page, /auteurs/A is a miss. It
+    # used to 301, but a capitalised letter is a typed URL, not an indexed one.
+    if letter != key.lower():
+        return _not_found(request, "letter")
     rows = indexes.authors_in_letter(conn, key, sort)
     label = key.upper() if key != indexes.OTHER_LETTER else "Overig"
     return _templates.TemplateResponse(request, "authors.html", {
@@ -789,19 +811,20 @@ def authors_letter(request: Request, letter: str, sort: str = BY_SURNAME,
 # August/Dreamshield"). With a plain ``{name}`` their page 404s under either
 # spelling — both the link on the book page and the breadcrumb item URL would
 # have pointed at a dead URL.
-@app.get("/author/{name:path}", response_class=HTMLResponse)
+@app.get("/auteur/{name:path}", response_class=HTMLResponse)
 def author_page(request: Request, name: str, conn: sqlite3.Connection = Depends(get_conn)):
-    """Author page, addressed by slug: /author/lisbeth-imbo.
+    """Author page, addressed by slug: /auteur/lisbeth-imbo.
 
-    Anything that folds to the same key lands here, so the old percent-encoded
-    ``/author/Lisbeth%20Imbo`` links keep working and redirect to the slug.
+    The slug is the only spelling that answers: ``/auteur/Lisbeth%20Imbo`` used to
+    301 here and is a 404 now. A name that folds to nothing has no slug, so for
+    those the encoded name *is* the canonical URL — see the else branch.
     """
     slug = slugify(name)
     if slug:
+        if name != slug:
+            return _not_found(request, "author", _slug_words(name))
         display = queries.author_display_name(conn, slug.replace("-", " "))
         rows = queries.author_books_by_fold(conn, slug.replace("-", " ")) if display else []
-        if rows and name != slug:
-            return RedirectResponse(f"/author/{slug}", status_code=301)
         name = display or name
     else:
         # Names with no Latin characters (Greek script, a stray "|" row) fold to
@@ -826,8 +849,8 @@ def author_page(request: Request, name: str, conn: sqlite3.Connection = Depends(
                             f"Bibliotheek — e-books en luisterboeken."})
 
 
-@app.get("/lists", response_class=HTMLResponse)
-def lists_overview(request: Request, sort: str = "name",
+@app.get("/lijsten", response_class=HTMLResponse)
+def lists_overview(request: Request, sort: str = Query("name", alias="sortering"),
                    conn: sqlite3.Connection = Depends(get_conn)):
     if sort not in queries.LIST_SORTS:
         sort = "name"
@@ -837,8 +860,8 @@ def lists_overview(request: Request, sort: str = "name",
         "breadcrumbs": seo.breadcrumbs(request, ("Lijsten", ""))})
 
 
-@app.get("/list/{slug}", response_class=HTMLResponse)
-def list_detail(request: Request, slug: str, show: str = "",
+@app.get("/lijst/{slug}", response_class=HTMLResponse)
+def list_detail(request: Request, slug: str, show: str = Query("", alias="toon"),
                 conn: sqlite3.Connection = Depends(get_conn)):
     lst = queries.list_row(conn, slug)
     if lst is None:
@@ -854,14 +877,14 @@ def list_detail(request: Request, slug: str, show: str = "",
         show, items = "", rows
     return _templates.TemplateResponse(request, "list_detail.html", {
         "lst": lst, "items": items, "available": available, "total": total, "show": show,
-        "breadcrumbs": seo.breadcrumbs(request, ("Lijsten", "/lists"), (lst["name"], "")),
+        "breadcrumbs": seo.breadcrumbs(request, ("Lijsten", "/lijsten"), (lst["name"], "")),
         "meta_description": (lst["description"] or f"De lijst {lst['name']}")
                             + f" — {available} van {total} titels in de bibliotheek."})
 
 
-# One canonical URL per book: /boek/{titel}--{auteur}--{id}. Both old
-# /book/{ppn} URLs — the e-book's and the audiobook's — 301 here, and a stale slug
-# 301s to the current one, because the id is the truth and the slug is cosmetic.
+# One canonical URL per book: /boek/{titel}--{auteur}--{id}, and only that one.
+# A stale slug and an edition's own PPN both used to 301 here; they are 404s now,
+# so the page cannot be reached at a second address it would have to disown.
 @app.get("/boek/{rest:path}", response_class=HTMLResponse)
 def book_page(request: Request, rest: str, conn: sqlite3.Connection = Depends(get_conn)):
     """The book page. ``rest`` is ``{title}--{author}--{id}``; the id is everything
@@ -869,18 +892,15 @@ def book_page(request: Request, rest: str, conn: sqlite3.Connection = Depends(ge
     own slugs never contain a double hyphen."""
     work_id = rest.rsplit("--", 1)[-1]
     detail = queries.book_detail(conn, work_id)
-    if detail is None:
-        # A PPN carries no readable words, so nothing seeds the search box here.
+    # A PPN carries no readable words, so nothing seeds the search box here. The
+    # "redirect" shape means an edition's PPN was used as the id — that edition
+    # lives on its work's page, and this is not that page's URL.
+    if detail is None or "redirect" in detail:
         return _not_found(request, "book")
-    if "redirect" in detail:   # an edition's PPN used as the id
-        ref = queries.work_ref(conn, detail["redirect"])
-        if ref is None:
-            return _not_found(request, "book")
-        return RedirectResponse(seo.book_href(ref[1], ref[0]), status_code=301)
     b = detail["work"]
     canonical = seo.book_path(b)
     if rest != canonical.removeprefix("/boek/"):   # wrong or stale slug
-        return RedirectResponse(canonical, status_code=301)
+        return _not_found(request, "book")
 
     editions = detail["editions"]
     summary = (b["summary"] or "").strip()
@@ -932,22 +952,11 @@ def _edition_jsonld(edition) -> dict:
     return {k: v for k, v in data.items() if v}
 
 
-# Kept forever: ~68k of these URLs are indexed, and both editions of a twinned
-# title point at one of them.
-@app.get("/book/{ppn}", include_in_schema=False)
-def book_legacy(request: Request, ppn: str, conn: sqlite3.Connection = Depends(get_conn)):
-    ref = queries.work_ref(conn, ppn)
-    if ref is None:
-        return _not_found(request, "book")
-    work_id, slug = ref
-    return RedirectResponse(seo.book_href(slug, work_id), status_code=301)
-
-
 # --------------------------------------------------------------------------- #
 # JSON endpoints (autocomplete + searchable facets)
 # --------------------------------------------------------------------------- #
-@app.get("/suggest")
-def suggest(q: str = "", limit: int = Query(7, ge=1, le=20),
+@app.get("/suggesties")
+def suggest(q: str = Query("", alias="zoek"), limit: int = Query(7, ge=1, le=20),
             conn: sqlite3.Connection = Depends(get_conn)):
     """Autocomplete: matching titles (-> book) and authors/publishers/… (-> search)."""
     data = queries.suggest(conn, q.strip(), limit)
@@ -971,8 +980,8 @@ def suggest(q: str = "", limit: int = Query(7, ge=1, le=20),
             "languages": data["languages"], "lists": data["lists"]}
 
 
-@app.get("/facet")
-def facet(kind: str = Query("", alias="type"), q: str = "",
+@app.get("/facetten")
+def facet(kind: str = Query("", alias="type"), q: str = Query("", alias="zoek"),
           limit: int = Query(30, ge=1, le=50),
           conn: sqlite3.Connection = Depends(get_conn)):
     """Searchable facet values (for large facets like author/publisher)."""
