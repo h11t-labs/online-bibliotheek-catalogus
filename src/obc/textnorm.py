@@ -82,6 +82,10 @@ def slugify(value: str | None) -> str:
 _NAME_PARTICLES = {
     "van", "de", "der", "den", "het", "ten", "ter", "te", "op", "aan", "in", "'t",
     "du", "des", "del", "della", "la", "le", "di", "da", "dos", "von", "zu", "af",
+    # surname_key strips apostrophes before folding, so an inverted "Wolde, van 't"
+    # arrives as [wolde, van, t] — the bare "t" must count as a particle too, or
+    # the name files under T.
+    "t",
 }
 
 
@@ -224,7 +228,7 @@ def match_key(title: str | None, author: str | None) -> str:
 # Conservative series patterns — only explicit markers, to avoid false positives
 # (e.g. "1984" or "Catch-22" must NOT be treated as series).
 _SERIES_PATTERNS = [
-    re.compile(r"^(?P<s>.+?)\s*[:\-]\s*deel\s*(?P<n>\d+)\b", re.I),
+    re.compile(r"^(?P<s>.+?)\s*[:\-–—]\s*deel\s*(?P<n>\d+)\b", re.I),
     re.compile(r"\(\s*(?P<s>[^()]+?)\s*[,;]?\s*deel\s*(?P<n>\d+)\s*\)", re.I),
     re.compile(r"\bdeel\s*(?P<n>\d+)\s+van\s+(?:de\s+)?(?:reeks|serie)\s+(?P<s>[^.()]+)", re.I),
 ]

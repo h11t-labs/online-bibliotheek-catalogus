@@ -13,9 +13,11 @@ Besides loading edition records it also:
 
 from __future__ import annotations
 
+import datetime
 import os
 import re
 import sqlite3
+import time
 from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
@@ -44,25 +46,33 @@ from .textnorm import (
 from .util import read_json
 
 
-def _load_aux(db_path: Path | None = None) -> tuple[set, bool, dict, dict, dict]:
+def _load_aux(db_path: Path | None = None) -> tuple[set, bool, dict, dict, dict, str]:
     """Load the small side-files: e-reader flags, facet genres, recency ranks.
     Also snapshot the live DB's known e-reader flags (``prior_ereader``) so a
-    missing ereader side-file preserves the flag instead of blanking it."""
+    missing ereader side-file preserves the flag instead of blanking it, and the
+    side-file's mtime (``ereader_stamp``): the file only speaks for titles that
+    existed when it was written, so a title first seen later is "unknown", not
+    "no" — the incremental sync adds e-books daily, the side-file only refreshes
+    on a full or --ereader walk."""
     ereader: set[str] = set()
+    ereader_stamp = ""
     have_ereader = EREADER_FILE.exists()
     if have_ereader:
         data = read_json(EREADER_FILE)
         have_ereader = data is not None
         ereader = set(data or [])
+        if have_ereader:
+            ereader_stamp = datetime.datetime.fromtimestamp(
+                EREADER_FILE.stat().st_mtime).isoformat(timespec="seconds")
     genres_map: dict[str, list] = read_json(GENRES_FILE, default={}) or {}
     recent_map: dict[str, int] = read_json(RECENT_FILE, default={}) or {}
     prior_ereader: dict[str, int] = db.load_prior_ereader(db_path)
-    return ereader, have_ereader, genres_map, recent_map, prior_ereader
+    return ereader, have_ereader, genres_map, recent_map, prior_ereader, ereader_stamp
 
 
 def _transform(r: dict, ereader: set, have_ereader: bool, genres_map: dict,
                recent_map: dict, canon: dict, prior_ereader: dict,
-               work_of: dict | None = None) -> dict | None:
+               work_of: dict | None = None, ereader_stamp: str = "") -> dict | None:
     """Enrich one raw record in place; return it, or None to drop it. Files are
     named ``{ppn}.json`` (one record per ppn), so no cross-file dedup is needed."""
     ppn = r.get("ppn")
@@ -77,7 +87,14 @@ def _transform(r: dict, ereader: set, have_ereader: bool, genres_map: dict,
         # ereader side-file; else the value last known in the live DB, so a missing
         # side-file preserves the facet rather than zeroing it.
         if have_ereader:
-            r["ereader"] = 1 if ppn in ereader else 0
+            if ppn in ereader:
+                r["ereader"] = 1
+            elif (r.get("first_seen") or "") <= ereader_stamp:
+                r["ereader"] = 0
+            # else: first seen after the side-file was written — the walk never
+            # saw this title, so its absence means "unknown", not "no". Stamping
+            # 0 here kept week-old e-books out of the e-reader facet until the
+            # next full walk.
         elif ppn in prior_ereader:
             r["ereader"] = prior_ereader[ppn]
     r["language"] = valid_language(r.get("language"))  # drop non-language junk
@@ -157,12 +174,12 @@ def _prepass(records: Iterable[dict]) -> tuple[dict, dict, dict, tuple, dict]:
 def iter_records(records: Iterable[dict], aux: tuple, canon: dict, work_of: dict,
                  total: int = 0):
     """Yield enriched records one at a time (constant memory)."""
-    ereader, have_ereader, genres_map, recent_map, prior_ereader = aux
+    ereader, have_ereader, genres_map, recent_map, prior_ereader, stamp = aux
     for seen, r in enumerate(records, 1):
         if seen % 10_000 == 0 or seen == total:
             logger.info(f"[normalize] loading records: {seen}/{total}")
         t = _transform(r, ereader, have_ereader, genres_map, recent_map,
-                       canon, prior_ereader, work_of)
+                       canon, prior_ereader, work_of, ereader_stamp=stamp)
         if t is not None:
             yield t
 
@@ -233,10 +250,14 @@ def _reclaim_disk(db_path: Path, raw_dir: Path) -> None:
     DB's -wal/-shm under an open reader — or a hot -journal — can corrupt reads."""
     db_path = Path(db_path)
     _checkpoint_live(db_path)
-    tmp = db_path.with_name(db_path.name + ".tmp")
-    for p in (tmp, Path(f"{tmp}-wal"), Path(f"{tmp}-shm"), Path(f"{tmp}-journal")):
+    # Temp names are per-pid (see normalize()), so a concurrently-building
+    # process's file is not ours to unlink — deleting it mid-build once meant
+    # its os.replace could publish a half-built DB. Only clearly-crashed
+    # leftovers go: a healthy rebuild takes minutes, not a day.
+    for p in db_path.parent.glob(db_path.name + ".tmp*"):
         try:
-            p.unlink(missing_ok=True)
+            if time.time() - p.stat().st_mtime > 24 * 3600:
+                p.unlink(missing_ok=True)
         except OSError:
             pass
     # The loose per-request HTML cache is scratch and is dropped. `raw/raw.db`
@@ -290,18 +311,28 @@ def normalize(raw_dir: Path = RAW_DIR, db_path: Path = db.DEFAULT_DB) -> dict:
     canon, by_isbn, by_key, genre_info, work_of = _prepass(raw.iter_records(store))
     lists = match_lists(by_isbn, by_key, work_of)
     # Build into a temp DB, then swap it in atomically — the web app keeps serving
-    # the old, complete catalog throughout the rebuild (no "wordt opgebouwd" window).
-    tmp = db_path.with_name(db_path.name + ".tmp")
+    # the old, complete catalog throughout the rebuild (no "wordt opgebouwd"
+    # window). The pid in the name keeps two overlapping rebuilds (cron + a
+    # manual `obc normalize`) off each other's file: with a shared name, run B
+    # recreated the path mid-build and run A's swap published B's half-built DB.
+    tmp = db_path.with_name(f"{db_path.name}.tmp{os.getpid()}")
     conn = db.connect(tmp)
-    # stream records in batches — constant memory, no full in-RAM load
-    n = db.stream_rebuild(
-        conn, iter_records(raw.iter_records(store), aux, canon, work_of, total),
-        lists)
-    db.set_work_genre_parents(conn, genre_info)  # per-work genre-hierarchy parent
-    db.build_genre_taxonomy(conn)  # reads parent_id, so it runs after the stamp
-    _build_similar(conn)  # into the temp DB, so the swap publishes both at once
-    s = db.stats(conn)
-    conn.close()
+    try:
+        # stream records in batches — constant memory, no full in-RAM load
+        n = db.stream_rebuild(
+            conn, iter_records(raw.iter_records(store), aux, canon, work_of, total),
+            lists)
+        db.set_work_genre_parents(conn, genre_info)  # per-work genre-hierarchy parent
+        db.build_genre_taxonomy(conn)  # reads parent_id, so it runs after the stamp
+        _build_similar(conn)  # into the temp DB, so the swap publishes both at once
+        s = db.stats(conn)
+        conn.close()
+    except BaseException:
+        # don't leave a ~1 GB half-built tmp on a volume that has hit 93% full
+        conn.close()
+        for p in (tmp, Path(f"{tmp}-wal"), Path(f"{tmp}-shm"), Path(f"{tmp}-journal")):
+            p.unlink(missing_ok=True)
+        raise
     # Fold the *old* live WAL into its DB and truncate it before the swap, so a
     # reader that opens the freshly-swapped file never pairs it with a stale -wal.
     # (Safer than deleting the sidecars, which can corrupt an open reader.)

@@ -1,9 +1,11 @@
 .git
-.venv
+.claude
+**/.venv
 data/raw
 data/catalog.db
+data/checkpoint.json
 data/*.log
-__pycache__
-*.pyc
+**/__pycache__
+**/*.pyc
 .pytest_cache
 .env

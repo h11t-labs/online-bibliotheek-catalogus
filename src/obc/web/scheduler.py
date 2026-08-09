@@ -31,12 +31,16 @@ def _seeded() -> bool:
     incremental sync that would only pick up the newest titles."""
     from .. import raw
     from ..scrape import RAW_DB
+    # sqlite3.Error too: SQLite opens lazily, so a corrupt/full/read-only volume
+    # surfaces as OperationalError — on connect or on the first query.
     try:
         conn = raw.connect(RAW_DB)
-    except OSError:
+    except (OSError, sqlite3.Error):
         return False
     try:
         return raw.count(conn) > 0
+    except sqlite3.Error:
+        return False
     finally:
         conn.close()
 
@@ -111,8 +115,15 @@ def _run_locked(cmds: list[list[str]]) -> None:
 def trigger_refresh(cmds: list[list[str]] | None = None) -> bool:
     """Start a refresh in a background thread. Returns False if one is already
     running (so callers can answer 409)."""
+    # Built before the lock: an exception in _default_cmds (unreadable volume,
+    # say) after acquiring would hold the lock forever — every later refresh
+    # would 409 until a restart.
+    cmds = cmds or _default_cmds()
     if not _lock.acquire(blocking=False):
         return False
-    threading.Thread(target=_run_locked, args=(cmds or _default_cmds(),),
-                     daemon=True).start()
+    try:
+        threading.Thread(target=_run_locked, args=(cmds,), daemon=True).start()
+    except BaseException:  # noqa: BLE001 — the thread never started, so nothing else releases
+        _lock.release()
+        raise
     return True

@@ -114,9 +114,11 @@ jobs:
           # (--stage) so the deploy below applies it without a separate restart.
           if [ -z "$FLY_API_TOKEN" ]; then echo "No FLY_API_TOKEN — skipping."; exit 0; fi
           app=online-bibliotheek-catalogus
-          # NYT Books API key -> enables the NYT bestseller lists.
+          # NYT Books API key -> enables the NYT bestseller lists. Fed over stdin
+          # (secrets import) so the key never appears on a process argv.
           if [ -n "$NYT_API_KEY" ]; then
-            flyctl secrets set --stage --app "$app" "NYT_API_KEY=$NYT_API_KEY" \
+            printf 'NYT_API_KEY=%s\n' "$NYT_API_KEY" \
+              | flyctl secrets import --stage --app "$app" \
               && echo "staged NYT_API_KEY" \
               || echo "WARNING: could not stage NYT_API_KEY (token scope?)."
           fi
@@ -164,7 +166,7 @@ jobs:
           # the web machine. Retries cover the brief window on a fresh scheduled
           # boot before 6PN/private DNS is ready.
           url="http://app.process.${app}.internal:8000/admin/refresh"
-          if flyctl machine run curlimages/curl:latest \
+          if flyctl machine run curlimages/curl:8.21.0 \
                --app "$app" \
                --name catalog-cron \
                --schedule daily \

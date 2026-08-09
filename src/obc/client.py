@@ -104,10 +104,16 @@ class Client:
 
     def get_listing_html(self, params: dict[str, str], page: int = 1) -> str:
         """Fetch a catalog browse page. Page 1 has no selector; page N uses
-        ``zoekresultaten.catalogus.N.html``."""
+        ``zoekresultaten.catalogus.N.html``.
+
+        Raises on any non-200: a 403/404 listing page is a broken walk, not an
+        empty cell — returned as-is it parses to zero records, which reads as
+        "cell complete" and ends in everything unseen being marked removed."""
         sel = "" if page <= 1 else f".{page}"
         url = f"{BROWSE_BASE}{sel}.html?{urlencode(params)}"
-        return self._get(url).text
+        r = self._get(url)
+        r.raise_for_status()
+        return r.text
 
     def fetch_detail(self, ppn: str, slug: str) -> dict | None:
         html = self.get_detail_html(ppn, slug)

@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
-FROM python:3.14-slim
+# python:3.14-slim as of 2026-08-09, digest-pinned so CI and Fly's remote builder resolve the same base — trades auto-updates for reproducibility; bump deliberately.
+FROM python:3.14-slim@sha256:a7fb1e634c4a578f9e0bd6327f11a3cde11b7a9395f48e24360c0988bcc5c2bc
 
 # uv for fast, reproducible installs (uses the committed uv.lock)
 COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /uvx /bin/

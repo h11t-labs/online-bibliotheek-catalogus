@@ -9,6 +9,12 @@ on:
   push:
     branches: [main]
 
+# Two quick pushes to main would otherwise race on the release-PR branch; queue
+# runs instead (no cancel — every push's commits must land in the release PR).
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
 permissions:
   contents: write
   pull-requests: write

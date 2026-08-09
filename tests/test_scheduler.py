@@ -57,6 +57,41 @@ def test_trigger_refresh_is_single_flight(monkeypatch):
     assert _wait_until(lambda: not scheduler._lock.locked())
 
 
+def test_trigger_refresh_releases_the_lock_when_the_command_build_fails(monkeypatch):
+    """_default_cmds used to run *after* the lock was acquired: one exception there
+    (an unreadable volume, say) held the lock forever, and every later refresh
+    answered 409 until a restart."""
+    import pytest
+
+    def boom():
+        raise RuntimeError("volume unreadable")
+
+    monkeypatch.setattr(scheduler, "_default_cmds", boom)
+    with pytest.raises(RuntimeError):
+        scheduler.trigger_refresh()
+    assert not scheduler._lock.locked()
+
+    # and the next refresh still goes through (explicit cmds, stubbed run)
+    monkeypatch.setattr(normalize, "_reclaim_disk", lambda *a, **k: None)
+    monkeypatch.setattr(scheduler, "_run", lambda cmds: None)
+    assert scheduler.trigger_refresh([["scrape", "--sync"]]) is True
+    assert _wait_until(lambda: not scheduler._lock.locked())
+
+
+def test_seeded_reads_an_unopenable_raw_store_as_unseeded(monkeypatch):
+    """raw.connect raises sqlite3.OperationalError (not OSError) on a corrupt or
+    read-only volume; that means "not seeded", not a crash out of the refresh."""
+    import sqlite3
+
+    from obc import raw
+
+    def boom(path):
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(raw, "connect", boom)
+    assert scheduler._seeded() is False
+
+
 def test_default_cmds_full_on_empty_sync_when_seeded(tmp_path, monkeypatch):
     monkeypatch.setattr(scrape, "RAW_DB", tmp_path / "raw.db")
     monkeypatch.delenv("OBC_ENRICH", raising=False)

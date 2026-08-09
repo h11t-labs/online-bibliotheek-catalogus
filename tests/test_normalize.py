@@ -183,6 +183,25 @@ def test_ereader_precedence_per_record_then_side_file_then_prior():
              {}, {}, {}, {}).get("ereader") is None
 
 
+def test_ereader_side_file_only_speaks_for_titles_it_saw():
+    """The side-file only refreshes on a full/--ereader walk, while sync adds
+    e-books daily: a title first seen *after* the file was written was never
+    walked, so its absence means "unknown", not "no". Stamping 0 kept week-old
+    e-books out of the e-reader facet until the next full walk."""
+    T = normalize._transform
+    stamp = "2026-06-01T00:00:00"
+    # first seen before the side-file was written: absence really means "no"
+    assert T({"ppn": "8", "format": "ebook", "first_seen": "2026-01-01T00:00:00"},
+             {"9"}, True, {}, {}, {}, {}, ereader_stamp=stamp)["ereader"] == 0
+    # first seen after: the walk never saw this title — leave the flag unknown
+    assert T({"ppn": "8", "format": "ebook", "first_seen": "2026-07-01T00:00:00"},
+             {"9"}, True, {}, {}, {}, {},
+             ereader_stamp=stamp).get("ereader") is None
+    # …unless the side-file does name it
+    assert T({"ppn": "9", "format": "ebook", "first_seen": "2026-07-01T00:00:00"},
+             {"9"}, True, {}, {}, {}, {}, ereader_stamp=stamp)["ereader"] == 1
+
+
 def test_normalize_preserves_ereader_when_side_file_vanishes(raw, tmp_path):
     """A rebuild with the ereader side-file missing must not blank the facet — it
     keeps each e-book's last-known flag from the live DB (the bug behind the 0)."""

@@ -54,5 +54,8 @@ def fetch_all() -> list[dict]:
                        "Add it to .env (free key at developer.nytimes.com → Books API).")
         return []
     r = httpx.get(API, params={"api-key": key}, headers={"User-Agent": _UA}, timeout=30)
-    r.raise_for_status()
+    # No raise_for_status(): its message embeds the full request URL — api-key
+    # included — and update() logs provider errors verbatim. Raise sanitized.
+    if r.status_code != 200:
+        raise RuntimeError(f"NYT API returned HTTP {r.status_code}")
     return parse_overview(r.json())

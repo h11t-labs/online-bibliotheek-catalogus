@@ -90,25 +90,41 @@ def _to_record(row: sqlite3.Row) -> dict:
     return rec
 
 
-def put(conn: sqlite3.Connection, rec: dict) -> bool:
+def put(conn: sqlite3.Connection, rec: dict, *, live: bool = False) -> bool:
     """Store a record; returns whether anything actually changed.
 
     ``first_seen`` is set once and never moves; ``updated_at`` moves only when the
     parsed content differs. A pass that finds nothing new writes nothing at all,
     which is what keeps a full harvest from rewriting 69k rows to say the same
     thing.
+
+    ``live=True`` says the caller just saw this title *in the catalog* (a browse
+    or sync listing row), which un-marks a removal: a title can come back, and
+    without this the stamp survived every later sighting and normalize dropped
+    the record forever. Offline passes (reparse) and detail fetches must not set
+    it — they walk stored pages, including those of genuinely removed titles.
     """
     ppn, blob, now = rec["ppn"], _body(rec), _now()
-    row = conn.execute("SELECT record FROM records WHERE ppn = ?", (ppn,)).fetchone()
+    row = conn.execute("SELECT record, removed_at FROM records WHERE ppn = ?",
+                       (ppn,)).fetchone()
     if row is None:
         conn.execute("INSERT INTO records (ppn, record, first_seen) VALUES (?, ?, ?)",
                      (ppn, blob, now))
         conn.commit()
         return True
+    back = live and row["removed_at"] is not None
     if row["record"] == blob:
-        return False
-    conn.execute("UPDATE records SET record = ?, updated_at = ? WHERE ppn = ?",
-                 (blob, now, ppn))
+        if not back:
+            return False
+        conn.execute("UPDATE records SET removed_at = NULL WHERE ppn = ?", (ppn,))
+        conn.commit()
+        return True
+    if back:
+        conn.execute("UPDATE records SET record = ?, updated_at = ?, "
+                     "removed_at = NULL WHERE ppn = ?", (blob, now, ppn))
+    else:
+        conn.execute("UPDATE records SET record = ?, updated_at = ? WHERE ppn = ?",
+                     (blob, now, ppn))
     conn.commit()
     return True
 
@@ -176,11 +192,16 @@ def known_ppns(conn: sqlite3.Connection) -> set[str]:
 def mark_removed(conn: sqlite3.Connection, ppns: Iterable[str]) -> int:
     """Stamp ``removed_at`` on titles the catalog no longer lists (the UI hides
     them). The row stays: the stored page is still the best answer we have about
-    that title, and a title can come back."""
+    that title, and a title can come back (``put(..., live=True)`` un-marks it).
+    Already-stamped rows keep their original date — every complete run passes the
+    full missing set, and re-stamping would turn "removed since March" into
+    "removed since yesterday" and make the daily removal count meaningless."""
     rows = [(_now(), ppn) for ppn in ppns]
-    conn.executemany("UPDATE records SET removed_at = ? WHERE ppn = ?", rows)
+    cur = conn.executemany(
+        "UPDATE records SET removed_at = ? WHERE ppn = ? AND removed_at IS NULL",
+        rows)
     conn.commit()
-    return len(rows)
+    return cur.rowcount
 
 
 def count(conn: sqlite3.Connection) -> int:

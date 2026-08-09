@@ -23,7 +23,7 @@ REGION="${FLY_REGION:-ams}"
 # the brief window on a fresh scheduled boot before private DNS is ready.
 URL="http://app.process.${APP}.internal:8000/admin/refresh"
 
-fly machine run curlimages/curl:latest \
+fly machine run curlimages/curl:8.21.0 \
   --app "$APP" \
   --name catalog-cron \
   --schedule daily \
