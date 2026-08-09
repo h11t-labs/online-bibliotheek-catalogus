@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v3.0.0...v3.0.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* close the removal-pipeline data-loss paths, plus review fixes across the board ([#48](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/48)) ([4bf892a](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/4bf892a850c3a06760eef254de2ed5368d748788))
+
 ## [3.0.0](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v2.0.2...v3.0.0) (2026-08-08)
 
 
