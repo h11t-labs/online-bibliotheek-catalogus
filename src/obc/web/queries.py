@@ -70,14 +70,25 @@ def connect_ro(db_path: str | Path) -> sqlite3.Connection:
 # small query helpers
 # --------------------------------------------------------------------------- #
 def parse_year(value: str) -> int | None:
-    """Lenient year parse: '' or junk -> None (avoids 422 on empty params)."""
+    """Lenient year parse: '' or junk -> None (avoids 422 on empty params).
+
+    Bounded to four digits: a longer run of digits passes ``isdigit()`` but
+    overflows SQLite's 64-bit integer binding, which turned ``?jaar_van=`` junk
+    into a 500."""
     value = (value or "").strip()
-    return int(value) if value.lstrip("-").isdigit() else None
+    try:
+        n = int(value)
+    except ValueError:
+        return None
+    return n if -9999 <= n <= 9999 else None
 
 
 def fts_match(q: str) -> str:
-    """Turn free text into a safe FTS5 MATCH expression (prefix, AND-ed)."""
-    terms = re.findall(r"\w+", q, flags=re.UNICODE)
+    """Turn free text into a safe FTS5 MATCH expression (prefix, AND-ed).
+
+    Capped at 12 terms: every AND-ed prefix costs an index scan, and no real
+    search carries more — an unbounded count is a cheap DoS knob."""
+    terms = re.findall(r"\w+", q, flags=re.UNICODE)[:12]
     return " ".join(f'"{t}"*' for t in terms)
 
 
@@ -363,7 +374,8 @@ def book_detail(conn: sqlite3.Connection, ppn: str) -> dict | None:
     """Everything the book page needs.
 
     ``ppn`` may be any edition's PPN. For a non-representative edition returns
-    {"redirect": work_id} so the route can 301 — old audiobook URLs keep working.
+    {"redirect": work_id} — a marker the route treats as a 404 now (one canonical
+    URL per book; an edition's PPN is not that page's URL, see app.book_page).
     Otherwise: {"work": row, "editions": [edition rows, e-book first then ppn],
     "genres": [...], "authors": [...], "work_lists": [...]}.
     None if the PPN is unknown at either grain.

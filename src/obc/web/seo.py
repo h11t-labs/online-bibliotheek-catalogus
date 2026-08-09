@@ -33,6 +33,9 @@ SITE_URL = os.environ.get("OBC_SITE_URL", "").rstrip("/")
 # strongest signals, see https://developers.google.com/search/docs/appearance/site-names
 SITE_NAME = "Online Bibliotheek Catalogus"
 SITEMAP_PAGE = 45000  # book URLs per sitemap file (under the 50k/file limit)
+# Crawl files change only on the daily rebuild, and robots.txt is re-read before
+# most fetches — a public hour keeps that traffic off the single small VM.
+_CACHE = {"Cache-Control": "public, max-age=3600"}
 
 router = APIRouter(include_in_schema=False)
 
@@ -144,7 +147,7 @@ def _sitemap(base: str, paths: list[str], lastmod: str = "") -> Response:
     body = ('<?xml version="1.0" encoding="UTF-8"?>'
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
             f"{locs}</urlset>")
-    return Response(body, media_type="application/xml")
+    return Response(body, media_type="application/xml", headers=_CACHE)
 
 
 @router.get("/robots.txt")
@@ -158,7 +161,7 @@ def robots_txt(request: Request):
              "Disallow: /suggesties", "Disallow: /facetten", "Disallow: /admin/",
              "Disallow: /*?",  # the infinite filtered-search URL space
              f"Sitemap: {origin(request)}/sitemap.xml"]
-    return Response("\n".join(lines) + "\n", media_type="text/plain")
+    return Response("\n".join(lines) + "\n", media_type="text/plain", headers=_CACHE)
 
 
 @router.get("/sitemap.xml")
@@ -177,7 +180,7 @@ def sitemap_index(request: Request,
     body = ('<?xml version="1.0" encoding="UTF-8"?>'
             '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
             f"{locs}</sitemapindex>")
-    return Response(body, media_type="application/xml")
+    return Response(body, media_type="application/xml", headers=_CACHE)
 
 
 @router.get("/sitemap-static.xml")

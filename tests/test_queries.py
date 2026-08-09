@@ -362,3 +362,20 @@ def test_a_bare_text_search_counts_inside_the_index(ro_conn):
     # …and with any other filter the join is back, because it applies the filter
     both = Q.SearchFilters(q="ontdekking", format="audiobook")
     assert Q.search(ro_conn, both, 1, 24).total <= viaidx
+
+
+def test_parse_year_stays_lenient_but_bounded():
+    assert Q.parse_year(" 2020 ") == 2020
+    assert Q.parse_year("-44") == -44
+    for junk in ("", None, "abc", "20a0", "--5", "²"):
+        assert Q.parse_year(junk) is None, junk
+    # 20 nines passes isdigit() but overflows SQLite's 64-bit binding -> was a 500
+    assert Q.parse_year("9" * 20) is None
+    assert Q.parse_year("-" + "9" * 20) is None
+
+
+def test_fts_match_caps_the_term_count():
+    q = " ".join(f"woord{i}" for i in range(40))
+    assert Q.fts_match(q).count("*") == 12
+    # short queries are untouched
+    assert Q.fts_match("de ontdekking") == '"de"* "ontdekking"*'

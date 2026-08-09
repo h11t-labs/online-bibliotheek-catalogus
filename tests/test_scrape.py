@@ -104,7 +104,8 @@ def test_a_completed_checkpoint_is_cleared_before_the_walk(paths):
     scrape._save_done(_all_keys("all", scrape.FORMATS))
     seen: set[str] = set()
 
-    assert scrape.browse_all(fake, list(scrape.FORMATS), seen, lambda r: None) is True
+    assert scrape.browse_all(fake, list(scrape.FORMATS), seen,
+                             lambda r: None).complete is True
     assert seen == {"001", "002"}          # it really did enumerate
 
 
@@ -115,7 +116,8 @@ def test_an_interrupted_run_still_resumes(paths):
     scrape._save_done({"all:ebook:dut"})
     seen: set[str] = set()
 
-    assert scrape.browse_all(fake, list(scrape.FORMATS), seen, lambda r: None) is False
+    res = scrape.browse_all(fake, list(scrape.FORMATS), seen, lambda r: None)
+    assert res.complete is False and res.removal_safe is False
     assert not any(p == {"q": "*", "type": "E-book", "taal": "dut"}
                    for p, _page in fake.calls)
 
@@ -176,11 +178,199 @@ def test_a_complete_enumeration_marks_what_the_catalog_dropped(paths):
     fake = FakeClient(rows)
     seen: set[str] = set()
 
-    assert scrape.browse_all(fake, list(scrape.FORMATS), seen, lambda r: None) is True
+    assert scrape.browse_all(fake, list(scrape.FORMATS), seen,
+                             lambda r: None).removal_safe is True
     assert scrape.mark_removed(seen) == {"003"}
 
     assert _stored("003")["removed_at"]
     assert "removed_at" not in _stored("001")
+
+
+def test_a_full_run_resurrects_a_title_that_came_back(paths, monkeypatch):
+    # The stamp used to be permanent: put() never touched removed_at, so a title
+    # marked removed by one bad run stayed dropped by normalize forever — the 84
+    # pre-1900 titles stayed invisible even after the year-floor fix. A listing
+    # row is proof the catalog carries the title again.
+    from obc import raw
+
+    rows = [("001", "a")]
+    _seed_records(None, rows)
+    conn = raw.connect(scrape.RAW_DB)
+    raw.mark_removed(conn, {"001"})
+    conn.close()
+    assert _stored("001")["removed_at"]
+
+    _full_run(monkeypatch, rows, ["--full"])
+
+    assert "removed_at" not in _stored("001")
+
+
+def test_sync_resurrects_and_does_not_count_ghosts_in_the_streak(paths, monkeypatch):
+    # A removed-marked title in the sync listing is news even when its fields are
+    # unchanged; counting it in the early-stop streak treats the ghost as
+    # evidence to stop looking.
+    from obc import raw
+
+    conn = raw.connect(scrape.RAW_DB)
+    raw.put(conn, {"ppn": "001", "slug": "a", "title": "Terug"})
+    raw.mark_removed(conn, {"001"})
+    conn.close()
+
+    monkeypatch.setattr(scrape, "Client", lambda **kw: _OnePageClient(
+        [{"ppn": "001", "slug": "a", "title": "Terug"}]))
+    scrape.sync(rate=99)
+
+    assert "removed_at" not in _stored("001")
+
+
+def test_reparse_does_not_resurrect_removed_titles(paths, monkeypatch):
+    # reparse walks *stored* pages, including those of genuinely removed titles —
+    # an offline pass is not evidence the catalog carries the title again.
+    from obc import raw
+
+    conn = raw.connect(scrape.RAW_DB)
+    raw.put(conn, {"ppn": "001", "slug": "a"})
+    raw.put_detail(conn, "001", "<html>x</html>")
+    raw.mark_removed(conn, {"001"})
+    conn.close()
+
+    monkeypatch.setattr(scrape, "parse_detail",
+                        lambda html, ppn: {"ppn": ppn, "isbn": "979"})
+    scrape.reparse()
+
+    assert _stored("001")["removed_at"]
+
+
+def test_mark_removed_refuses_implausible_volumes(paths):
+    # The completeness gate can be fooled (soft-200s, a facet value missing from
+    # LANGS); this end refuses volumes that smell like an enumeration hole.
+    from obc import raw
+
+    conn = raw.connect(scrape.RAW_DB)
+    for i in range(1000):
+        raw.put(conn, {"ppn": str(i), "slug": "s"})
+    conn.close()
+    seen = {str(i) for i in range(900)}  # 10% suddenly "gone"
+
+    assert scrape.mark_removed(seen) == set()
+    assert "removed_at" not in _stored("999")
+    # an explicit override (the operator says it really happened) still works
+    assert len(scrape.mark_removed(seen, max_frac=0.5)) == 100
+    assert _stored("999")["removed_at"]
+
+
+def test_mark_removed_threshold_ignores_historical_removals(paths):
+    # The guard measures fresh candidates against *live* rows. Measured against
+    # all known rows, history counts again every run: once cumulative removals
+    # crossed the threshold, no new removal would ever be stamped again.
+    from obc import raw
+
+    conn = raw.connect(scrape.RAW_DB)
+    for i in range(1000):
+        raw.put(conn, {"ppn": str(i), "slug": "s"})
+    raw.mark_removed(conn, {str(i) for i in range(60)})  # 6% history
+    conn.close()
+
+    seen = {str(i) for i in range(60, 999)}  # one live title newly missing
+    assert scrape.mark_removed(seen) == {"999"}
+    assert _stored("999")["removed_at"]
+
+
+def test_mark_removed_keeps_the_original_removal_date(paths):
+    from obc import raw
+
+    conn = raw.connect(scrape.RAW_DB)
+    raw.put(conn, {"ppn": "001", "slug": "a"})
+    raw.mark_removed(conn, {"001"})
+    first = raw.get(conn, "001")["removed_at"]
+    import time as _time
+    _time.sleep(1.1)
+    raw.mark_removed(conn, {"001"})  # every complete run re-reports the full set
+    assert raw.get(conn, "001")["removed_at"] == first
+    conn.close()
+
+
+def test_a_broken_listing_page_leaves_the_cell_open(paths):
+    # A soft-200 (maintenance page, block interstitial) used to parse as an empty
+    # page: the cell was checkpointed as done, the walk looked complete, and
+    # everything unseen was marked removed. Now the cell stays open and the run
+    # reports itself incomplete.
+    class BrokenClient(FakeClient):
+        def get_listing_html(self, params, page=1):
+            return "<html><body>Er is een storing</body></html>"
+
+    seen: set[str] = set()
+    res = scrape.browse_all(BrokenClient(), ["ebook"], seen, lambda r: None)
+    assert res.complete is False and res.removal_safe is False
+    assert scrape._load_done() == set()
+
+
+def _total_html(rows, total):
+    return (f'<p class="totalresults">Resultaat 1 - {len(rows)} '
+            f'<span class="additional">(van {total})</span></p>'
+            + _listing_html(rows))
+
+
+def test_a_cell_that_falls_short_of_its_claim_is_incomplete(paths, monkeypatch):
+    # The page says "(van 100)" but the walk enumerated 2: a partition hole
+    # (the pre-1900 shape). The run must not conclude removals from that.
+    monkeypatch.setattr(scrape, "LANGS", ["dut"])
+
+    class ClaimClient(FakeClient):
+        def get_listing_html(self, params, page=1):
+            rows = [("001", "a"), ("002", "b")] if page == 1 else []
+            return _total_html(rows, 100)
+
+    seen: set[str] = set()
+    res = scrape.browse_all(ClaimClient(), ["ebook"], seen, lambda r: None)
+    assert res.complete is False and res.removal_safe is False
+
+
+def test_a_shortfall_within_drift_noise_still_blocks_removals(paths, monkeypatch):
+    # 100 of the claimed 101: within the diagnostics tolerance (no error logged,
+    # the walk counts as complete), but "absent from this walk" is now unproven
+    # for at least one live title — removals may not be concluded from it.
+    monkeypatch.setattr(scrape, "LANGS", ["dut"])
+
+    class NearClient(FakeClient):
+        def get_listing_html(self, params, page=1):
+            rows = ([(f"{i:03}", "s") for i in range(100)]
+                    if page == 1 and "taal" in params else [])
+            return _total_html(rows, 101 if "taal" in params else 100)
+
+    seen: set[str] = set()
+    res = scrape.browse_all(NearClient(), ["ebook"], seen, lambda r: None)
+    assert res.complete is True
+    assert res.removal_safe is False
+
+
+def test_a_language_missing_from_langs_is_detected(paths, monkeypatch):
+    # The unfiltered format count exceeds the sum of the taal cells: a language
+    # the library added that LANGS doesn't know about — a permanent hole unless
+    # someone is told.
+    monkeypatch.setattr(scrape, "LANGS", ["dut"])
+
+    class LangClient(FakeClient):
+        def get_listing_html(self, params, page=1):
+            rows = [("001", "a")] if page == 1 else []
+            total = 1 if "taal" in params else 50
+            return _total_html(rows, total)
+
+    seen: set[str] = set()
+    assert scrape.browse_all(LangClient(), ["ebook"], seen,
+                             lambda r: None).complete is False
+
+
+def test_collect_ereader_keeps_prior_set_when_resumed(paths):
+    # A resumed run skipped cells and so misses their e-books; overwriting the
+    # side-file with that partial set would zero the flag on all of them.
+    from obc.util import write_json
+
+    write_json(paths / "ereader.json", ["007"])
+    scrape._save_done({"er:ebook:dut"})  # an interrupted run finished one cell
+
+    assert scrape.collect_ereader(FakeClient([("001", "a")])) == {"007"}
+    assert json.loads((paths / "ereader.json").read_text(encoding="utf-8")) == ["007"]
 
 
 def test_collect_ereader_rerun_reenumerates(paths):
@@ -231,9 +421,11 @@ def test_paginate_dedups_and_stops_on_empty_page():
     fake = FakeClient([("1", "a"), ("2", "b"), ("1", "a")])  # dup within the page
     seen: set[str] = set()
     got: list[str] = []
-    last = scrape._paginate(fake, {"q": "*"}, lambda r: got.append(r["ppn"]), seen)
+    last, total = scrape._paginate(fake, {"q": "*"},
+                                   lambda r: got.append(r["ppn"]), seen)
     assert got == ["1", "2"]          # duplicate PPN skipped via `seen`
     assert last == 1                  # page 1 had results, page 2 was empty
+    assert total is None              # bare test pages claim no count
     assert [pg for _, pg in fake.calls] == [1, 2]
 
 
@@ -247,7 +439,7 @@ def test_paginate_respects_max_page():
             return _listing_html([(f"{page}01", "s")])  # every page has a fresh row
 
     c = AlwaysClient()
-    last = scrape._paginate(c, {"q": "*"}, lambda r: None, set(), max_page=3)
+    last, _ = scrape._paginate(c, {"q": "*"}, lambda r: None, set(), max_page=3)
     assert last == 3
     assert c.pages == [1, 2, 3]
 

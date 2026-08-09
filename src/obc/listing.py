@@ -22,6 +22,16 @@ from .htmlutil import node_text
 _PPN_RE = re.compile(r"/catalogus/([0-9xX]+)/([^/?#\"]+)")
 _PAGER_RE = re.compile(r"zoekresultaten\.catalogus\.(\d+)\.html")
 _YEAR_RE = re.compile(r"\b(1\d{3}|20\d{2})\b")
+# "Resultaat 1 - 20 <span class="additional">(van 3124)</span>" — the claimed
+# result count, which the scraper checks its enumeration against.
+_TOTAL_RE = re.compile(r'class="totalresults"(.*?)</p>', re.S)
+
+
+class NotAResultsPage(ValueError):
+    """The HTML is not a catalog results page at all (maintenance page, block
+    interstitial, redesign). Distinct from a results page with zero hits: an
+    error page silently parsed as "empty" once terminated an enumeration cell
+    early, which marked everything unseen as removed."""
 
 
 def max_page(html: str) -> int:
@@ -29,8 +39,21 @@ def max_page(html: str) -> int:
     return max(nums) if nums else 1
 
 
+def total_results(html: str) -> int | None:
+    """The result count the page claims, or None when the page doesn't say
+    ("Resultaat 1 - 20 (van 3124)" -> 3124; "Resultaat 1 - 7" -> 7)."""
+    m = _TOTAL_RE.search(html)
+    if not m:
+        return None
+    nums = re.findall(r"\d[\d.]*", m.group(1))
+    return int(nums[-1].replace(".", "")) if nums else None
+
+
 def parse_listing(html: str) -> tuple[list[dict[str, Any]], int]:
     soup = BeautifulSoup(html, "lxml")
+    if not soup.select_one("ul.rich-list, p.totalresults, form.searchsorting"):
+        raise NotAResultsPage(
+            "geen resultatenpagina (geblokkeerd, verplaatst of foutpagina?)")
     records: list[dict[str, Any]] = []
 
     for li in soup.select("ul.rich-list > li"):
@@ -87,12 +110,16 @@ def _parse_additional(li, rec: dict[str, Any]) -> None:
             continue
         parts = [s.strip() for s in txt.split("|")]
         # parts[0] is the language, unless this item has no language and the line
-        # starts with the category instead (e.g. "Fictie | 320 pagina's | …").
+        # starts with the category ("Fictie | 320 pagina's | …") or the extent
+        # itself ("47 pagina's (ePub3) | Uitgeverij X | 2020") instead.
+        rest = parts[1:]
         if parts[0].lower() in ("fictie", "non-fictie", "nonfictie"):
             rec.setdefault("category", "nonfictie" if "non" in parts[0].lower() else "fictie")
+        elif _EXTENT_HINT.search(parts[0]):
+            rest = parts
         elif len(parts[0]) <= 24:
             rec.setdefault("language", parts[0] or None)
-        for part in parts[1:]:
+        for part in rest:
             _parse_extent(part, rec)
         # publisher = second-to-last, year = last (when 4 parts present)
         if len(parts) >= 3:
@@ -104,6 +131,9 @@ def _parse_additional(li, rec: dict[str, Any]) -> None:
                 pub = parts[-1]
             if pub and "pagina" not in pub.lower() and "uur" not in pub.lower():
                 rec.setdefault("publisher", pub)
+
+
+_EXTENT_HINT = re.compile(r"pagina|\buur\b|minuten|\d\s*[KMGT]B", re.I)
 
 
 def _parse_extent(part: str, rec: dict[str, Any]) -> None:

@@ -2,7 +2,9 @@
 
 from pathlib import Path
 
-from obc.listing import max_page, parse_listing
+import pytest
+
+from obc.listing import NotAResultsPage, max_page, parse_listing, total_results
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -36,3 +38,39 @@ def test_audiobook_listing():
 
 def test_max_page_none():
     assert max_page("<html>no pager here</html>") == 1
+
+
+def test_total_results():
+    assert total_results(
+        '<p class="totalresults">Resultaat 1 - 20\n'
+        '<span class="additional">(van 3124)</span></p>') == 3124
+    assert total_results('<p class="totalresults">Resultaat 1 - 7</p>') == 7
+    assert total_results("<html>zegt niets</html>") is None
+
+
+def test_total_results_from_fixture():
+    assert total_results(
+        (FIX / "listing_ebook.html").read_text(encoding="utf-8")) == 3124
+
+
+def test_parse_listing_rejects_a_non_results_page():
+    # A soft-200 (maintenance page, block interstitial) must not read as "zero
+    # results": that once terminated an enumeration cell as if it were complete,
+    # and everything unseen was marked removed.
+    with pytest.raises(NotAResultsPage):
+        parse_listing("<html><body>Er is een storing. Probeer later.</body></html>")
+
+
+def test_extent_first_line_is_not_a_language():
+    # An item with no language starts the pipe-line with the extent; that used to
+    # be captured as language="47 pagina's (ePub3, 9,8 MB)" and the page count lost.
+    html = ('<ul class="rich-list"><li>'
+            '<a class="image-link" href="/catalogus/1/x">t</a>'
+            "<p class=\"additional\">47 pagina's (ePub3, 9,8 MB) | "
+            "Uitgeverij X | 2020</p>"
+            "</li></ul>")
+    rec = parse_listing(html)[0][0]
+    assert rec.get("language") is None
+    assert rec["pages"] == 47
+    assert rec["publisher"] == "Uitgeverij X"
+    assert rec["year"] == 2020

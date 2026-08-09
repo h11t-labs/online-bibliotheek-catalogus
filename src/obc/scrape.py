@@ -23,11 +23,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections.abc import Iterable, Iterator
 from datetime import date
 from pathlib import Path
+from typing import NamedTuple
+
+import httpx
 
 from . import raw
 from .client import Client
@@ -42,7 +46,7 @@ from .config import (
     RECENT_FILE,
 )
 from .detail import parse_detail
-from .listing import parse_listing
+from .listing import NotAResultsPage, parse_listing, total_results
 from .log import logger
 from .util import read_json, write_json
 
@@ -107,12 +111,16 @@ def _merge(base: dict, new: dict) -> dict:
 # browse enumeration (full catalog via q=*)
 # --------------------------------------------------------------------------- #
 def _paginate(client: Client, params: dict[str, str], on_record,
-              seen: set[str], max_page: int = PAGE_CAP) -> int:
+              seen: set[str], max_page: int = PAGE_CAP) -> tuple[int, int | None]:
     """Page through one query, calling on_record for unseen PPNs. Returns the
-    last page that had results."""
-    page = 1
+    last page that had results and the result count the site claims (from
+    page 1), which callers check their enumeration against."""
+    page, total = 1, None
     while page <= max_page:
-        recs, _ = parse_listing(client.get_listing_html(params, page))
+        html = client.get_listing_html(params, page)
+        if page == 1:
+            total = total_results(html)
+        recs, _ = parse_listing(html)
         if not recs:
             break
         for r in recs:
@@ -120,33 +128,73 @@ def _paginate(client: Client, params: dict[str, str], on_record,
                 seen.add(r["ppn"])
                 on_record(r)
         page += 1
-    return page - 1
+    return page - 1, total
 
 
 def _enumerate_cell(client: Client, base: dict[str, str], on_record,
-                    seen: set[str]) -> None:
+                    seen: set[str]) -> tuple[int, int | None]:
     """Completely enumerate one (type, taal[, leesvorm]) cell, working around
-    the 10k cap by adding per-year + a maker-sort window when capped."""
-    last = _paginate(client, {**base, "sorteer": "titel"}, on_record, seen)
+    the 10k cap by adding per-year + a maker-sort window when capped. Returns
+    (records added, the total the site claims for the cell) so browse_all can
+    tell a covered cell from one with a partition hole."""
+    before = len(seen)
+    last, total = _paginate(client, {**base, "sorteer": "titel"}, on_record, seen)
     if last >= PAGE_CAP:  # capped (Dutch): add year partitions + author window
         for year in YEARS:
-            _paginate(client, {**base, "jaar": str(year), "sorteer": "titel"},
-                      on_record, seen)
+            ylast, _ = _paginate(client, {**base, "jaar": str(year),
+                                          "sorteer": "titel"}, on_record, seen)
+            if ylast >= PAGE_CAP:
+                # a single year past 10k has no further split here — say so
+                # loudly instead of losing the tail without a trace
+                logger.error(f"  jaar={year} zit zelf aan de 10k-cap "
+                             f"({base.get('type')}/{base.get('taal')}) — "
+                             "titels voorbij het venster ontbreken")
         _paginate(client, {**base, "sorteer": "maker"}, on_record, seen)
+    return len(seen) - before, total
+
+
+def _shortfall(got: int, claimed: int) -> bool:
+    """Did an enumeration fall meaningfully short of what the site claims?
+    The catalog changes under a 26-minute walk, so offset pagination drifts by
+    a few titles; only a shortfall beyond that noise indicates a hole. This
+    tolerance is for *diagnostics only* — removal reconciliation uses the strict
+    per-cell comparison in browse_all, because a hole smaller than the noise
+    band still holds live titles."""
+    return got < claimed - max(20, claimed // 100)
+
+
+class BrowseResult(NamedTuple):
+    """What a browse walk may be trusted for.
+
+    ``complete`` — every cell ran in this walk (nothing skipped by a resumed
+    checkpoint, no cell aborted) and none fell short beyond drift noise. Good
+    enough for the side-files (e-reader set).
+
+    ``removal_safe`` — stricter: additionally, no counted cell enumerated fewer
+    records than the page claimed, at all. Only this may authorize
+    ``mark_removed``: "absent from a walk that provably saw everything" is the
+    entire evidence base for a removal, and a one-title shortfall is one live
+    title stamped removed. Drift makes the strict bound fail some runs — then
+    removals simply reconcile on a later run that meets it.
+    """
+    complete: bool
+    removal_safe: bool
 
 
 def browse_all(client: Client, formats: Iterable[str], seen: set[str],
-               on_record, ereader: bool = False) -> bool:
+               on_record, ereader: bool = False) -> BrowseResult:
     """Enumerate the catalog per (format x language). Resumable per cell.
 
     With ``ereader=True`` only the e-reader-available subset is visited
     (``leesvorm=ereader``) — used to flag which e-books work on an e-reader.
 
-    Returns whether ``seen`` ended up covering the whole catalog: false when a
-    cell was skipped because a previous, interrupted run had already done it.
-    That is the difference between "these are all the PPNs there are" and "these
-    are the ones I happened to visit", and only the first may be used to conclude
-    that a record on disk has been removed from the catalog.
+    Returns a :class:`BrowseResult` saying whether ``seen`` ended up covering
+    the whole catalog (``complete`` is false when a cell was skipped because a
+    previous, interrupted run had already done it) and whether it did so
+    provably enough to conclude removals from (``removal_safe``). That is the
+    difference between "these are all the PPNs there are" and "these are the
+    ones I happened to visit", and only the first may be used to conclude that
+    a record on disk has been removed from the catalog.
 
     The checkpoint describes one run, and a namespace that already covers every
     cell means the last run finished — so it is cleared here, before the walk,
@@ -162,21 +210,61 @@ def browse_all(client: Client, formats: Iterable[str], seen: set[str],
         done -= cells
         _save_done(done)
     complete = True
+    removal_safe = True
     for fmt in formats:
+        # Σ of the per-taal claimed totals, checked against the unfiltered
+        # format count below: LANGS is a hardcoded list, and a language the
+        # library adds would otherwise fall in no cell — the exact shape of the
+        # pre-1900 hole, one axis over. Only meaningful when every cell ran in
+        # this walk and reported a count.
+        fmt_total, fmt_counted = 0, True
         for taal in LANGS:
             key = f"{tag}:{fmt}:{taal}"
             if key in done:
                 complete = False
+                fmt_counted = False
                 continue
             base = {"q": "*", "type": FORMATS[fmt], "taal": taal}
             if ereader:
                 base["leesvorm"] = "ereader"
-            before = len(seen)
-            _enumerate_cell(client, base, on_record, seen)
+            try:
+                added, total = _enumerate_cell(client, base, on_record, seen)
+            except (httpx.HTTPError, NotAResultsPage) as e:
+                # not checkpointed: the next run redoes this cell. `seen` is now
+                # partial, so nothing downstream may conclude removals from it.
+                logger.error(f"  {key}: enumeratie mislukt ({e}) — cel blijft open")
+                complete = False
+                fmt_counted = False
+                continue
             done.add(key)
             _save_done(done)
-            logger.info(f"  {key}: +{len(seen) - before} (total {len(seen)})")
-    return complete
+            if total is None:
+                fmt_counted = False
+            else:
+                fmt_total += total
+                if added < total:
+                    # any miss at all disqualifies removal reconciliation: a
+                    # one-title shortfall is one live title stamped removed
+                    removal_safe = False
+                if _shortfall(added, total):
+                    logger.error(f"  {key}: {added} van {total} geclaimde "
+                                 "resultaten geënumereerd — partitie-gat?")
+                    complete = False
+            logger.info(f"  {key}: +{added} (total {len(seen)})")
+        if fmt_counted:
+            probe = {"q": "*", "type": FORMATS[fmt]}
+            if ereader:
+                probe["leesvorm"] = "ereader"
+            try:
+                claimed = total_results(client.get_listing_html(probe))
+            except httpx.HTTPError:
+                claimed = None
+            if claimed is not None and _shortfall(fmt_total, claimed):
+                logger.error(f"  {fmt}: taal-cellen claimen samen {fmt_total}, "
+                             f"de catalogus {claimed} — ontbreekt er een taal "
+                             "in LANGS?")
+                complete = False
+    return BrowseResult(complete, complete and removal_safe)
 
 
 def _paginate_flat(client: Client, params: dict[str, str], on_record,
@@ -190,6 +278,9 @@ def _paginate_flat(client: Client, params: dict[str, str], on_record,
         for r in recs:
             on_record(r)
         page += 1
+    if page > max_page:  # ran into the cap, not out of results
+        logger.warning(f"platte walk kapt af op pagina {max_page} voor {params} "
+                       "— de staart voorbij 10k ontbreekt")
 
 
 def collect_genres(client: Client) -> dict[str, list[str]]:
@@ -247,7 +338,16 @@ def collect_ereader(client: Client) -> set[str]:
     """
     seen: set[str] = set()
     ppns: set[str] = set()
-    browse_all(client, ["ebook"], seen, lambda r: ppns.add(r["ppn"]), ereader=True)
+    res = browse_all(client, ["ebook"], seen, lambda r: ppns.add(r["ppn"]),
+                     ereader=True)
+    if not res.complete:
+        # A resumed run skipped cells a previous, interrupted one finished, so
+        # `ppns` misses those cells' e-books — writing it would zero the flag on
+        # all of them at the next normalize. Keep the last complete answer.
+        prior = set(read_json(EREADER_FILE, default=[]) or [])
+        logger.warning(f"e-reader-walk onvolledig — vorige set blijft staan "
+                       f"({len(prior)} e-books); draai --ereader opnieuw")
+        return prior
     write_json(EREADER_FILE, sorted(ppns))
     logger.info(f"e-reader-available e-books: {len(ppns)}")
     return ppns
@@ -256,10 +356,16 @@ def collect_ereader(client: Client) -> set[str]:
 # --------------------------------------------------------------------------- #
 # file enumeration (detail pages)
 # --------------------------------------------------------------------------- #
+_PPN_ONLY_RE = re.compile(r"[0-9xX]+")
+
+
 def enumerate_from_file(path: Path) -> Iterator[tuple[str, str]]:
     text = path.read_text(encoding="utf-8").strip()
-    if text.startswith("["):
-        for obj in json.loads(text):
+    if text.startswith(("[", "{")):
+        objs = json.loads(text)
+        if isinstance(objs, dict):  # a single object is a one-item list
+            objs = [objs]
+        for obj in objs:
             if isinstance(obj, dict):
                 if obj.get("ppn") and obj.get("slug"):
                     yield str(obj["ppn"]), str(obj["slug"])
@@ -277,7 +383,10 @@ def enumerate_from_file(path: Path) -> Iterator[tuple[str, str]]:
             yield m.group(1), m.group(2)
         elif "," in line:
             ppn, slug = line.split(",", 1)
-            yield ppn.strip(), slug.strip()
+            if _PPN_ONLY_RE.fullmatch(ppn.strip()):
+                yield ppn.strip(), slug.strip()
+            else:
+                logger.warning(f"regel zonder geldige ppn overgeslagen: {line!r}")
 
 
 # --------------------------------------------------------------------------- #
@@ -323,16 +432,22 @@ def details(rate: float, limit=None) -> None:
             html = client.get_detail_html(rec["ppn"], rec["slug"])
             if not html:
                 continue
-            raw.put_detail(store, rec["ppn"], html)
             detail = parse_detail(html, ppn=rec["ppn"])
-            if detail:
-                merged = _merge(rec, detail)
-                # _merge keeps only truthy values, so a detail ereader=0 (app-only)
-                # would be dropped — carry the flag through explicitly so app-only
-                # e-books aren't left blank.
-                if detail.get("ereader") is not None:
-                    merged["ereader"] = detail["ereader"]
-                raw.put(store, merged)
+            if not detail:
+                # A soft-200 ("titel niet gevonden", maintenance chrome) parsed
+                # to nothing. Storing it would stamp detail_at and this pass
+                # would never come back for the real page.
+                logger.warning(f"  {rec['ppn']}: pagina parset naar niets — "
+                               "niet opgeslagen")
+                continue
+            raw.put_detail(store, rec["ppn"], html)
+            merged = _merge(rec, detail)
+            # _merge keeps only truthy values, so a detail ereader=0 (app-only)
+            # would be dropped — carry the flag through explicitly so app-only
+            # e-books aren't left blank.
+            if detail.get("ereader") is not None:
+                merged["ereader"] = detail["ereader"]
+            raw.put(store, merged)
             n += 1
             if n % 50 == 0:
                 logger.info(f"  …{n} fetched")
@@ -420,13 +535,17 @@ def sync(rate: float, max_pages: int = 300, streak_stop: int = 120) -> None:
                 old = raw.get(store, r["ppn"])
                 if old is not None:
                     merged = _merge(old, r)
-                    if _sig(old) == _sig(merged):
+                    # A removed-marked title showing up in a listing is news even
+                    # when its fields didn't change: it came back. Counting it in
+                    # the unchanged streak would treat the ghost as evidence to
+                    # stop looking; put(live=True) clears the stamp instead.
+                    if _sig(old) == _sig(merged) and not old.get("removed_at"):
                         streak += 1
                         continue
-                    raw.put(store, merged)
+                    raw.put(store, merged, live=True)
                     updated += 1
                 else:
-                    raw.put(store, r)
+                    raw.put(store, r, live=True)
                     new += 1
                 streak = 0
             page += 1
@@ -434,20 +553,40 @@ def sync(rate: float, max_pages: int = 300, streak_stop: int = 120) -> None:
     logger.info(f"sync: +{new} new, {updated} updated (scanned {page - 1} pages)")
 
 
-def mark_removed(seen: set[str]) -> set[str]:
+def mark_removed(seen: set[str], max_frac: float | None = None) -> set[str]:
     """Stamp ``removed_at`` on records the catalog no longer lists (the UI hides them).
 
     Only ever called with a ``seen`` set that covers the whole catalog. Concluding
     "absent from this run, therefore gone" from a partial enumeration marks the
     entire catalog removed, and the next normalize then drops it — which is
     precisely what a leftover checkpoint used to cause.
+
+    The completeness gate upstream can still be fooled (a soft-200 that parses as
+    an empty page, a facet value missing from LANGS), so this end refuses
+    implausible volumes too: real removals are a trickle, and a large batch is an
+    enumeration hole until a human says otherwise (``OBC_REMOVAL_MAX_FRAC``).
     """
+    if max_frac is None:
+        max_frac = float(os.environ.get("OBC_REMOVAL_MAX_FRAC", "0.05"))
     store = _store()
-    removed = raw.known_ppns(store) - seen
-    raw.mark_removed(store, removed)
+    # Fresh candidates against currently-live rows: measured against *all* known
+    # rows, every historical removal counts again each run, and once history
+    # crosses the threshold no new removal would ever be stamped.
+    live = raw.live_ppns(store)
+    missing = live - seen
+    if len(live) >= 1000 and len(missing) > max_frac * len(live):
+        sample = ", ".join(sorted(missing)[:5])
+        logger.error(
+            f"weiger {len(missing)} van {len(live)} live records als verwijderd "
+            f"te stempelen (>{max_frac:.0%}; o.a. {sample}) — dat is een "
+            "enumeratie-gat, geen massaverwijdering; zet OBC_REMOVAL_MAX_FRAC "
+            "hoger als het echt zo is")
+        store.close()
+        return set()
+    raw.mark_removed(store, missing)
     store.close()
-    logger.info(f"{len(seen)} live, {len(removed)} marked removed")
-    return removed
+    logger.info(f"{len(seen)} live, {len(missing)} newly marked removed")
+    return missing
 
 
 # --------------------------------------------------------------------------- #
@@ -476,7 +615,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--rate", type=float, default=3.0, help="requests/second")
     p.add_argument("--limit", type=int, default=None, help="(file mode) max records")
     args = p.parse_args(argv)
-    formats = [f.strip() for f in args.formats.split(",") if f.strip() in FORMATS]
+    names = [f.strip() for f in args.formats.split(",") if f.strip()]
+    unknown = [n for n in names if n not in FORMATS]
+    if unknown:
+        # Dropping a typo silently would quietly narrow the run instead
+        p.error(f"onbekend formaat: {', '.join(unknown)} "
+                f"(kies uit: {', '.join(FORMATS)})")
+    formats = names
 
     if args.from_file:
         harvest_details(enumerate_from_file(args.from_file), args.rate, args.limit)
@@ -506,21 +651,24 @@ def main(argv: list[str] | None = None) -> int:
         def on_record(rec: dict) -> None:
             # merge, never overwrite: a browse row carries the listing fields only,
             # and writing it over a record would drop the ISBN, genres and
-            # cross-links its detail page put there.
+            # cross-links its detail page put there. live=True: a listing row is
+            # proof the catalog carries the title, which un-marks a removal.
             old = raw.get(store, rec["ppn"])
-            raw.put(store, _merge(old, rec) if old else rec)
+            raw.put(store, _merge(old, rec) if old else rec, live=True)
 
         with Client(per_second=args.rate) as client:
-            complete = browse_all(client, formats, seen, on_record)
+            res = browse_all(client, formats, seen, on_record)
             collect_ereader(client)
             collect_genres(client)
             collect_recent(client)
         store.close()
-        # Two ways this run's `seen` can fail to be the whole catalog, and both
-        # would mark good records removed: a resumed run skipped the cells the
-        # previous one finished, and --formats narrowed the enumeration to part of
-        # the catalog (with `ebook` alone, every audiobook is "missing").
-        if complete and set(formats) == set(FORMATS):
+        # Ways this run's `seen` can fail to be (provably) the whole catalog,
+        # each of which would mark good records removed: a resumed run skipped
+        # the cells the previous one finished, --formats narrowed the
+        # enumeration to part of the catalog (with `ebook` alone, every
+        # audiobook is "missing"), or a cell enumerated fewer records than the
+        # site claims it holds.
+        if res.removal_safe and set(formats) == set(FORMATS):
             mark_removed(seen)
         else:
             logger.info("partial enumeration — not checking for removed titles")

@@ -14,10 +14,11 @@ rewrites provider slugs, so hand-made files are preserved.
 from __future__ import annotations
 
 import datetime
-import json
+import re
 
 from ..config import LISTS_DIR  # rebindable module-level path (see obc.config)
 from ..log import logger
+from ..util import write_json
 from . import bestseller60, nyt, wikiprize
 
 # providers: each returns a list of list-dicts
@@ -32,17 +33,32 @@ def update(slugs: list[str] | None = None) -> None:
     LISTS_DIR.mkdir(parents=True, exist_ok=True)
     written = 0
     for provider in PROVIDERS:
+        name = provider.__module__.rsplit(".", 1)[-1]
         try:
             results = provider()
         except Exception as e:  # one bad provider shouldn't kill the rest
             logger.warning(f"provider {provider.__module__} failed: {e}")
-            continue
+            results = []
+        # Fewer lists than this provider's files already on disk means the rest
+        # are silently going stale (upstream markup/API change) — surface that.
+        existing = len(list(LISTS_DIR.glob(f"{name}*.json")))
+        if len(results) < existing:
+            logger.warning(f"{name}: produced {len(results)} list(s) but {existing} "
+                           f"{name}*.json file(s) exist — those were not refreshed")
         for data in results:
-            if slugs and data["slug"] not in slugs:
+            # Slugs become filenames; NYT's embed API-supplied text, so strip
+            # anything that could escape LISTS_DIR ("/", "..").
+            slug = re.sub(r"[^a-z0-9-]", "", str(data["slug"]).lower())
+            if not slug:
+                logger.warning(f"{name}: unusable slug {data['slug']!r} — skipped")
                 continue
+            if slugs and slug not in slugs:
+                continue
+            data["slug"] = slug
             data["updated_at"] = datetime.datetime.now().isoformat(timespec="seconds")
-            (LISTS_DIR / f"{data['slug']}.json").write_text(
-                json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-            logger.info(f"  {data['slug']}: {len(data.get('items', []))} items")
+            # write_json is atomic (unique temp + rename): never leave truncated
+            # JSON at the live path
+            write_json(LISTS_DIR / f"{slug}.json", data, indent=1)
+            logger.info(f"  {slug}: {len(data.get('items', []))} items")
             written += 1
     logger.info(f"Wrote {written} list(s). Run `obc normalize` to match them to the catalog.")

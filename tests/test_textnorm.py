@@ -59,9 +59,19 @@ def test_valid_language_filters_junk():
 
 def test_detect_series_explicit_marker_only():
     assert detect_series("Het Mysterie: deel 2") == ("Het Mysterie", 2)
+    # publishers punctuate with en-dashes as often as hyphens
+    assert detect_series("Sisi – deel 2") == ("Sisi", 2)
     # no false positives on numbers that aren't series markers
     assert detect_series("1984") == (None, None)
     assert detect_series("Catch-22") == (None, None)
+
+
+def test_surname_key_inverted_apostrophe_particle():
+    # Apostrophes are stripped before folding, so the inverted "van 't" arrives
+    # as a bare trailing "t" — which must count as a particle, not a surname.
+    from obc.textnorm import surname_key
+    assert surname_key("Wolde, van 't") == "wolde"
+    assert surname_key("van 't Spijker") == "spijker"
 
 
 def test_wikiprize_one_winner_per_year():

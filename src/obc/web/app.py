@@ -368,7 +368,9 @@ async def _headers_and_canonical_host(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Content-Security-Policy"] = _CSP
-    if (request.method in ("GET", "HEAD") and response.status_code == 200
+    # 301 too: the English-prefix entries in _CACHE_PREFIXES exist precisely so
+    # crawlers stop re-fetching the ~11.3k renamed URLs they still hold.
+    if (request.method in ("GET", "HEAD") and response.status_code in (200, 301)
             and "cache-control" not in response.headers):
         path = request.url.path
         if path == "/" and not request.url.query:
@@ -517,7 +519,10 @@ def _not_found(request: Request, kind: str = "page", term: str = "") -> Response
         # Error pages are never worth indexing, but their links are worth crawling.
         "robots": "noindex,follow",
         "meta_description": f"{head} — zoek in de collectie van de online Bibliotheek."},
-        status_code=404)
+        status_code=404,
+        # Each miss costs an FTS pass plus five LIKE scans for the suggestions,
+        # and scanners re-probe the same dead paths — a public hour absorbs that.
+        headers={"Cache-Control": "public, max-age=3600"})
 
 
 @app.exception_handler(404)
@@ -605,6 +610,17 @@ def _browse_page(request: Request, conn: sqlite3.Connection, *, heading: str,
 # --------------------------------------------------------------------------- #
 # search
 # --------------------------------------------------------------------------- #
+def _parse_page(value: str, default: int) -> int:
+    """Lenient positive-int parse for pagina/per_pagina, like parse_year for the
+    year fields: a strict ``int`` Query param answers ``?pagina=abc`` with
+    FastAPI's raw JSON 422 on an HTML site. Junk or < 1 -> the default."""
+    try:
+        n = int(value)
+    except ValueError:
+        return default
+    return n if n >= 1 else default
+
+
 @app.get("/", response_class=HTMLResponse)
 def search(
     request: Request,
@@ -622,12 +638,14 @@ def search(
     year_to: str = Query("", alias="jaar_tot"),
     sort: str = Query("", alias="sortering"),
     view: str = Query("", alias="weergave"),
-    page: int = Query(1, ge=1, alias="pagina"),
-    per_page: int = Query(PAGE_SIZE, alias="per_pagina"),
+    page_: str = Query("", alias="pagina"),
+    per_page_: str = Query("", alias="per_pagina"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     q = q.strip()
     view = view if view in ("grid", "list") else "grid"
+    page = _parse_page(page_, 1)
+    per_page = _parse_page(per_page_, PAGE_SIZE)
     page_size = per_page if per_page in PER_PAGE_OPTIONS else PAGE_SIZE
     yf, yt = queries.parse_year(year_from), queries.parse_year(year_to)
     # unset sort -> relevance for a search, newest-first when browsing

@@ -89,9 +89,12 @@ def parse(page: str) -> list[dict]:
         })
     seen, out = set(), []
     for it in sorted(items, key=lambda x: x["position"] or 999):
-        if it["position"] in seen:
+        # Dedupe by position; position-less items (markup change) by (title, author),
+        # so they don't all collapse onto the single dict key None.
+        key = it["position"] if it["position"] is not None else (it["title"], it["author"])
+        if key in seen:
             continue
-        seen.add(it["position"])
+        seen.add(key)
         out.append(it)
     return out
 
@@ -116,4 +119,9 @@ def fetch_all() -> list[dict]:
                 full_desc = f"{desc} — {span}" if span else desc
                 out.append({"slug": slug, "name": name, "url": url,
                             "description": full_desc, "items": items})
+            else:
+                # A fetched page that parses to nothing means a markup change —
+                # warn, or the on-disk list goes silently stale (week-marker déjà vu).
+                logger.warning(f"{slug}: page fetched but parsed to 0 items — "
+                               "markup change? list not refreshed")
     return out

@@ -120,4 +120,10 @@ def fetch_all() -> list[dict]:
                 "description": f"Winnaars en genomineerden van de {name} (bron: Wikipedia).",
                 "items": items,
             })
+        else:
+            # 0–2 items means the page was renamed/emptied or its markup changed
+            # (_wikitext returns "" for a missing page) — warn instead of going
+            # silently stale on disk.
+            logger.warning(f"{slug}: parsed only {len(items)} item(s) from "
+                           f"Wikipedia page {page!r} — list not refreshed")
     return out

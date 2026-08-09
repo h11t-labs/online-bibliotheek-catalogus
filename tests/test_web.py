@@ -477,6 +477,20 @@ def test_suggest_and_facet_reject_hostile_limits(client):
     assert client.get("/facetten?type=author&limit=10").status_code == 200
 
 
+def test_malformed_number_params_never_surface_a_json_422(client):
+    # ?pagina=abc and ?pagina=0 used to answer FastAPI's raw JSON 422 on an HTML
+    # site, and 20 nines in ?jaar_van= overflowed SQLite's integer binding into a
+    # 500. Junk in a number slot falls back to the default, like parse_year.
+    for path in ("/?pagina=abc", "/?pagina=0", "/?pagina=-3", "/?per_pagina=abc",
+                 "/?per_pagina=0", "/?pagina=99999999999999999999",
+                 "/?jaar_van=99999999999999999999", "/?jaar_tot=--5"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert "text/html" in r.headers["content-type"], path
+    # the valid shapes still steer the page (the year chip renders)
+    assert "vanaf 2018" in client.get("/?jaar_van=2018").text
+
+
 def test_unknown_sql_error_is_not_hidden_as_bootstrap(client, monkeypatch):
     # A genuine SQL bug must surface as a 500, not the friendly "catalogus wordt
     # opgebouwd" 503 page (which is only for a not-yet-built DB).
@@ -572,7 +586,9 @@ def test_404_serves_the_branded_page_for_every_kind_of_miss(client):
         assert 'class="search-trigger' in r.text and "<footer>" in r.text, path
         # an error page is worth crawling for its links, never worth indexing
         assert '<meta name="robots" content="noindex,follow">' in r.text, path
-        assert "cache-control" not in r.headers, path
+        # each miss costs an FTS pass plus LIKE scans for the suggestions, and
+        # scanners re-probe the same dead paths — a short public age absorbs that
+        assert r.headers.get("cache-control") == "public, max-age=3600", path
 
 
 def test_404_suggests_near_matches_and_seeds_the_search(client):

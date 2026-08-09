@@ -331,3 +331,23 @@ def test_cache_control(client):
     # volatile / non-content endpoints stay uncached
     assert "cache-control" not in client.get("/healthz").headers
     assert "cache-control" not in client.get("/suggesties?zoek=a").headers
+
+
+def test_rename_301s_are_cacheable(client):
+    # ~11.3k old /author/ and /series/ URLs are still indexed; the 301 is what a
+    # crawler keeps re-fetching until its index moves over, so it carries the same
+    # public hour as the page it points at — the reason the English prefixes sit
+    # in _CACHE_PREFIXES at all
+    for old in ("/author/anna-vrij", "/series/het-mysterie", "/about", "/stats",
+                "/list/test-top"):
+        r = client.get(old, follow_redirects=False)
+        assert r.status_code == 301, old
+        assert "public" in r.headers.get("cache-control", ""), old
+
+
+def test_crawl_files_are_cacheable(client):
+    # robots.txt is re-read before most fetches and the sitemaps only change on
+    # the daily rebuild — both used to be served uncached on every hit
+    for path in ("/robots.txt", "/sitemap.xml", "/sitemap-static.xml",
+                 "/sitemap-browse.xml", "/sitemap-books-1.xml"):
+        assert "public" in client.get(path).headers.get("cache-control", ""), path
