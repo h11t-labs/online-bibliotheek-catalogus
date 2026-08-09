@@ -189,6 +189,15 @@ def known_ppns(conn: sqlite3.Connection) -> set[str]:
     return {r[0] for r in conn.execute("SELECT ppn FROM records")}
 
 
+def live_ppns(conn: sqlite3.Connection) -> set[str]:
+    """PPNs not currently marked removed — the base for removal reconciliation:
+    measuring "how much disappeared this run" against *all* known rows counts
+    every historical removal again, and past a threshold's worth of history no
+    fresh removal would ever pass it."""
+    return {r[0] for r in conn.execute(
+        "SELECT ppn FROM records WHERE removed_at IS NULL")}
+
+
 def mark_removed(conn: sqlite3.Connection, ppns: Iterable[str]) -> int:
     """Stamp ``removed_at`` on titles the catalog no longer lists (the UI hides
     them). The row stays: the stored page is still the best answer we have about

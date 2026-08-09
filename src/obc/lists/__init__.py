@@ -14,12 +14,11 @@ rewrites provider slugs, so hand-made files are preserved.
 from __future__ import annotations
 
 import datetime
-import json
-import os
 import re
 
 from ..config import LISTS_DIR  # rebindable module-level path (see obc.config)
 from ..log import logger
+from ..util import write_json
 from . import bestseller60, nyt, wikiprize
 
 # providers: each returns a list of list-dicts
@@ -57,10 +56,9 @@ def update(slugs: list[str] | None = None) -> None:
                 continue
             data["slug"] = slug
             data["updated_at"] = datetime.datetime.now().isoformat(timespec="seconds")
-            target = LISTS_DIR / f"{slug}.json"
-            tmp = target.with_name(target.name + ".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-            os.replace(tmp, target)  # atomic: never leave truncated JSON at the live path
+            # write_json is atomic (unique temp + rename): never leave truncated
+            # JSON at the live path
+            write_json(LISTS_DIR / f"{slug}.json", data, indent=1)
             logger.info(f"  {slug}: {len(data.get('items', []))} items")
             written += 1
     logger.info(f"Wrote {written} list(s). Run `obc normalize` to match them to the catalog.")

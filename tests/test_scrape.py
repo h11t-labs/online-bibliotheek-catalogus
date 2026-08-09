@@ -104,7 +104,8 @@ def test_a_completed_checkpoint_is_cleared_before_the_walk(paths):
     scrape._save_done(_all_keys("all", scrape.FORMATS))
     seen: set[str] = set()
 
-    assert scrape.browse_all(fake, list(scrape.FORMATS), seen, lambda r: None) is True
+    assert scrape.browse_all(fake, list(scrape.FORMATS), seen,
+                             lambda r: None).complete is True
     assert seen == {"001", "002"}          # it really did enumerate
 
 
@@ -115,7 +116,8 @@ def test_an_interrupted_run_still_resumes(paths):
     scrape._save_done({"all:ebook:dut"})
     seen: set[str] = set()
 
-    assert scrape.browse_all(fake, list(scrape.FORMATS), seen, lambda r: None) is False
+    res = scrape.browse_all(fake, list(scrape.FORMATS), seen, lambda r: None)
+    assert res.complete is False and res.removal_safe is False
     assert not any(p == {"q": "*", "type": "E-book", "taal": "dut"}
                    for p, _page in fake.calls)
 
@@ -176,7 +178,8 @@ def test_a_complete_enumeration_marks_what_the_catalog_dropped(paths):
     fake = FakeClient(rows)
     seen: set[str] = set()
 
-    assert scrape.browse_all(fake, list(scrape.FORMATS), seen, lambda r: None) is True
+    assert scrape.browse_all(fake, list(scrape.FORMATS), seen,
+                             lambda r: None).removal_safe is True
     assert scrape.mark_removed(seen) == {"003"}
 
     assert _stored("003")["removed_at"]
@@ -256,6 +259,23 @@ def test_mark_removed_refuses_implausible_volumes(paths):
     assert _stored("999")["removed_at"]
 
 
+def test_mark_removed_threshold_ignores_historical_removals(paths):
+    # The guard measures fresh candidates against *live* rows. Measured against
+    # all known rows, history counts again every run: once cumulative removals
+    # crossed the threshold, no new removal would ever be stamped again.
+    from obc import raw
+
+    conn = raw.connect(scrape.RAW_DB)
+    for i in range(1000):
+        raw.put(conn, {"ppn": str(i), "slug": "s"})
+    raw.mark_removed(conn, {str(i) for i in range(60)})  # 6% history
+    conn.close()
+
+    seen = {str(i) for i in range(60, 999)}  # one live title newly missing
+    assert scrape.mark_removed(seen) == {"999"}
+    assert _stored("999")["removed_at"]
+
+
 def test_mark_removed_keeps_the_original_removal_date(paths):
     from obc import raw
 
@@ -280,7 +300,8 @@ def test_a_broken_listing_page_leaves_the_cell_open(paths):
             return "<html><body>Er is een storing</body></html>"
 
     seen: set[str] = set()
-    assert scrape.browse_all(BrokenClient(), ["ebook"], seen, lambda r: None) is False
+    res = scrape.browse_all(BrokenClient(), ["ebook"], seen, lambda r: None)
+    assert res.complete is False and res.removal_safe is False
     assert scrape._load_done() == set()
 
 
@@ -301,7 +322,26 @@ def test_a_cell_that_falls_short_of_its_claim_is_incomplete(paths, monkeypatch):
             return _total_html(rows, 100)
 
     seen: set[str] = set()
-    assert scrape.browse_all(ClaimClient(), ["ebook"], seen, lambda r: None) is False
+    res = scrape.browse_all(ClaimClient(), ["ebook"], seen, lambda r: None)
+    assert res.complete is False and res.removal_safe is False
+
+
+def test_a_shortfall_within_drift_noise_still_blocks_removals(paths, monkeypatch):
+    # 100 of the claimed 101: within the diagnostics tolerance (no error logged,
+    # the walk counts as complete), but "absent from this walk" is now unproven
+    # for at least one live title — removals may not be concluded from it.
+    monkeypatch.setattr(scrape, "LANGS", ["dut"])
+
+    class NearClient(FakeClient):
+        def get_listing_html(self, params, page=1):
+            rows = ([(f"{i:03}", "s") for i in range(100)]
+                    if page == 1 and "taal" in params else [])
+            return _total_html(rows, 101 if "taal" in params else 100)
+
+    seen: set[str] = set()
+    res = scrape.browse_all(NearClient(), ["ebook"], seen, lambda r: None)
+    assert res.complete is True
+    assert res.removal_safe is False
 
 
 def test_a_language_missing_from_langs_is_detected(paths, monkeypatch):
@@ -317,7 +357,8 @@ def test_a_language_missing_from_langs_is_detected(paths, monkeypatch):
             return _total_html(rows, total)
 
     seen: set[str] = set()
-    assert scrape.browse_all(LangClient(), ["ebook"], seen, lambda r: None) is False
+    assert scrape.browse_all(LangClient(), ["ebook"], seen,
+                             lambda r: None).complete is False
 
 
 def test_collect_ereader_keeps_prior_set_when_resumed(paths):

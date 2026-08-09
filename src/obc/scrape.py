@@ -29,6 +29,7 @@ import sys
 from collections.abc import Iterable, Iterator
 from datetime import date
 from pathlib import Path
+from typing import NamedTuple
 
 import httpx
 
@@ -155,22 +156,45 @@ def _enumerate_cell(client: Client, base: dict[str, str], on_record,
 def _shortfall(got: int, claimed: int) -> bool:
     """Did an enumeration fall meaningfully short of what the site claims?
     The catalog changes under a 26-minute walk, so offset pagination drifts by
-    a few titles; only a shortfall beyond that noise indicates a hole."""
+    a few titles; only a shortfall beyond that noise indicates a hole. This
+    tolerance is for *diagnostics only* — removal reconciliation uses the strict
+    per-cell comparison in browse_all, because a hole smaller than the noise
+    band still holds live titles."""
     return got < claimed - max(20, claimed // 100)
 
 
+class BrowseResult(NamedTuple):
+    """What a browse walk may be trusted for.
+
+    ``complete`` — every cell ran in this walk (nothing skipped by a resumed
+    checkpoint, no cell aborted) and none fell short beyond drift noise. Good
+    enough for the side-files (e-reader set).
+
+    ``removal_safe`` — stricter: additionally, no counted cell enumerated fewer
+    records than the page claimed, at all. Only this may authorize
+    ``mark_removed``: "absent from a walk that provably saw everything" is the
+    entire evidence base for a removal, and a one-title shortfall is one live
+    title stamped removed. Drift makes the strict bound fail some runs — then
+    removals simply reconcile on a later run that meets it.
+    """
+    complete: bool
+    removal_safe: bool
+
+
 def browse_all(client: Client, formats: Iterable[str], seen: set[str],
-               on_record, ereader: bool = False) -> bool:
+               on_record, ereader: bool = False) -> BrowseResult:
     """Enumerate the catalog per (format x language). Resumable per cell.
 
     With ``ereader=True`` only the e-reader-available subset is visited
     (``leesvorm=ereader``) — used to flag which e-books work on an e-reader.
 
-    Returns whether ``seen`` ended up covering the whole catalog: false when a
-    cell was skipped because a previous, interrupted run had already done it.
-    That is the difference between "these are all the PPNs there are" and "these
-    are the ones I happened to visit", and only the first may be used to conclude
-    that a record on disk has been removed from the catalog.
+    Returns a :class:`BrowseResult` saying whether ``seen`` ended up covering
+    the whole catalog (``complete`` is false when a cell was skipped because a
+    previous, interrupted run had already done it) and whether it did so
+    provably enough to conclude removals from (``removal_safe``). That is the
+    difference between "these are all the PPNs there are" and "these are the
+    ones I happened to visit", and only the first may be used to conclude that
+    a record on disk has been removed from the catalog.
 
     The checkpoint describes one run, and a namespace that already covers every
     cell means the last run finished — so it is cleared here, before the walk,
@@ -186,6 +210,7 @@ def browse_all(client: Client, formats: Iterable[str], seen: set[str],
         done -= cells
         _save_done(done)
     complete = True
+    removal_safe = True
     for fmt in formats:
         # Σ of the per-taal claimed totals, checked against the unfiltered
         # format count below: LANGS is a hardcoded list, and a language the
@@ -217,6 +242,10 @@ def browse_all(client: Client, formats: Iterable[str], seen: set[str],
                 fmt_counted = False
             else:
                 fmt_total += total
+                if added < total:
+                    # any miss at all disqualifies removal reconciliation: a
+                    # one-title shortfall is one live title stamped removed
+                    removal_safe = False
                 if _shortfall(added, total):
                     logger.error(f"  {key}: {added} van {total} geclaimde "
                                  "resultaten geënumereerd — partitie-gat?")
@@ -235,7 +264,7 @@ def browse_all(client: Client, formats: Iterable[str], seen: set[str],
                              f"de catalogus {claimed} — ontbreekt er een taal "
                              "in LANGS?")
                 complete = False
-    return complete
+    return BrowseResult(complete, complete and removal_safe)
 
 
 def _paginate_flat(client: Client, params: dict[str, str], on_record,
@@ -309,9 +338,9 @@ def collect_ereader(client: Client) -> set[str]:
     """
     seen: set[str] = set()
     ppns: set[str] = set()
-    complete = browse_all(client, ["ebook"], seen, lambda r: ppns.add(r["ppn"]),
-                          ereader=True)
-    if not complete:
+    res = browse_all(client, ["ebook"], seen, lambda r: ppns.add(r["ppn"]),
+                     ereader=True)
+    if not res.complete:
         # A resumed run skipped cells a previous, interrupted one finished, so
         # `ppns` misses those cells' e-books — writing it would zero the flag on
         # all of them at the next normalize. Keep the last complete answer.
@@ -540,22 +569,24 @@ def mark_removed(seen: set[str], max_frac: float | None = None) -> set[str]:
     if max_frac is None:
         max_frac = float(os.environ.get("OBC_REMOVAL_MAX_FRAC", "0.05"))
     store = _store()
-    known = raw.known_ppns(store)
-    removed = known - seen
-    if len(known) >= 1000 and len(removed) > max_frac * len(known):
-        sample = ", ".join(sorted(removed)[:5])
+    # Fresh candidates against currently-live rows: measured against *all* known
+    # rows, every historical removal counts again each run, and once history
+    # crosses the threshold no new removal would ever be stamped.
+    live = raw.live_ppns(store)
+    missing = live - seen
+    if len(live) >= 1000 and len(missing) > max_frac * len(live):
+        sample = ", ".join(sorted(missing)[:5])
         logger.error(
-            f"weiger {len(removed)} van {len(known)} records als verwijderd te "
-            f"stempelen (>{max_frac:.0%}; o.a. {sample}) — dat is een "
+            f"weiger {len(missing)} van {len(live)} live records als verwijderd "
+            f"te stempelen (>{max_frac:.0%}; o.a. {sample}) — dat is een "
             "enumeratie-gat, geen massaverwijdering; zet OBC_REMOVAL_MAX_FRAC "
             "hoger als het echt zo is")
         store.close()
         return set()
-    fresh = raw.mark_removed(store, removed)
+    raw.mark_removed(store, missing)
     store.close()
-    logger.info(f"{len(seen)} live, {fresh} newly marked removed "
-                f"({len(removed)} missing in total)")
-    return removed
+    logger.info(f"{len(seen)} live, {len(missing)} newly marked removed")
+    return missing
 
 
 # --------------------------------------------------------------------------- #
@@ -626,16 +657,18 @@ def main(argv: list[str] | None = None) -> int:
             raw.put(store, _merge(old, rec) if old else rec, live=True)
 
         with Client(per_second=args.rate) as client:
-            complete = browse_all(client, formats, seen, on_record)
+            res = browse_all(client, formats, seen, on_record)
             collect_ereader(client)
             collect_genres(client)
             collect_recent(client)
         store.close()
-        # Two ways this run's `seen` can fail to be the whole catalog, and both
-        # would mark good records removed: a resumed run skipped the cells the
-        # previous one finished, and --formats narrowed the enumeration to part of
-        # the catalog (with `ebook` alone, every audiobook is "missing").
-        if complete and set(formats) == set(FORMATS):
+        # Ways this run's `seen` can fail to be (provably) the whole catalog,
+        # each of which would mark good records removed: a resumed run skipped
+        # the cells the previous one finished, --formats narrowed the
+        # enumeration to part of the catalog (with `ebook` alone, every
+        # audiobook is "missing"), or a cell enumerated fewer records than the
+        # site claims it holds.
+        if res.removal_safe and set(formats) == set(FORMATS):
             mark_removed(seen)
         else:
             logger.info("partial enumeration — not checking for removed titles")
