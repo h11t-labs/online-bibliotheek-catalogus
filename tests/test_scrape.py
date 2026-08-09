@@ -447,6 +447,55 @@ def test_paginate_respects_max_page():
 # --------------------------------------------------------------------------- #
 # browse_all resume (the legitimate behavior step 4 preserved)
 # --------------------------------------------------------------------------- #
+def test_a_stale_checkpoint_is_ignored_and_cleared(paths):
+    """Resume state is only meaningful while a run is still going.
+
+    The live machine carried a checkpoint from 4 July holding every
+    ``all:ebook:*`` cell and no audiobook one — the partial state of an
+    interrupted run. The "clear when the namespace is complete" rule never
+    matched it, so every --full for a month walked audiobooks only, called itself
+    incomplete, and never re-enumerated a single e-book.
+    """
+    import os as _os
+    import time as _time
+
+    stale = {f"all:ebook:{taal}" for taal in scrape.LANGS}
+    scrape._save_done(stale)
+    old = _time.time() - 40 * 24 * 3600
+    _os.utime(scrape.CHECKPOINT, (old, old))
+
+    assert scrape._load_done() == set()
+    assert json.loads(scrape.CHECKPOINT.read_text(encoding="utf-8")) == []
+
+    # …and a run that meets it walks every cell instead of skipping the e-books
+    fake = FakeClient([("1", "a")])
+    seen: set[str] = set()
+    scrape.browse_all(fake, list(scrape.FORMATS), seen, lambda r: None)
+    assert {p.get("type") for p, _page in fake.calls} == {"E-book",
+                                                          "Digitaal_luisterboek"}
+
+
+def test_a_recent_partial_checkpoint_still_resumes(paths):
+    # the other half: state from a run interrupted minutes ago is exactly what
+    # the checkpoint is for, and must survive.
+    scrape._save_done({"all:ebook:dut"})
+    assert scrape._load_done() == {"all:ebook:dut"}
+
+
+def test_browse_all_says_which_cells_it_skips(paths):
+    # Without this the log of a narrowed run is indistinguishable from a full
+    # one, which is how a month of e-book-less harvests went unnoticed.
+    messages: list[str] = []
+    from obc.log import logger as _logger
+    sink = _logger.add(lambda m: messages.append(str(m)), level="WARNING")
+    try:
+        scrape._save_done({"all:ebook:dut"})
+        scrape.browse_all(FakeClient([("1", "a")]), ["ebook"], set(), lambda r: None)
+    finally:
+        _logger.remove(sink)
+    assert any("overgeslagen" in m and "all:ebook:dut" in m for m in messages)
+
+
 def test_browse_all_skips_cells_already_in_checkpoint(paths):
     # a partial namespace is an interrupted run: those cells are not walked again
     fake = FakeClient([("1", "a")])
@@ -620,3 +669,83 @@ def test_the_year_split_reaches_the_classics():
     assert 1889 in scrape.YEARS, "Couperus, Eline Vere"
     assert 1605 in scrape.YEARS, "Don Quijote"
     assert max(scrape.YEARS) >= date.today().year + 1  # and still covers new licences
+
+
+# --------------------------------------------------------------------------- #
+# raw store locking
+# --------------------------------------------------------------------------- #
+def _hold_write_lock(store, hold_s: float):
+    """Run a writer that holds raw.db's write lock for ``hold_s``, in its own
+    thread (a sqlite connection belongs to the thread that made it). Returns
+    (thread, holding-event)."""
+    import threading
+    import time as _time
+
+    from obc import raw
+
+    holding = threading.Event()
+
+    def hold():
+        c = raw.connect(store)
+        c.execute("BEGIN EXCLUSIVE")
+        c.execute("INSERT INTO records (ppn, record, first_seen) "
+                  "VALUES ('held', '{}', 'now')")
+        holding.set()
+        _time.sleep(hold_s)
+        c.commit()
+        c.close()
+
+    t = threading.Thread(target=hold)
+    t.start()
+    assert holding.wait(5), "writer never took the lock"
+    return t, holding
+
+
+def test_a_second_writer_waits_instead_of_killing_the_harvest(tmp_path):
+    """Two writers on raw.db is a normal state: the daily refresh syncs inside the
+    web machine while an operator runs a full walk over the same volume. Both
+    commit per record, so the lock is held for a moment — but on the driver's 5s
+    default one such moment ended a multi-hour harvest outright with "database is
+    locked", from the very first cell.
+    """
+    from obc import raw
+
+    store = tmp_path / "raw.db"
+    raw.connect(store).close()
+    t, _ = _hold_write_lock(store, 0.5)
+
+    other = raw.connect(store)          # blocks on the lock, then proceeds
+    assert raw.put(other, {"ppn": "001", "slug": "a"}) is True
+    assert raw.get(other, "001")["slug"] == "a"
+    other.close()
+    t.join()
+
+
+def test_without_the_timeout_that_same_overlap_is_fatal(tmp_path, monkeypatch):
+    """The other half, so the test above can't pass for the wrong reason: with a
+    timeout too short to outlast the other writer, this is the crash that hit
+    production."""
+    import sqlite3
+
+    from obc import raw
+
+    store = tmp_path / "raw.db"
+    raw.connect(store).close()
+    monkeypatch.setattr(raw, "_BUSY_TIMEOUT_S", 0.05)
+    t, _ = _hold_write_lock(store, 0.6)
+
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        conn = raw.connect(store)
+        raw.put(conn, {"ppn": "001", "slug": "a"})
+    t.join()
+
+
+def test_the_busy_timeout_is_actually_set_on_the_connection(tmp_path):
+    from obc import raw
+
+    conn = raw.connect(tmp_path / "raw.db")
+    try:
+        got = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+    finally:
+        conn.close()
+    assert got == int(raw._BUSY_TIMEOUT_S * 1000) > 5000

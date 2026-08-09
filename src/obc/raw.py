@@ -31,6 +31,7 @@ from __future__ import annotations
 import datetime
 import gzip
 import json
+import os
 import sqlite3
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -64,12 +65,26 @@ def _now() -> str:
     return datetime.datetime.now().isoformat(timespec="seconds")
 
 
+_BUSY_TIMEOUT_S = float(os.environ.get("OBC_SQLITE_TIMEOUT_S", "120"))
+
+
 def connect(path: str | Path) -> sqlite3.Connection:
-    """Open (creating if needed) the raw store."""
+    """Open (creating if needed) the raw store.
+
+    Two writers on this file is a normal operating state, not an anomaly: the
+    daily refresh runs ``scrape --sync`` inside the web machine while an operator
+    may run a full walk over the same volume. Both commit per record, so the lock
+    is only ever held for a moment — but on the driver's 5-second default one such
+    moment killed a multi-hour harvest outright with "database is locked", from
+    the very first cell. Wait the other writer out instead (also set as a PRAGMA:
+    the connect() timeout does not survive into every code path that opens a
+    transaction).
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=_BUSY_TIMEOUT_S)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {int(_BUSY_TIMEOUT_S * 1000)}")
     conn.executescript(SCHEMA)
     return conn
 
