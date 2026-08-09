@@ -78,18 +78,24 @@ def test_trigger_refresh_releases_the_lock_when_the_command_build_fails(monkeypa
     assert _wait_until(lambda: not scheduler._lock.locked())
 
 
-def test_seeded_reads_an_unopenable_raw_store_as_unseeded(monkeypatch):
-    """raw.connect raises sqlite3.OperationalError (not OSError) on a corrupt or
-    read-only volume; that means "not seeded", not a crash out of the refresh."""
+def test_seeded_treats_an_unreadable_raw_store_as_seeded(monkeypatch):
+    """A failed read must not read as "empty volume".
+
+    raw.connect raises sqlite3.OperationalError (not OSError) on a corrupt or
+    read-only volume — and on a locked one, since it runs the schema script. It
+    must not crash out of the refresh, but answering "unseeded" sends a populated
+    volume down the full-harvest path: hours of requests off one transient lock.
+    """
     import sqlite3
 
     from obc import raw
 
     def boom(path):
-        raise sqlite3.OperationalError("unable to open database file")
+        raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(raw, "connect", boom)
-    assert scheduler._seeded() is False
+    assert scheduler._seeded() is True
+    assert scheduler._default_cmds()[0] == ["scrape", "--sync"]
 
 
 def test_default_cmds_full_on_empty_sync_when_seeded(tmp_path, monkeypatch):

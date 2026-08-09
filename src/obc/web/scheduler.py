@@ -28,19 +28,32 @@ _lock = threading.Lock()  # ensures only one refresh runs at a time
 def _seeded() -> bool:
     """True once the volume holds harvested records to refresh from. On a fresh
     volume (first deploy) there are none, so we do a full harvest instead of an
-    incremental sync that would only pick up the newest titles."""
+    incremental sync that would only pick up the newest titles.
+
+    A read that *fails* is not an empty volume. Answering False there sends a
+    populated 69k-record volume down the full-harvest path — hours of requests at
+    the library, off one transient error (a concurrent writer holding the lock
+    long enough is exactly such an error, and `raw.connect` writes: it runs the
+    schema script). The cheap wrong answer is to sync a fresh volume — visible
+    within a day and fixed by one `--full`; the expensive one is unprompted mass
+    re-enumeration. So an unreadable store counts as seeded, loudly.
+    """
     from .. import raw
     from ..scrape import RAW_DB
     # sqlite3.Error too: SQLite opens lazily, so a corrupt/full/read-only volume
     # surfaces as OperationalError — on connect or on the first query.
     try:
         conn = raw.connect(RAW_DB)
-    except (OSError, sqlite3.Error):
-        return False
+    except (OSError, sqlite3.Error) as e:
+        logger.warning(f"[refresh] kan de raw store niet lezen ({e}) — "
+                       "aangenomen dat hij gevuld is (incrementele sync)")
+        return True
     try:
         return raw.count(conn) > 0
-    except sqlite3.Error:
-        return False
+    except sqlite3.Error as e:
+        logger.warning(f"[refresh] kan de raw store niet tellen ({e}) — "
+                       "aangenomen dat hij gevuld is (incrementele sync)")
+        return True
     finally:
         conn.close()
 

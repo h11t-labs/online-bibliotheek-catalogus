@@ -26,6 +26,7 @@ import json
 import os
 import re
 import sys
+import time
 from collections.abc import Iterable, Iterator
 from datetime import date
 from pathlib import Path
@@ -209,6 +210,13 @@ def browse_all(client: Client, formats: Iterable[str], seen: set[str],
     if cells <= done:
         done -= cells
         _save_done(done)
+    skipped = cells & done
+    if skipped:
+        # Say which cells this run will not walk. Without it a resumed run looks
+        # exactly like a full one in the log — every --full on the live machine
+        # skipped all 13 e-book cells for a month and said nothing.
+        logger.warning(f"{len(skipped)} cel(len) overgeslagen (checkpoint van een "
+                       f"onderbroken run): {', '.join(sorted(skipped))}")
     complete = True
     removal_safe = True
     for fmt in formats:
@@ -398,8 +406,35 @@ def enumerate_from_file(path: Path) -> Iterator[tuple[str, str]]:
 # fresh enumeration is responsible for clearing its own namespace first — otherwise
 # a completed run's checkpoint makes the next run skip everything and enumerate an
 # empty catalog (see reconcile() and collect_ereader()).
+#
+# That clearing only fires when the namespace is *complete*, which left a hole:
+# an interrupted run's partial state matches nothing and survives forever. On the
+# live machine a checkpoint from 4 July held every `all:ebook:*` cell and no
+# audiobook one, so every --full since walked audiobooks only, reported itself
+# incomplete, and never re-enumerated a single e-book — a month of silently
+# narrowed harvests, and the reason the pre-1900 titles the year-floor fix made
+# reachable still never came back. Resume state is only meaningful for a run that
+# is still going, so it expires: older than OBC_CHECKPOINT_MAX_AGE_H (default 24h,
+# against a full walk of a few hours) is a dead run, not a resumable one.
+def _checkpoint_max_age_h() -> float:
+    return float(os.environ.get("OBC_CHECKPOINT_MAX_AGE_H", "24"))
+
+
 def _load_done() -> set[str]:
-    return set(read_json(CHECKPOINT, default=[]) or [])
+    done = set(read_json(CHECKPOINT, default=[]) or [])
+    if not done:
+        return done
+    try:
+        age_h = (time.time() - Path(CHECKPOINT).stat().st_mtime) / 3600
+    except OSError:
+        return done
+    if age_h > _checkpoint_max_age_h():
+        logger.warning(
+            f"checkpoint is {age_h / 24:.1f} dagen oud ({len(done)} cellen) — "
+            "dat is geen lopende run; genegeerd zodat er niets wordt overgeslagen")
+        _save_done(set())
+        return set()
+    return done
 
 
 def _save_done(done: set[str]) -> None:
