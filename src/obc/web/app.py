@@ -56,7 +56,8 @@ _STATIC = Path(__file__).parent / "static"
 # --------------------------------------------------------------------------- #
 def _coverw(url: str | None, width: int = 400) -> str:
     """Request a larger cover size. The leibniz signature stays valid when only
-    the width changes."""
+    the width changes, but not forever: it expires about two months after its
+    ``dts``, which is why the refresh re-walks the catalog (scheduler._walk_due)."""
     if not url:
         return ""
     if "width=" in url:

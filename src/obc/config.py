@@ -30,4 +30,9 @@ RECENT_FILE = RAW_DIR / "recent.json"
 # catalog.db, which every normalize throws away and rebuilds.
 RAW_DB = RAW_DIR / "raw.db"
 CHECKPOINT = DATA_DIR / "checkpoint.json"
+# Written when a listing walk over the whole catalog finishes. Cover URLs are
+# signed and expire about two months after signing, and only a walk re-signs the
+# titles an incremental sync never reaches, so the refresh schedules one from
+# this file's age (see web/scheduler.py).
+WALK_MARKER = RAW_DIR / "last_walk.json"
 DEFAULT_DB = Path(os.environ.get("OBC_DB", DATA_DIR / "catalog.db"))

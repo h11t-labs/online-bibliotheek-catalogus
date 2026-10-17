@@ -38,6 +38,9 @@ def _rich_listing_html(items: list[dict]) -> str:
             parts.append(f'<span class="creator">{it["author"]}</span>')
         if it.get("summary"):
             parts.append(f'<p class="maintext">{it["summary"]}</p>')
+        if it.get("cover"):
+            src = it["cover"].replace("&", "&amp;")
+            parts.append(f'<img class="cover" src="{src}">')
         lis.append(f"<li>{''.join(parts)}</li>")
     return f'<ul class="rich-list">{"".join(lis)}</ul>'
 
@@ -86,6 +89,7 @@ def paths(tmp_path, monkeypatch):
     monkeypatch.setattr(scrape, "CHECKPOINT", tmp_path / "checkpoint.json")
     monkeypatch.setattr(scrape, "EREADER_FILE", tmp_path / "ereader.json")
     monkeypatch.setattr(scrape, "RAW_DB", tmp_path / "raw.db")
+    monkeypatch.setattr(scrape, "WALK_MARKER", tmp_path / "last_walk.json")
     return tmp_path
 
 
@@ -749,3 +753,76 @@ def test_the_busy_timeout_is_actually_set_on_the_connection(tmp_path):
     finally:
         conn.close()
     assert got == int(raw._BUSY_TIMEOUT_S * 1000) > 5000
+
+
+# --------------------------------------------------------------------------- #
+# cover signatures expire
+# --------------------------------------------------------------------------- #
+def _cover(dts: int) -> str:
+    return ("https://leibniz.zbkb.nl/assets/id/PPN%3A001?aid=kb-online-bibliotheek"
+            f"&sid=23&dts={dts}&sig=abc&width=120")
+
+
+OLD_COVER = _cover(1782128425135)   # signed 2026-06-22
+NEW_COVER = _cover(1790452747334)   # signed 2026-09-26
+
+
+def test_merge_keeps_the_most_recently_signed_cover():
+    # leibniz answers 410 once a signature is about two months old, so an older
+    # URL must never replace a newer one, whichever side of the merge it is on
+    assert scrape._merge({"cover_url": OLD_COVER},
+                         {"cover_url": NEW_COVER})["cover_url"] == NEW_COVER
+    assert scrape._merge({"cover_url": NEW_COVER},
+                         {"cover_url": OLD_COVER})["cover_url"] == NEW_COVER
+    unsigned = "https://leibniz.zbkb.nl/assets/id/PPN:001?aid=x&sid=21&width=320"
+    assert scrape._merge({"cover_url": NEW_COVER},
+                         {"cover_url": unsigned})["cover_url"] == NEW_COVER
+    # a record without a cover yet takes whatever comes in
+    assert scrape._merge({"ppn": "001"},
+                         {"cover_url": OLD_COVER})["cover_url"] == OLD_COVER
+
+
+def test_a_browse_walk_re_signs_covers_and_stamps_the_marker(paths, monkeypatch):
+    # The live failure: every title the incremental sync never reaches kept the
+    # cover signed by the walk that first harvested it, until leibniz refused it.
+    from obc import raw
+
+    conn = raw.connect(scrape.RAW_DB)
+    raw.put(conn, {"ppn": "001", "slug": "a", "cover_url": OLD_COVER, "isbn": "978"})
+    conn.close()
+    side = []
+    for name in ("collect_ereader", "collect_genres", "collect_recent"):
+        monkeypatch.setattr(scrape, name, lambda client, n=name: side.append(n))
+    monkeypatch.setattr(scrape, "Client", lambda **kw: _OnePageClient(
+        [{"ppn": "001", "slug": "a", "cover": NEW_COVER}]))
+
+    scrape.main(["--browse"])
+
+    rec = _stored("001")
+    assert rec["cover_url"] == NEW_COVER and rec["isbn"] == "978"
+    assert scrape.WALK_MARKER.exists()
+    assert side == []                       # the walk alone, no side passes
+
+
+def test_a_narrowed_walk_does_not_stamp_the_marker(paths, monkeypatch):
+    # with `ebook` alone no audiobook cover was re-signed
+    monkeypatch.setattr(scrape, "Client", lambda **kw: FakeClient([("001", "a")]))
+    scrape.main(["--browse", "--formats", "ebook"])
+    assert not scrape.WALK_MARKER.exists()
+
+
+def test_reparse_keeps_a_cover_fresher_than_the_stored_page(paths, monkeypatch):
+    # the stored page carries the signature of the day it was fetched
+    from obc import raw
+
+    conn = raw.connect(scrape.RAW_DB)
+    raw.put(conn, {"ppn": "001", "slug": "a", "cover_url": NEW_COVER})
+    raw.put_detail(conn, "001", "<html>x</html>")
+    conn.close()
+    monkeypatch.setattr(scrape, "parse_detail", lambda html, ppn: {
+        "ppn": ppn, "cover_url": OLD_COVER, "isbn": "979"})
+
+    scrape.reparse()
+
+    rec = _stored("001")
+    assert rec["cover_url"] == NEW_COVER and rec["isbn"] == "979"
