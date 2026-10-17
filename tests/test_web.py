@@ -645,3 +645,48 @@ def test_pagination_is_bounded(client):
     assert f"page={MAX_PAGES + 500}" not in body       # never offered
     # asking past the end serves the last reachable page rather than erroring
     assert client.get(f"/?pagina={MAX_PAGES + 500}").status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# cover loading
+# --------------------------------------------------------------------------- #
+LEIBNIZ = "https://leibniz.zbkb.nl/assets/id/PPN:001?sig=x&width=320"
+
+
+def test_covers_offer_sizes_and_the_first_screenful_loads_eagerly(client):
+    # A grid card used to request 400px (~72KB) on every screen, lazily, so even
+    # the covers in view waited for layout before their request went out.
+    body = client.get("/").text
+    assert '<link rel="preconnect" href="https://leibniz.zbkb.nl">' in body
+    img = re.search(r'<img [^>]*srcset="[^"]*"[^>]*>', body).group(0)
+    assert "width=200 200w" in img and "width=400 400w" in img
+    assert 'fetchpriority="high"' in img and 'loading="lazy"' not in img
+
+    # the list view's thumbnail is 56px wide, the book page's cover 300px
+    assert 'sizes="56px"' in client.get("/?weergave=list").text
+    hero = re.search(r'<img [^>]*alt="Omslag van De Ontdekking"[^>]*>',
+                     client.get("/boek/de-ontdekking--anna-vrij--001").text).group(0)
+    assert "width=600 600w" in hero and 'fetchpriority="high"' in hero
+
+
+def test_only_the_first_six_grid_covers_load_eagerly():
+    from obc.web.app import _templates
+
+    t = _templates.env.from_string(
+        '{% from "_macros.html" import grid_cover %}'
+        "{% for u in urls %}{{ grid_cover(u, eager=loop.index0 < 6) }}{% endfor %}")
+    html = t.render(urls=[LEIBNIZ] * 8)
+    assert html.count('fetchpriority="high"') == 6
+    assert html.count('loading="lazy"') == 2
+
+
+def test_srcset_only_for_leibniz_covers():
+    # a list provider's CDN ignores width=, so variants would be one image
+    # downloaded under several URLs
+    from obc.web.app import _cover_srcset
+
+    assert _cover_srcset(None, [200, 400]) == ""
+    assert _cover_srcset("https://static01.nyt.com/cover.jpg", [200, 400]) == ""
+    assert _cover_srcset(LEIBNIZ, [200, 400]) == (
+        "https://leibniz.zbkb.nl/assets/id/PPN:001?sig=x&width=200 200w, "
+        "https://leibniz.zbkb.nl/assets/id/PPN:001?sig=x&width=400 400w")

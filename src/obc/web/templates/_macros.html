@@ -16,3 +16,21 @@
   {% endif %}
 </div>
 {%- endmacro %}
+
+
+{% macro cover_img(url, widths, sizes, alt="", eager=False) -%}
+{# A cover the browser sizes itself: ``widths`` are the leibniz variants on
+   offer, ``sizes`` how wide the image renders. ``eager`` is for the first
+   screenful: a lazy image is only requested once layout says it is visible,
+   which held back exactly the covers a reader sees first. #}
+{%- set ss = url|cover_srcset(widths) -%}
+<img src="{{ url|coverw(widths|last) }}"{% if ss %} srcset="{{ ss }}" sizes="{{ sizes }}"{% endif %} {% if eager %}fetchpriority="high"{% else %}loading="lazy"{% endif %} decoding="async" alt="{{ alt }}">
+{%- endmacro %}
+
+{# The shared book grid (base.html .grid): 168px minimum columns in a 1192px
+   main, so 180px at full width and at most ~232px narrower; two columns on
+   phones. The search page has a filter rail and passes its own ``sizes``. #}
+{% macro grid_cover(url, eager=False,
+                    sizes="(max-width: 480px) 50vw, (min-width: 1240px) 180px, 232px") -%}
+{{ cover_img(url, [200, 300, 400], sizes, eager=eager) }}
+{%- endmacro %}

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import fmt_icons %}
+{% from "_macros.html" import fmt_icons, grid_cover %}
 {% block title %}{{ name }} · Reeks · Online Bibliotheek Catalogus{% endblock %}
 {% block style %}
   .book .cover .sno{position:absolute;right:8px;top:8px;z-index:2;min-width:24px;height:24px;
@@ -19,7 +19,7 @@
       <div class="cover">
         {{ fmt_icons(b) }}
         {% if b['series_no'] %}<span class="sno">{{ b['series_no'] }}</span>{% endif %}
-        <img loading="lazy" src="{{ b['cover_url']|coverw(400) }}" alt="">
+        {{ grid_cover(b['cover_url'], eager=loop.index0 < 6) }}
       </div>
       <span class="t">{{ b['title'] or '—' }}</span>
       <span class="a">{{ b['author'] or '' }}</span>
