@@ -52,10 +52,14 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
 
+      # Pinned to the uv the Dockerfile installs with. A newer uv also rewrites the
+      # lockfile's `revision` header (3 -> 5 on uv 0.13), which this check rightly
+      # refuses, and which the image's uv may not read. Bump both together.
       - name: Set up uv
         if: steps.release.outputs.prs_created == 'true'
         uses: astral-sh/setup-uv@v6
         with:
+          version: "0.11.x"
           enable-cache: true
 
       - name: Sync uv.lock version pin in the release PR
