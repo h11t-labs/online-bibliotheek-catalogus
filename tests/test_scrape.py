@@ -811,6 +811,28 @@ def test_a_narrowed_walk_does_not_stamp_the_marker(paths, monkeypatch):
     assert not scrape.WALK_MARKER.exists()
 
 
+def test_a_walk_with_a_failed_cell_does_not_stamp_the_marker(paths, monkeypatch):
+    # That cell's covers kept their old signatures. Stamping anyway is how a walk
+    # in which every cell failed (the end-of-pagination false positive) would
+    # have bought itself fourteen days of doing nothing.
+    import httpx
+
+    class FailingClient(FakeClient):
+        def get_listing_html(self, params, page=1):
+            if params.get("taal") == "eng":
+                raise httpx.ConnectError("verbinding weg")
+            return super().get_listing_html(params, page)
+
+    monkeypatch.setattr(scrape, "Client", lambda **kw: FailingClient([("001", "a")]))
+    scrape.main(["--browse"])
+    assert not scrape.WALK_MARKER.exists()
+
+    # the next refresh resumes at the open cells, and that run does stamp
+    monkeypatch.setattr(scrape, "Client", lambda **kw: FakeClient([("001", "a")]))
+    scrape.main(["--browse"])
+    assert scrape.WALK_MARKER.exists()
+
+
 def test_reparse_keeps_a_cover_fresher_than_the_stored_page(paths, monkeypatch):
     # the stored page carries the signature of the day it was fetched
     from obc import raw

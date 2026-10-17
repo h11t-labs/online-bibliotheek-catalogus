@@ -704,6 +704,20 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _all_cells_walked() -> bool:
+    """Whether every browse cell of every format ran to its end, in this run or
+    in the one it resumed (the checkpoint expires within a day).
+
+    That, not ``complete``, is what says every cover was re-signed. A cell that
+    fell short of its claimed count still reached its end and still counts:
+    gating on ``complete`` would turn a persistent partition hole into a full
+    walk every night. A cell that *failed* does not: its tail kept the old
+    signatures, so the next refresh walks again, resuming at that cell.
+    """
+    cells = {f"all:{fmt}:{taal}" for fmt in FORMATS for taal in LANGS}
+    return cells <= _load_done()
+
+
 def walk(formats: list[str], rate: float, *, side_passes: bool = True) -> None:
     """Walk every listing, merge each row into the store, then conclude removals.
 
@@ -747,12 +761,7 @@ def walk(formats: list[str], rate: float, *, side_passes: bool = True) -> None:
         mark_removed(seen)
     else:
         logger.info("partial enumeration — not checking for removed titles")
-    if whole:
-        # Stamped on any walk over every format, complete or not. A cell that
-        # failed or fell short still left the rest re-signed, and gating on
-        # `complete` would turn a persistent partition hole into a full walk
-        # every night. Skipped cells were walked by the run this one resumed,
-        # under a day ago (the checkpoint expires).
+    if _all_cells_walked():
         write_json(WALK_MARKER, {"at": time.strftime("%Y-%m-%dT%H:%M:%S")})
     done = _store()
     logger.info(f"Done. {raw.count(done)} records, "
