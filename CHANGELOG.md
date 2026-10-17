@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.4](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v3.0.3...v3.0.4) (2026-10-17)
+
+
+### Performance Improvements
+
+* **covers:** let the browser pick the cover size and load the first row first ([#57](https://github.com/h11t-labs/online-bibliotheek-catalogus/issues/57)) ([e36d345](https://github.com/h11t-labs/online-bibliotheek-catalogus/commit/e36d345dfd83b9fb7150a330e5b0e7bf8b602840))
+
 ## [3.0.3](https://github.com/h11t-labs/online-bibliotheek-catalogus/compare/v3.0.2...v3.0.3) (2026-10-17)
 
 
