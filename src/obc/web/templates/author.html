@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import fmt_icons %}
+{% from "_macros.html" import fmt_icons, grid_cover %}
 {% block title %}{{ name }} · Online Bibliotheek Catalogus{% endblock %}
 {% block style %}
   /* An author masthead, not a card: portrait next to the name it belongs to, bio
@@ -63,7 +63,7 @@
         {{ fmt_icons(b) }}
         {% set bl = lists_map.get(b['work_id']) %}
         {% if bl %}<span class="list-ribbon"><svg><use href="#ic-award"/></svg>{{ bl[0].name }}{% if bl[0].year %} {{ bl[0].year }}{% elif bl[0].position %} #{{ bl[0].position }}{% endif %}</span>{% endif %}
-        <img loading="lazy" src="{{ b['cover_url']|coverw(400) }}" alt="">
+        {{ grid_cover(b['cover_url'], eager=loop.index0 < 6) }}
       </div>
       <span class="t">{{ b['title'] or '—' }}</span>
       <span class="a">{{ b['year'] or '' }}</span>

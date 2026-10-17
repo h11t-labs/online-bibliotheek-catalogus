@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import cover_img %}
 {% block title %}{{ b['title'] }} — {{ b['author'] }} · Online Bibliotheek Catalogus{% endblock %}
 {% block style %}
   .back{display:inline-flex;align-items:center;gap:6px;color:var(--ink-soft);font-size:14px;margin-bottom:22px}
@@ -140,7 +141,7 @@
           {% if b['has_ebook'] %}<span class="fmt-ic ebook" title="E-book"><svg width="15" height="15"><use href="#ic-book"/></svg></span>{% endif %}
           {% if b['has_audiobook'] %}<span class="fmt-ic audio" title="Luisterboek"><svg width="15" height="15"><use href="#ic-audio"/></svg></span>{% endif %}
         </div>
-        <img src="{{ b['cover_url']|coverw(600) }}" alt="Omslag van {{ b['title'] }}">
+        {{ cover_img(b['cover_url'], [300, 400, 600], '(max-width: 720px) 200px, 300px', alt='Omslag van ' ~ (b['title'] or ''), eager=True) }}
       </div>
       {# One borrow button per format, in the format's own colour: which edition
          you are about to open is the thing to be unambiguous about, so it is
@@ -285,7 +286,7 @@
         {% if s['has_ebook'] %}<span class="fmt-ic ebook" title="E-book"><svg width="15" height="15"><use href="#ic-book"/></svg></span>{% endif %}
         {% if s['has_audiobook'] %}<span class="fmt-ic audio" title="Luisterboek"><svg width="15" height="15"><use href="#ic-audio"/></svg></span>{% endif %}
       </div>
-      <img loading="lazy" src="{{ s['cover_url']|coverw(300) }}" alt="Omslag van {{ s['title'] }}">
+      {{ cover_img(s['cover_url'], [150, 300], '108px', alt='Omslag van ' ~ (s['title'] or '')) }}
     </div>
     <span class="simt">{{ s['title'] or '—' }}</span>
     <span class="sima">{{ s['author'] or '' }}</span>

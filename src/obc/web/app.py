@@ -66,6 +66,17 @@ def _coverw(url: str | None, width: int = 400) -> str:
     return f"{url}{sep}width={width}"
 
 
+def _cover_srcset(url: str | None, widths: list[int]) -> str:
+    """``srcset`` candidates for a leibniz cover at each of ``widths``, so the
+    browser fetches the size the screen needs: ~25KB at 200px against ~72KB at
+    the 400px every grid card used to request. Empty for anything else (a list
+    provider's CDN ignores ``width=``, so its variants would be one image
+    downloaded under several URLs)."""
+    if not url or "leibniz.zbkb.nl" not in url:
+        return ""
+    return ", ".join(f"{_coverw(url, w)} {w}w" for w in widths)
+
+
 def _url_with(state: dict, **over) -> str:
     """Build a query string from ``state`` (values may be lists), applying
     overrides. Empty values are dropped. Used by templates for links."""
@@ -171,6 +182,7 @@ def _dur_short(value) -> str:
 
 
 _templates.env.filters["coverw"] = _coverw
+_templates.env.filters["cover_srcset"] = _cover_srcset
 _templates.env.filters["nldate"] = _nldate
 _templates.env.filters["author_path"] = seo.author_path
 _templates.env.filters["series_path"] = seo.series_path

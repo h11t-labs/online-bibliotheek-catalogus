@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  {# Covers hotlink leibniz: open that connection while the HTML is still
+     arriving, instead of after the first <img> is parsed. #}
+  <link rel="preconnect" href="https://leibniz.zbkb.nl">
   <title>{% block title %}Online Bibliotheek Catalogus{% endblock %}</title>
   {% set _desc = meta_description or "Snelle zoekgids voor de collectie van de online Bibliotheek: e-books en luisterboeken doorzoeken en filteren op taal, genre, jaar en meer." %}
   {% set _base = site_url or (request.base_url|string).rstrip('/') %}
