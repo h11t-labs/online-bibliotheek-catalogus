@@ -13,6 +13,7 @@ import os
 import sqlite3
 import subprocess
 import threading
+import time
 
 from ..log import logger
 
@@ -74,6 +75,27 @@ def _schema_stale() -> bool:
         return False   # no DB at all -> the full-harvest path handles it
 
 
+def _walk_due() -> bool:
+    """True when the last listing walk over the whole catalog is older than
+    ``OBC_WALK_EVERY_DAYS`` (default 14), or there has never been one.
+
+    Cover URLs are signed and leibniz stops serving them about two months after
+    signing (56 days still worked, 68 did not). ``--sync`` only reaches the
+    newest titles, so every other cover kept the signature of the walk that
+    first harvested it and went dark two months later, the bulk of the
+    catalog at once. Fourteen days leaves room for a few failed walks before
+    anything expires. A missing marker counts as due: that is how a volume
+    that predates the marker heals on its first refresh.
+    """
+    from ..scrape import WALK_MARKER
+    days = float(os.environ.get("OBC_WALK_EVERY_DAYS", "14"))
+    try:
+        age_s = time.time() - WALK_MARKER.stat().st_mtime
+    except OSError:
+        return True
+    return age_s > days * 86400
+
+
 def _default_cmds() -> list[list[str]]:
     """The refresh pipeline: harvest (full on an empty volume, else incremental),
     optionally fill in detail-only fields, refresh the recency ranking + curated
@@ -84,9 +106,18 @@ def _default_cmds() -> list[list[str]]:
     E-reader/genre facets ride the incremental path via ``--details`` (new titles'
     detail pages carry both), so they no longer need a periodic full re-enumeration.
     Recency is a cheap bounded scan, refreshed here on the incremental path (a
-    ``--full`` harvest already collects it)."""
+    ``--full`` harvest already collects it).
+
+    Every couple of weeks the incremental sync gives way to ``--browse``, the
+    full listing walk: it re-signs every cover before the signature expires, and
+    concludes removals, which a sync never can."""
     seeded = _seeded()
-    harvest = ["scrape", "--sync"] if seeded else ["scrape", "--full"]
+    if not seeded:
+        harvest = ["scrape", "--full"]
+    elif _walk_due():
+        harvest = ["scrape", "--browse"]
+    else:
+        harvest = ["scrape", "--sync"]
     cmds = [harvest]
     if seeded and _schema_stale():
         # The deploy that renames the tables finds the old DB on the volume, and

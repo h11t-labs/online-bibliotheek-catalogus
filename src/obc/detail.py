@@ -93,7 +93,10 @@ def parse_detail(html: str, ppn: str | None = None) -> dict[str, Any]:
         "slug": slug,
         "url": f"https://www.onlinebibliotheek.nl/catalogus/{ppn}/{slug or ''}".rstrip("/"),
     }
-    rec["cover_url"] = cover_url or _cover_fallback(ppn)
+    # No made-up fallback when the page has no cover: leibniz refuses any URL
+    # without a signature (400), and a truthy dead URL here would be merged over
+    # the signed one the listing row carried.
+    rec["cover_url"] = cover_url
 
     # --- title / author ----------------------------------------------------
     rec["title"] = node_text(soup.select_one("span.title")) or None
@@ -210,10 +213,3 @@ def _format_from_title(title_tag: str) -> str | None:
         if "e-book" in p or "ebook" in p:
             return "ebook"
     return None
-
-
-def _cover_fallback(ppn: str) -> str:
-    return (
-        f"https://leibniz.zbkb.nl/assets/id/PPN:{ppn}"
-        "?aid=kb-online-bibliotheek&sid=21&width=320"
-    )

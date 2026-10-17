@@ -5,11 +5,25 @@ lock and the full-vs-sync command selection."""
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 
+import pytest
+
 from obc import normalize, scrape
 from obc.web import scheduler
+
+
+@pytest.fixture(autouse=True)
+def walk_marker(tmp_path, monkeypatch):
+    """A walk that just finished, so a seeded volume takes the plain incremental
+    sync unless a test ages or removes this."""
+    marker = tmp_path / "last_walk.json"
+    marker.write_text("{}")
+    monkeypatch.setattr(scrape, "WALK_MARKER", marker)
+    monkeypatch.delenv("OBC_WALK_EVERY_DAYS", raising=False)
+    return marker
 
 
 def _wait_until(pred, timeout=5.0):
@@ -156,3 +170,26 @@ def test_default_cmds_normalizes_first_when_the_schema_is_stale(tmp_path, monkey
     monkeypatch.setattr(db, "DEFAULT_DB", tmp_path / "absent.db")
     assert scheduler._schema_stale() is False
     assert ["normalize"] not in scheduler._default_cmds()[:1]
+
+
+def test_default_cmds_walks_the_listing_before_covers_expire(tmp_path, monkeypatch,
+                                                              walk_marker):
+    """Cover signatures expire about two months after signing, and --sync only
+    reaches the newest titles, so the refresh has to walk everything regularly."""
+    monkeypatch.setattr(scrape, "RAW_DB", tmp_path / "raw.db")
+    monkeypatch.delenv("OBC_ENRICH", raising=False)
+    _seed_store(tmp_path)
+    assert scheduler._default_cmds()[0] == ["scrape", "--sync"]
+
+    fifteen_days_ago = time.time() - 15 * 86400
+    os.utime(walk_marker, (fifteen_days_ago, fifteen_days_ago))
+    cmds = scheduler._default_cmds()
+    assert cmds[0] == ["scrape", "--browse"]
+    assert ["scrape", "--recent"] in cmds   # the walk alone does not rank recency
+
+    monkeypatch.setenv("OBC_WALK_EVERY_DAYS", "30")
+    assert scheduler._default_cmds()[0] == ["scrape", "--sync"]
+
+    # a volume from before the marker existed heals on its first refresh
+    walk_marker.unlink()
+    assert scheduler._default_cmds()[0] == ["scrape", "--browse"]

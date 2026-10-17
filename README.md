@@ -56,6 +56,7 @@ uv run obc serve              # http://127.0.0.1:8000
 
 # keep it fresh without re-downloading everything
 uv run obc scrape --sync      # daily: new/changed titles (newest-by-license first)
+uv run obc scrape --browse    # the --full listing walk alone: re-signs every cover
 
 # optional / periodic
 uv run obc scrape --genres    # tag books with genres via subject facets (slow, ~1h)
@@ -165,6 +166,14 @@ unchanged titles (usually a few pages). It can't see removals; a completed
 That check is skipped when the run resumed from an interrupted one or was
 narrowed with `--formats`, because neither has seen the whole catalog — and
 "absent from a partial scan" is not evidence that a title is gone.
+
+Cover URLs point at `leibniz.zbkb.nl` and are signed (`dts` + `sig`). The
+signature expires: leibniz answers `410 Signature no longer valid` somewhere
+between 56 and 68 days after `dts`. `--sync` never reaches the older titles, so
+the refresh swaps it for `--browse` (the listing walk without the side passes)
+whenever the last walk is older than `OBC_WALK_EVERY_DAYS` (default 14). Merges
+keep whichever cover was signed last, so a reparse cannot bring back the dated
+URL in a stored detail page.
 
 ## How it works
 

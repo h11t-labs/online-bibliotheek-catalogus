@@ -79,6 +79,16 @@ def test_cover_and_ppn_present():
     assert r["pages"] == 728
 
 
+def test_a_page_without_a_cover_yields_no_cover_url():
+    # It used to make one up from the PPN, without a signature, which leibniz
+    # always refuses (400). Being truthy, that dead URL was then merged over the
+    # signed cover the listing row had brought in.
+    html = (FIX / "ebook_416728413.html").read_text(encoding="utf-8")
+    r = parse_detail(html.replace('class="representative"', 'class="other"'))
+    assert r["ppn"] == "416728413"
+    assert r["cover_url"] is None
+
+
 def test_jeugd_detail_enrichment():
     # a children's book carries Leeftijd, an explicit Serie, Inhoud + keyword tags
     r = _parse("detail_jeugd_422516414.html")

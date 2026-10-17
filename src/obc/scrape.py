@@ -2,13 +2,15 @@
 
 Two enumeration modes:
 
-* ``--browse`` (default, full catalog): walk the catalog via the faceted browse
+* ``--full`` (default, full catalog): walk the catalog via the faceted browse
   pages ``zoekresultaten.catalogus[.N].html?type=…&jaar=…``. Listing rows already
   carry rich metadata (title, author, summary, language, year, publisher, format,
   pages/duration, cover), so one request covers ~20 books. The site caps the
   pager at 50 pages (≈1000 results); when a (format, year) partition is capped we
   recursively split it by language → category → audience until each piece fits.
   Records are de-duplicated by PPN and the work is resumable per (format, year).
+  ``--browse`` is the same walk without the e-reader/genre/recency passes; the
+  refresh runs it periodically because it is what re-signs every cover URL.
 
 * ``--from-file PATH`` — fetch + parse individual detail pages from a list of
   catalog URLs / ``ppn,slug`` lines / JSON.
@@ -45,6 +47,7 @@ from .config import (
     GENRES_FILE,
     RAW_DB,
     RECENT_FILE,
+    WALK_MARKER,
 )
 from .detail import parse_detail
 from .listing import NotAResultsPage, parse_listing, total_results
@@ -103,9 +106,29 @@ GENRES_JD = {
 }
 
 
+_DTS_RE = re.compile(r"[?&]dts=(\d+)")
+
+
+def _signed_at(url: str | None) -> int:
+    """When leibniz signed a cover URL (``dts``, epoch ms); 0 when unsigned."""
+    m = _DTS_RE.search(url or "")
+    return int(m.group(1)) if m else 0
+
+
 def _merge(base: dict, new: dict) -> dict:
-    """Overlay only the truthy values of ``new`` onto ``base`` (a shallow copy)."""
-    return {**base, **{k: v for k, v in new.items() if v}}
+    """Overlay only the truthy values of ``new`` onto ``base`` (a shallow copy).
+
+    Except the cover: its URL is signed and leibniz answers 410 once the
+    signature is about two months old (measured: 56 days still worked, 68 did
+    not). So the most recently signed one wins, whichever side it is on. A
+    stored detail page carries the signature of the day it was fetched, and
+    without this a reparse or detail pass laid that dead URL over the fresh one
+    the last walk brought in.
+    """
+    merged = {**base, **{k: v for k, v in new.items() if v}}
+    if _signed_at(base.get("cover_url")) > _signed_at(new.get("cover_url")):
+        merged["cover_url"] = base["cover_url"]
+    return merged
 
 
 # --------------------------------------------------------------------------- #
@@ -654,6 +677,9 @@ def main(argv: list[str] | None = None) -> int:
                      help="only refresh the recently-added ranking")
     src.add_argument("--sync", action="store_true",
                      help="incremental: pick up new/changed titles (newest first)")
+    src.add_argument("--browse", action="store_true",
+                     help="the --full listing walk alone (no e-reader/genre/recency "
+                          "passes): re-signs every cover, detects removals")
     src.add_argument("--from-file", type=Path, help="detail pages from a URL list")
     src.add_argument("--details", action="store_true",
                      help="fetch the detail page for every record still missing "
@@ -687,45 +713,74 @@ def main(argv: list[str] | None = None) -> int:
             collect_recent(client)
     elif args.sync:
         sync(args.rate)
-    else:  # --full (default)
-        # `seen` starts empty and collects what *this run* enumerates, which is
-        # what makes removal detection possible: it used to be seeded with every
-        # PPN already on disk, so "on disk but not in the catalog" was empty by
-        # construction and a separate --reconcile pass had to re-walk the whole
-        # catalog to answer the same question.
-        seen: set[str] = set()
-        store = _store()
-        logger.info(f"Full enumeration of {formats}")
+    else:  # --full (default) or --browse
+        walk(formats, args.rate, side_passes=not args.browse)
+    return 0
 
-        def on_record(rec: dict) -> None:
-            # merge, never overwrite: a browse row carries the listing fields only,
-            # and writing it over a record would drop the ISBN, genres and
-            # cross-links its detail page put there. live=True: a listing row is
-            # proof the catalog carries the title, which un-marks a removal.
-            old = raw.get(store, rec["ppn"])
-            raw.put(store, _merge(old, rec) if old else rec, live=True)
 
-        with Client(per_second=args.rate) as client:
-            res = browse_all(client, formats, seen, on_record)
+def _all_cells_walked() -> bool:
+    """Whether every browse cell of every format ran to its end, in this run or
+    in the one it resumed (the checkpoint expires within a day).
+
+    That, not ``complete``, is what says every cover was re-signed. A cell that
+    fell short of its claimed count still reached its end and still counts:
+    gating on ``complete`` would turn a persistent partition hole into a full
+    walk every night. A cell that *failed* does not: its tail kept the old
+    signatures, so the next refresh walks again, resuming at that cell.
+    """
+    cells = {f"all:{fmt}:{taal}" for fmt in FORMATS for taal in LANGS}
+    return cells <= _load_done()
+
+
+def walk(formats: list[str], rate: float, *, side_passes: bool = True) -> None:
+    """Walk every listing, merge each row into the store, then conclude removals.
+
+    This is the only pass that reaches every title, which makes it the only one
+    that re-signs every cover URL (they expire, see :func:`_merge`). ``--full``
+    adds the e-reader, genre and recency passes; ``--browse`` (``side_passes``
+    off) is the walk alone, which is what the refresh schedules.
+    """
+    # `seen` starts empty and collects what *this run* enumerates, which is
+    # what makes removal detection possible: it used to be seeded with every
+    # PPN already on disk, so "on disk but not in the catalog" was empty by
+    # construction and a separate --reconcile pass had to re-walk the whole
+    # catalog to answer the same question.
+    seen: set[str] = set()
+    store = _store()
+    logger.info(f"Full enumeration of {formats}")
+
+    def on_record(rec: dict) -> None:
+        # merge, never overwrite: a browse row carries the listing fields only,
+        # and writing it over a record would drop the ISBN, genres and
+        # cross-links its detail page put there. live=True: a listing row is
+        # proof the catalog carries the title, which un-marks a removal.
+        old = raw.get(store, rec["ppn"])
+        raw.put(store, _merge(old, rec) if old else rec, live=True)
+
+    with Client(per_second=rate) as client:
+        res = browse_all(client, formats, seen, on_record)
+        if side_passes:
             collect_ereader(client)
             collect_genres(client)
             collect_recent(client)
-        store.close()
-        # Ways this run's `seen` can fail to be (provably) the whole catalog,
-        # each of which would mark good records removed: a resumed run skipped
-        # the cells the previous one finished, --formats narrowed the
-        # enumeration to part of the catalog (with `ebook` alone, every
-        # audiobook is "missing"), or a cell enumerated fewer records than the
-        # site claims it holds.
-        if res.removal_safe and set(formats) == set(FORMATS):
-            mark_removed(seen)
-        else:
-            logger.info("partial enumeration — not checking for removed titles")
-        done = _store()
-        logger.info(f"Done. {raw.count(done)} records, "
-                    f"{raw.detail_count(done)} with a stored page")
-        done.close()
-    return 0
+    store.close()
+    whole = set(formats) == set(FORMATS)
+    # Ways this run's `seen` can fail to be (provably) the whole catalog,
+    # each of which would mark good records removed: a resumed run skipped
+    # the cells the previous one finished, --formats narrowed the
+    # enumeration to part of the catalog (with `ebook` alone, every
+    # audiobook is "missing"), or a cell enumerated fewer records than the
+    # site claims it holds.
+    if res.removal_safe and whole:
+        mark_removed(seen)
+    else:
+        logger.info("partial enumeration — not checking for removed titles")
+    if _all_cells_walked():
+        write_json(WALK_MARKER, {"at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+    done = _store()
+    logger.info(f"Done. {raw.count(done)} records, "
+                f"{raw.detail_count(done)} with a stored page")
+    done.close()
 
 
 if __name__ == "__main__":

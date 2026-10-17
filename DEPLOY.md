@@ -73,7 +73,9 @@ step above) — lighter than scraping on a small VM.
 The refresh must run in the machine that owns the volume, so a stateless **Fly
 scheduled (cron) machine** just triggers `POST /admin/refresh` over Fly's private
 network; the app then runs `scrape --sync` + `lists update` + `normalize` in a
-background thread (returns 202 immediately). The endpoint is protected by a bearer
+background thread (returns 202 immediately). Every `OBC_WALK_EVERY_DAYS` the sync
+becomes a `scrape --browse` walk of the whole catalog, which takes hours: it
+re-signs the cover URLs before leibniz stops serving them. The endpoint is protected by a bearer
 token so only the cron can call it.
 
 ```bash
@@ -96,6 +98,7 @@ catalog and its recommendations together — readers never see one without the o
 | `OBC_REFRESH_TOKEN`      | `…` (secret)                       | Bearer token guarding `POST /admin/refresh`                              |
 | `OBC_REFRESH_ON_STARTUP` | `1`                                | Refresh on every machine start (full harvest on an empty volume, else a sync) |
 | `OBC_ENRICH`             | `1`                                | Let the refresh fetch detail pages too; `0` pauses it                    |
+| `OBC_WALK_EVERY_DAYS`    | `14`                               | Days between full listing walks that re-sign the expiring cover URLs     |
 | `NYT_API_KEY`            | `…` (secret)                       | Optional — enables the NYT bestseller lists                              |
 
 All of these except the two secrets are set in `fly.toml`'s `[env]`. `PORT` is
