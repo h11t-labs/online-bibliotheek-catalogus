@@ -53,6 +53,20 @@ def test_total_results_from_fixture():
         (FIX / "listing_ebook.html").read_text(encoding="utf-8")) == 3124
 
 
+def test_the_page_past_the_last_one_is_a_results_page():
+    """Captured from the live site: page 3 of a 7-result query.
+
+    It carries no ``ul.rich-list``, no ``p.totalresults`` and no sort form —
+    only site chrome under <title>Zoekresultaten</title>. Requiring any of those
+    markers rejected the ordinary end of pagination as a blocked page, so on the
+    live catalog every cell of a full walk "failed" at the moment it finished,
+    and the year-split that reaches the pre-1900 titles died on its first query.
+    """
+    html = (FIX / "listing_past_end.html").read_text(encoding="utf-8")
+    recs, _ = parse_listing(html)          # must not raise
+    assert recs == []
+
+
 def test_parse_listing_rejects_a_non_results_page():
     # A soft-200 (maintenance page, block interstitial) must not read as "zero
     # results": that once terminated an enumeration cell as if it were complete,

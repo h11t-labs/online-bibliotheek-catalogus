@@ -14,21 +14,35 @@ from datetime import date
 import pytest
 
 from obc import scrape
+from obc.listing import NotAResultsPage
 
 
 def _listing_html(rows: list[tuple[str, str]]) -> str:
-    """Minimal ``ul.rich-list`` page parse_listing understands. Empty rows -> a
-    page past the end (no <li>), which stops pagination."""
+    """Minimal ``ul.rich-list`` page parse_listing understands.
+
+    Empty rows give the page *past* the last one, and that is shaped like the
+    real thing: the live site drops the whole results block there and returns
+    site chrome under ``<title>Zoekresultaten</title>``. This helper used to
+    emit an empty ``<ul class="rich-list">`` instead — a page the real server
+    never sends — so every test passed while the live walk treated the ordinary
+    end of pagination as a blocked page and failed every cell.
+    """
+    if not rows:
+        return "<html><head><title>Zoekresultaten</title></head><body></body></html>"
     items = "".join(
         f'<li><a class="image-link" href="/catalogus/{ppn}/{slug}">t</a></li>'
         for ppn, slug in rows
     )
-    return f'<ul class="rich-list">{items}</ul>'
+    return ('<html><head><title>Zoekresultaten</title></head><body>'
+            f'<ul class="rich-list">{items}</ul></body></html>')
 
 
 def _rich_listing_html(items: list[dict]) -> str:
     """Like _listing_html but with optional title/auteur/summary spans, so sync's
-    merge/signature logic has real fields to compare."""
+    merge/signature logic has real fields to compare. Empty -> the same
+    past-the-end page the live site serves (see _listing_html)."""
+    if not items:
+        return _listing_html([])
     lis = []
     for it in items:
         parts = [f'<a class="image-link" href="/catalogus/{it["ppn"]}/{it["slug"]}">t</a>']
@@ -39,7 +53,8 @@ def _rich_listing_html(items: list[dict]) -> str:
         if it.get("summary"):
             parts.append(f'<p class="maintext">{it["summary"]}</p>')
         lis.append(f"<li>{''.join(parts)}</li>")
-    return f'<ul class="rich-list">{"".join(lis)}</ul>'
+    return ('<html><head><title>Zoekresultaten</title></head><body>'
+            f'<ul class="rich-list">{"".join(lis)}</ul></body></html>')
 
 
 class FakeClient:
@@ -749,3 +764,44 @@ def test_the_busy_timeout_is_actually_set_on_the_connection(tmp_path):
     finally:
         conn.close()
     assert got == int(raw._BUSY_TIMEOUT_S * 1000) > 5000
+
+
+def test_a_full_cell_walk_survives_the_end_of_pagination(paths):
+    """End-to-end guard for the live failure: a cell that paginates to its end
+    must complete, be checkpointed, and stay removal-safe."""
+    class RealisticClient(FakeClient):
+        """Rows on page 1; afterwards the past-the-end page the site really
+        serves (no results block at all)."""
+
+        def get_listing_html(self, params, page=1):
+            self.calls.append((dict(params), page))
+            return _listing_html([("001", "a")] if page == 1 else [])
+
+    seen: set[str] = set()
+    res = scrape.browse_all(RealisticClient(), ["ebook"], seen, lambda r: None)
+    assert res.complete is True and res.removal_safe is True
+    assert seen == {"001"}
+    assert scrape._load_done() == {f"all:ebook:{t}" for t in scrape.LANGS}
+
+
+def test_the_genre_pass_survives_a_broken_page(paths):
+    """A failing page costs that facet's tail, not the whole --full: the run
+    that died in the genre pass threw away hours of finished enumeration."""
+    class BrokenGenreClient(FakeClient):
+        def get_listing_html(self, params, page=1):
+            raise NotAResultsPage("geblokkeerd")
+
+    got: list[str] = []
+    scrape._paginate_flat(BrokenGenreClient(), {"q": "*"}, lambda r: got.append(r))
+    assert got == []          # returned, did not raise
+
+
+def test_the_recency_pass_keeps_what_it_had_when_a_page_breaks(paths):
+    class HalfBrokenClient(FakeClient):
+        def get_listing_html(self, params, page=1):
+            if page > 1:
+                raise NotAResultsPage("geblokkeerd")
+            return _listing_html([("001", "a"), ("002", "b")])
+
+    rank = scrape.collect_recent(HalfBrokenClient())
+    assert set(rank) == {"001", "002"}

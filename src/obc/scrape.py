@@ -277,10 +277,19 @@ def browse_all(client: Client, formats: Iterable[str], seen: set[str],
 
 def _paginate_flat(client: Client, params: dict[str, str], on_record,
                    max_page: int = PAGE_CAP) -> None:
-    """Page straight through a query (no dedup/splitting), cap at the 10k limit."""
+    """Page straight through a query (no dedup/splitting), cap at the 10k limit.
+
+    A failing page costs this facet's tail, not the run: the genre and recency
+    passes are enrichment, and taking the whole ``--full`` down with them threw
+    away hours of enumeration that had already reached the store.
+    """
     page = 1
     while page <= max_page:
-        recs, _ = parse_listing(client.get_listing_html(params, page))
+        try:
+            recs, _ = parse_listing(client.get_listing_html(params, page))
+        except (httpx.HTTPError, NotAResultsPage) as e:
+            logger.error(f"platte walk gestopt op pagina {page} voor {params}: {e}")
+            return
         if not recs:
             break
         for r in recs:
@@ -321,8 +330,13 @@ def collect_recent(client: Client, max_page: int = 250) -> dict[str, int]:
     rank: dict[str, int] = {}
     n, page = 0, 1
     while page <= max_page:
-        recs, _ = parse_listing(client.get_listing_html(
-            {"q": "*", "sorteer": "licentie_datum"}, page))
+        try:
+            recs, _ = parse_listing(client.get_listing_html(
+                {"q": "*", "sorteer": "licentie_datum"}, page))
+        except (httpx.HTTPError, NotAResultsPage) as e:
+            # keep the ranking built so far rather than losing the whole run
+            logger.error(f"recency-walk gestopt op pagina {page}: {e}")
+            break
         if not recs:
             break
         for r in recs:
