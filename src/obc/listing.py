@@ -34,6 +34,26 @@ class NotAResultsPage(ValueError):
     early, which marked everything unseen as removed."""
 
 
+def _is_results_page(soup: BeautifulSoup) -> bool:
+    """Whether this is the catalog's results page — including the one *past* the
+    last page, which is a normal and expected response.
+
+    That page is the whole subtlety. It carries no ``ul.rich-list``, no
+    ``p.totalresults`` and no sort form — nothing but site chrome — so requiring
+    any of those rejected the ordinary end of pagination as an error. Every cell
+    of a live full walk then "failed" at the point it had finished, and the
+    year-split that reaches the pre-1900 titles died on its first query.
+
+    What it does keep is its identity: ``<title>Zoekresultaten</title>``. A
+    maintenance page, a block interstitial or a moved URL does not claim to be
+    the search results.
+    """
+    if soup.select_one("ul.rich-list, p.totalresults"):
+        return True
+    title = (soup.title.string or "") if soup.title else ""
+    return "zoekresultaten" in title.strip().lower()
+
+
 def max_page(html: str) -> int:
     nums = [int(n) for n in _PAGER_RE.findall(html)]
     return max(nums) if nums else 1
@@ -51,7 +71,7 @@ def total_results(html: str) -> int | None:
 
 def parse_listing(html: str) -> tuple[list[dict[str, Any]], int]:
     soup = BeautifulSoup(html, "lxml")
-    if not soup.select_one("ul.rich-list, p.totalresults, form.searchsorting"):
+    if not _is_results_page(soup):
         raise NotAResultsPage(
             "geen resultatenpagina (geblokkeerd, verplaatst of foutpagina?)")
     records: list[dict[str, Any]] = []
