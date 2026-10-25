@@ -66,6 +66,21 @@
   .borrow-btn .b-go{flex:none;opacity:.8}
   .borrow-more{display:block;text-align:center;font-size:13px;color:var(--ink-soft);padding-top:2px}
   .borrow-more:hover{color:var(--accent)}
+  /* Contract 2 with the e-reader extension (CATALOGUS-CONTRACT.md in the extension
+     repo). The element around a borrowable e-book edition says which edition it is
+     (data-ppn) and whether an e-reader can read it (data-ebook); right under that
+     edition's borrow button sits an .ereader-slot. Without the extension the slot
+     holds a quiet invitation in the voice of the meta rows. The extension announces
+     itself with data-ereader-extension on <html>; that hides the invitation and the
+     extension fills the slot with its own button — never both at once. */
+  .borrow-edition{display:flex;flex-direction:column;gap:6px}
+  .install-hint{display:block;font-size:13px;color:var(--ink-soft);text-align:center;
+    text-decoration:underline dotted;text-decoration-color:var(--accent);
+    text-underline-offset:3px;text-decoration-thickness:1.5px}
+  .install-hint:hover{color:var(--accent);text-decoration-style:solid}
+  .edition .ereader-slot{margin-top:10px}
+  .edition .install-hint{text-align:left}
+  html[data-ereader-extension] .install-hint{display:none}
   /* "Meer zoals dit" — LSA content-based recommendations (obc.similar), a
      horizontally-scrolling strip of small covers (images lazy-load as you scroll). */
   .similar{margin-top:56px;border-top:1px solid var(--line);padding-top:28px}
@@ -132,6 +147,9 @@
     {% set ns.lead = ns.lead + [e] %}
   {% endif %}
 {% endfor %}
+{% macro ereader_slot() -%}
+<div class="ereader-slot"><a class="install-hint" href="/extensie">Zet dit e-book met één klik op je e-reader</a></div>
+{%- endmacro %}
 <main>
   <a class="back" href="javascript:history.back()">‹ Terug</a>
   <article class="detail">
@@ -150,7 +168,9 @@
       <div class="borrow">
         {% for e in ns.lead %}
         {% set audio = e['format'] == 'audiobook' %}
+        {% set ebook = e['format'] == 'ebook' %}
         {% if e['url'] %}
+        <div class="borrow-edition"{% if ebook %} data-ppn="{{ e['ppn'] }}" data-ebook="{{ '1' if e['ereader'] else '0' }}"{% endif %}>
         <a class="borrow-btn {{ 'audio' if audio else 'ebook' }}" href="{{ e['url'] }}"
            target="_blank" rel="noopener">
           <span class="b-ic" aria-hidden="true">
@@ -170,6 +190,8 @@
             <path d="M7 17 17 7M8 7h9v9"/>
           </svg>
         </a>
+        {% if ebook and e['ereader'] %}{{ ereader_slot() }}{% endif %}
+        </div>
         {% endif %}
         {% endfor %}
         {% if editions|length > ns.lead|length %}
@@ -245,7 +267,10 @@
       {% set anchor = 'luisterboek' if audio else 'e-book' %}
       {% set first = anchor not in blocks.seen %}
       {% if first %}{% set blocks.seen = blocks.seen + [anchor] %}{% endif %}
-      <section class="edition {{ 'audio' if audio else 'ebook' }}"{% if first %} id="{{ anchor }}"{% endif %}>
+      {# the lead edition's container is its button under the cover; only an extra
+         e-book edition, the one with its own button below, is its own container #}
+      {% set own = e['format'] == 'ebook' and e['url'] and not first %}
+      <section class="edition {{ 'audio' if audio else 'ebook' }}"{% if first %} id="{{ anchor }}"{% endif %}{% if own %} data-ppn="{{ e['ppn'] }}" data-ebook="{{ '1' if e['ereader'] else '0' }}"{% endif %}>
         <h2>
           <span class="fmt-ic {{ 'audio' if audio else 'ebook' }}" aria-hidden="true">
             <svg width="15" height="15"><use href="#ic-{{ 'audio' if audio else 'book' }}"/></svg>
@@ -273,6 +298,7 @@
            action. Only the extra editions — the ones the CTA can't offer — carry
            their own. #}
         {% if e['url'] and not first %}<a class="btn" href="{{ e['url'] }}" target="_blank" rel="noopener">Deze uitvoering lenen ↗</a>{% endif %}
+        {% if own and e['ereader'] %}{{ ereader_slot() }}{% endif %}
       </section>
       {% endfor %}
     </div>
