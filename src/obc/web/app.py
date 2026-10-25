@@ -231,7 +231,7 @@ app = FastAPI(title="online bibliotheek — eigen catalogus", lifespan=_lifespan
 # The rename 301s below are in here too: a redirect is cacheable, and these are the
 # ones a crawler will keep re-fetching until it has moved its index over.
 _CACHE_PREFIXES = ("/boek/", "/auteur", "/reeks/", "/lijst", "/statistieken",
-                   "/over", "/genre", "/uitgever/", "/e-books", "/luisterboeken",
+                   "/over", "/extensie", "/genre", "/uitgever/", "/e-books", "/luisterboeken",
                    "/author", "/series/", "/list", "/about", "/stats")
 
 
@@ -790,6 +790,28 @@ def about(request: Request):
     """Static 'about' page — independent of the catalog DB so it always renders."""
     return _templates.TemplateResponse(request, "about.html", {
         "breadcrumbs": seo.breadcrumbs(request, ("Over deze catalogus", ""))})
+
+
+# The browser extension that puts a borrowed e-book on an e-reader. Both pages are
+# static like /over. The privacy page is the public URL the extension stores ask
+# for, and the extension's own repository is private, so this is where it lives.
+@app.get("/extensie", response_class=HTMLResponse)
+def extension(request: Request):
+    return _templates.TemplateResponse(request, "extensie.html", {
+        "meta_description": "De browserextensie van de Online Bibliotheek Catalogus voor "
+                            "Chrome en Edge: een geleend e-book met één klik op je e-reader. "
+                            "Wat je nodig hebt, hoe je installeert en hulp bij autoriseren.",
+        "breadcrumbs": seo.breadcrumbs(request, ("Extensie voor je e-reader", ""))})
+
+
+@app.get("/extensie/privacy", response_class=HTMLResponse)
+def extension_privacy(request: Request):
+    return _templates.TemplateResponse(request, "extensie_privacy.html", {
+        "meta_description": "Privacyverklaring van de browserextensie Online Bibliotheek "
+                            "Catalogus: welke gegevens erdoor gaan, waar ze blijven en met "
+                            "welke partijen de extensie praat.",
+        "breadcrumbs": seo.breadcrumbs(request, ("Extensie voor je e-reader", "/extensie"),
+                                       ("Privacyverklaring", ""))})
 
 
 @app.get("/genres", response_class=HTMLResponse)

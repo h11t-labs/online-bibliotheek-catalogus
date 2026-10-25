@@ -187,7 +187,8 @@ def sitemap_index(request: Request,
 def sitemap_static(request: Request,
                    conn: sqlite3.Connection = Depends(indexes.get_conn)):
     slugs = [r["slug"] for r in conn.execute("SELECT slug FROM lists ORDER BY slug")]
-    paths = ["/", "/over", "/lijsten", "/statistieken", *[f"/lijst/{s}" for s in slugs]]
+    paths = ["/", "/over", "/extensie", "/extensie/privacy", "/lijsten", "/statistieken",
+             *[f"/lijst/{s}" for s in slugs]]
     # These really are rewritten by every rebuild (new titles, new list positions).
     return _sitemap(origin(request), paths, lastmod=_w3c(indexes.data_updated()))
 
