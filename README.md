@@ -95,6 +95,7 @@ languages and lists. Logs use loguru.
 | `/genres`, `/genre/{slug}` | genre hub per audience (jeugd / volwassenen), and one genre |
 | `/lijsten`, `/lijst/{slug}` | curated lists (Bestseller 60, NYT, prizes) |
 | `/statistieken`, `/over` | catalog dashboard, and what this thing is |
+| `/extensie`, `/extensie/privacy` | the browser extension that puts a borrowed e-book on an e-reader, and its privacy statement (the public URL the extension stores ask for) |
 | `/suggesties`, `/facetten` | JSON for the autocomplete and the searchable facets |
 | `/robots.txt`, `/sitemap.xml` | crawler-facing; the sitemap is an index over paginated children |
 | `/healthz`, `/admin/refresh` | liveness probe, and the token-protected refresh trigger |
@@ -229,6 +230,16 @@ URL in a stored detail page.
   `/boek/…`, `/e-books`, `/luisterboeken`, `/genres` + `/genre/{slug}`, `/auteurs`
   + `/auteur/{slug}`, `/reeks/{slug}`, `/lijsten` + `/lijst/{slug}`,
   `/statistieken`, `/over`.
+- **E-reader extension** (`templates/book.html`): the book page serves *contract 2*
+  for the "Online Bibliotheek Catalogus" browser extension — `data-ereader-contract="2"`
+  on `<body>`, and around each borrowable e-book edition a container with its own
+  `data-ppn`, `data-ebook="1"` (an e-reader can read it) or `"0"` (app only), and an
+  `.ereader-slot` under its borrow button holding a quiet invitation to install the
+  extension. The extension marks `<html>` with `data-ereader-extension`, which hides
+  the invitation so it can fill the slot with its own button. The attributes and the
+  slot are a public API of the page: the extension breaks silently without them. The
+  agreement itself is `CATALOGUS-CONTRACT.md` in the extension's repository
+  (`h11t-labs/online-bibliotheek-catalogus-extension`).
 - **No derived state in the web process** (`web/indexes.py`): everything derivable
   from the catalog is derived in the rebuild — facet counts, author sort keys, the
   series map, the genre taxonomy — so the read path does indexed lookups only.
