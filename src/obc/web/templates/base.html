@@ -352,10 +352,14 @@
       color:var(--ink-soft);font-size:13px;border-top:1px solid var(--line);
       display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 24px}
     footer .foot-meta{margin-left:auto;opacity:.6}
+    footer a{text-decoration:underline dotted;text-decoration-color:var(--accent);text-underline-offset:3px}
+    footer a:hover{color:var(--accent)}
     {% block style %}{% endblock %}
   </style>
 </head>
-<body>
+{# data-ereader-contract: which agreement with the e-reader extension this page
+   follows (see book.html); the extension falls back to guessing only without it #}
+<body data-ereader-contract="2">
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <symbol id="ic-book" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -511,6 +515,7 @@
   {% block body %}{% endblock %}
   <footer>
     <span>Een zelfgemaakte zoekgids voor de collectie van de online Bibliotheek — om makkelijk je volgende boek te vinden.</span>
+    <a href="/extensie">Extensie: een e-book met één klik op je e-reader</a>
     {% set _updated = data_updated() %}
     {% if _updated or app_version %}
     <span class="foot-meta">

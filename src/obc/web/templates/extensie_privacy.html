@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Privacyverklaring van de extensie · Online Bibliotheek Catalogus{% endblock %}
+{% block style %}
+  main{width:100%;max-width:760px}
+  .prose{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:26px 30px;box-shadow:var(--shadow);line-height:1.7}
+  .prose h2{font-family:var(--serif);font-size:21px;margin:24px 0 8px;color:var(--ink)}
+  .prose h2:first-child{margin-top:0}
+  .prose p{margin:0 0 12px;color:var(--ink)}
+  .prose a{color:var(--accent);text-decoration:underline dotted}
+  .prose ul{margin:0 0 14px;padding-left:20px;color:var(--ink)}
+  .prose li{margin:5px 0}
+  .prose code{font:.9em ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg-soft);
+    border:1px solid var(--line);border-radius:4px;padding:.1em .35em}
+  .prose table{width:100%;border-collapse:collapse;font-size:14.5px;margin:0 0 14px}
+  .prose th,.prose td{text-align:left;vertical-align:top;padding:8px 10px 8px 0;
+    border-bottom:1px solid var(--line)}
+  .prose th{font-size:12.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--ink-soft)}
+  .version{font-size:13.5px;color:var(--ink-soft);margin:0 0 18px}
+  @media (max-width:480px){ .prose{padding:20px 18px} }
+{% endblock %}
+{% block body %}
+<main>
+  <div class="pagehead">
+    <div class="crumb"><a href="/extensie">‹ Extensie voor je e-reader</a></div>
+    <h1>Privacyverklaring</h1>
+    <div class="sub">Van de browserextensie "Online Bibliotheek Catalogus" voor Chrome en Edge</div>
+  </div>
+  <div class="prose">
+    <p class="version"><strong>Versie van 22 oktober 2026.</strong> Geldt voor de extensie
+      vanaf versie 0.5.0.</p>
+    <p>De extensie zet een e-book dat je bij de online Bibliotheek leent op je e-reader. Hij
+      doet daarvoor wat Adobe Digital Editions doet: hij registreert zich als apparaat bij je
+      eigen Adobe- of ByteBooks-account en haalt daarmee jouw geleende boeken op. De
+      beveiliging van het boek blijft intact. Deze verklaring zegt welke gegevens daarbij door
+      de extensie gaan, waar ze blijven en waar ze heen gaan.</p>
+
+    <h2>Wie</h2>
+    <p>De extensie wordt gemaakt en uitgegeven door h11t-labs. Hij is een onafhankelijk
+      hulpmiddel en komt niet van de online Bibliotheek, Adobe of ByteBooks. Vragen over deze
+      verklaring: open een issue op
+      <a href="https://github.com/h11t-labs/online-bibliotheek-catalogus-extension/issues"
+         target="_blank" rel="noopener">github.com/h11t-labs/online-bibliotheek-catalogus-extension/issues</a>.</p>
+
+    <h2>Geen server van ons</h2>
+    <p>Er is er geen. De extensie stuurt niets naar de maker: geen statistieken, geen
+      foutrapporten, geen advertenties. Er wordt niets verkocht of gedeeld. De extensie praat
+      uitsluitend met de partijen die er toch al in zitten:</p>
+    <table>
+      <thead><tr><th>Host</th><th>Waarvoor</th></tr></thead>
+      <tbody>
+        <tr><td>onlinebibliotheek.nl, onlinebibliotheekcatalogus.nl</td>
+          <td>je boekenplank en de knop bij een boek; het lenen zelf</td></tr>
+        <tr><td>digitaldistribution.cb.nl</td>
+          <td>de distributeur van de bibliotheek, die de leenbon en het boek levert</td></tr>
+        <tr><td>adeactivate.adobe.com of activate.dtsbytebooks.com</td>
+          <td>de inlogdienst van je Adobe- of ByteBooks-account; alleen bij de registratie als
+            apparaat en bij het ophalen van een boek</td></tr>
+      </tbody>
+    </table>
+    <p>Alle verkeer gaat over HTTPS.</p>
+
+    <h2>Twee wachtwoorden, twee regels</h2>
+    <p><strong>Je bibliotheekwachtwoord komt er nooit langs.</strong> Inloggen doe je op
+      onlinebibliotheek.nl, in je eigen browser. De extensie leest mee wat daarna op je scherm
+      staat: of je ingelogd bent en welke e-books op je boekenplank liggen. Om te merken dat je
+      bent uitgelogd onthoudt hij alleen de <em>namen</em> van de inlogcookies, nooit hun
+      inhoud.</p>
+    <p><strong>Je Adobe- of ByteBooks-wachtwoord wordt één keer gebruikt.</strong> Bij het
+      koppelen log je eenmalig in met het account waarmee je e-reader geautoriseerd is. Dat
+      wachtwoord gaat versleuteld naar de inlogdienst van Adobe of ByteBooks en wordt daarna
+      weggegooid; het wordt nergens bewaard en komt in geen enkel logbestand, foutbericht of
+      export voor. Wat je ervoor terugkrijgt is een sleutel waarmee de extensie, als apparaat
+      op jouw account, geleende boeken kan ophalen.</p>
+
+    <h2>Wat de extensie bewaart, en waar</h2>
+    <p>In de eigen opslag van de extensie in je browser:</p>
+    <ul>
+      <li>de sleutel van de registratie bij Adobe of ByteBooks, met het e-mailadres van dat
+        account;</li>
+      <li>de namen van de inlogcookies van onlinebibliotheek.nl (niet hun waarden);</li>
+      <li>de laatst geziene boekenplank: titels en einddatums van je leningen, met het
+        tijdstip waarop ze gezien zijn;</li>
+      <li>de boeken die op je e-reader wachten en de leenbonnen die daarvoor nodig zijn;</li>
+      <li>gegevens van je e-reader zoals de extensie ze op het toestel leest: merk,
+        serienummer en het account waarmee hij geautoriseerd is, plus de naam die je hem zelf
+        gaf.</li>
+    </ul>
+    <p>Alles daarvan verdwijnt als je de extensie verwijdert.</p>
+    <p>Op je e-reader schrijft de extensie alleen in twee eigen mappen: de geleende boeken in
+      <code>Online Bibliotheek Catalogus</code>, en in de verborgen map
+      <code>.online-bibliotheek-catalogus-extension</code> een back-up van de sleutel
+      hierboven. Dankzij die back-up kost opnieuw installeren je geen tweede van je zes
+      Adobe-apparaten. De back-up is versleuteld met een sleutel die in de extensie zelf zit;
+      dat houdt nieuwsgierige blikken tegen, maar niet iemand die je e-reader én de extensie
+      heeft. Behandel je e-reader daarom als je laptop. De map van Adobe op je e-reader leest
+      de extensie alleen, om te zien met welk account het toestel geautoriseerd is; hij
+      schrijft er nooit in.</p>
+
+    <h2>Wat de extensie leest op websites</h2>
+    <p>Op onlinebibliotheek.nl en onlinebibliotheekcatalogus.nl leest de extensie de pagina's
+      die je zelf opent: de boekpagina (om er een knop bij te zetten) en je boekenplank. Hij
+      leest geen andere sites en houdt je browsegeschiedenis niet bij. Bij het lenen volgt hij
+      één doorverwijzing van onlinebibliotheek.nl naar de distributeur, om de leenbon te
+      ontvangen die de bibliotheek voor jou uitgeeft.</p>
+
+    <h2>Jouw keuzes</h2>
+    <ul>
+      <li><strong>Afmelden bij Adobe</strong> kan altijd, met één knop op het koppelscherm. De
+        extensie verwijdert dan zijn registratie als apparaat bij je account, de sleutel in je
+        browser en, als je e-reader aangesloten is, de back-up op het toestel.</li>
+      <li><strong>Verwijderen:</strong> meld eerst af bij Adobe, haal daarna de extensie uit
+        je browser. De boeken op je e-reader blijven leesbaar; die zijn op slot gezet voor je
+        account, niet voor de extensie. De handleiding in de extensie ("Installeren, je
+        gegevens en verwijderen") beschrijft de volgorde.</li>
+      <li>Je kunt de map <code>.online-bibliotheek-catalogus-extension</code> op je e-reader
+        altijd zelf weggooien.</li>
+    </ul>
+
+    <h2>Wijzigingen</h2>
+    <p>Verandert er iets aan wat hierboven staat, dan verandert de datum bovenaan en staat de
+      wijziging in de versiegeschiedenis van de extensie.</p>
+  </div>
+</main>
+{% endblock %}

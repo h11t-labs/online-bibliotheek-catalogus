@@ -256,6 +256,123 @@ def test_stats_links_to_the_real_pages(client):
     assert [x for x in links if x.startswith(("/?taal=", "/?uitgever="))]
 
 
+# the e-reader extension: contract 2 (CATALOGUS-CONTRACT.md in the extension repo)
+
+HINT = '<a class="install-hint" href="/extensie">Zet dit e-book met één klik op je e-reader</a>'
+
+
+def _client_over(tmp_path, monkeypatch, records):
+    """A client over a catalog of just ``records`` — for the shapes sampledata has
+    no work for (see test_book_page_without_authors_gets_a_title_only_slug)."""
+    from fastapi.testclient import TestClient
+
+    from obc import db
+    from obc.web import app as appmod
+    from obc.web import indexes as indexmod
+    path = tmp_path / "own.db"
+    conn = db.connect(path)
+    db.bulk_load(conn, records)
+    db.build_genre_taxonomy(conn)
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+    monkeypatch.setattr(indexmod, "DB_PATH", path)
+    monkeypatch.setattr(appmod, "author_bio", lambda name: None)
+    return TestClient(appmod.app)
+
+
+def test_every_page_says_which_ereader_contract_it_follows(client):
+    # on <body>, so the extension knows the slots are there before it looks for
+    # them, and runs its guessing fallback only on pages without
+    for path in ("/", CANON_001, "/over", "/boek/zzznope"):
+        assert '<body data-ereader-contract="2">' in client.get(path).text, path
+
+
+def test_ebook_edition_carries_its_ppn_and_an_ereader_slot(client):
+    """001 is an e-book an e-reader can read, with two audiobook siblings. Its
+    container names *its* PPN (every edition has its own) and holds the slot
+    right under "E-book lenen"; the audiobooks get neither."""
+    body = client.get(CANON_001).text
+    assert body.count("data-ppn=") == 1
+    assert 'data-ppn="001" data-ebook="1"' in body
+    for sibling in ("002", "007"):
+        assert f'data-ppn="{sibling}"' not in body
+    # one slot, with the quiet invitation, not inside the borrow link itself
+    assert body.count('class="ereader-slot"') == 1
+    slot = body.index('<div class="ereader-slot">')
+    button = body.index('class="borrow-btn ebook"')
+    assert button < slot and "</a>" in body[button:slot]
+    assert HINT in body
+    # and the rule that hides the invitation once the extension announces itself
+    assert "html[data-ereader-extension] .install-hint{display:none}" in body
+
+
+def test_app_only_ebook_gets_no_slot(client, ro_conn):
+    # 003 is an e-book the library offers only in its app (ereader = 0): the
+    # extension must know it is not for an e-reader, and the visitor is not invited
+    from obc.web import seo
+    row = ro_conn.execute("SELECT * FROM works WHERE work_id = '003'").fetchone()
+    body = client.get(seo.book_path(row)).text
+    assert 'data-ppn="003" data-ebook="0"' in body
+    # (the words themselves live in the stylesheet; the markup is what counts)
+    assert 'class="ereader-slot"' not in body and 'class="install-hint"' not in body
+
+
+def test_audiobook_only_page_has_no_slot(tmp_path, monkeypatch):
+    client = _client_over(tmp_path, monkeypatch, [
+        {"ppn": "21", "title": "Alleen Luisteren", "author": "Ria Stem",
+         "authors": ["Ria Stem"], "format": "audiobook", "language": "Nederlands",
+         "url": "https://www.onlinebibliotheek.nl/catalogus/21/alleen-luisteren",
+         "narrator": "Ria Stem", "duration": "3 uur"}])
+    body = client.get("/boek/alleen-luisteren--ria-stem--21").text
+    assert 'class="borrow-btn audio"' in body
+    assert "data-ppn=" not in body and 'class="ereader-slot"' not in body
+    assert '<body data-ereader-contract="2">' in body
+
+
+def test_a_second_ebook_edition_gets_its_own_container_and_slot(tmp_path, monkeypatch):
+    # one work, two e-book editions: the lead one's container is its button under
+    # the cover, the other's is its own block with its own button — each with its
+    # own PPN and its own slot, never one container for the work
+    client = _client_over(tmp_path, monkeypatch, [
+        {"ppn": "11", "title": "Twee Keer", "author": "Anna Vrij", "authors": ["Anna Vrij"],
+         "format": "ebook", "language": "Nederlands", "ereader": 1,
+         "url": "https://www.onlinebibliotheek.nl/catalogus/11/twee-keer"},
+        {"ppn": "12", "title": "Twee Keer", "author": "Anna Vrij", "authors": ["Anna Vrij"],
+         "format": "ebook", "language": "Nederlands", "ereader": 1,
+         "url": "https://www.onlinebibliotheek.nl/catalogus/12/twee-keer",
+         "related_ppns": ["11"]}])
+    body = client.get("/boek/twee-keer--anna-vrij--11").text
+    assert '<div class="borrow-edition" data-ppn="11" data-ebook="1">' in body
+    assert '<section class="edition ebook" data-ppn="12" data-ebook="1">' in body
+    assert body.count("data-ppn=") == 2
+    assert body.count('class="ereader-slot"') == 2
+    # the second slot sits under that edition's own button, after it
+    section = body.index('data-ppn="12"')
+    assert body.index("Deze uitvoering lenen", section) < body.index("ereader-slot", section)
+
+
+def test_extension_pages(client):
+    r = client.get("/extensie")
+    assert r.status_code == 200
+    assert "<h1>Een e-book met één klik op je e-reader</h1>" in r.text
+    assert "Chrome Web Store" in r.text and "Edge Add-ons" in r.text
+    assert 'href="/extensie/privacy"' in r.text
+    p = client.get("/extensie/privacy")
+    assert p.status_code == 200
+    assert "<h1>Privacyverklaring</h1>" in p.text
+    assert "Versie van 22 oktober 2026" in p.text
+    # both carry a breadcrumb trail; the privacy page's leads back to /extensie
+    for body in (r.text, p.text):
+        assert any(d.get("@type") == "BreadcrumbList" for d in jsonld(body))
+    assert any(i.get("item", "").endswith("/extensie")
+               for d in jsonld(p.text) if d.get("@type") == "BreadcrumbList"
+               for i in d["itemListElement"])
+    # reachable from every page, and advertised to crawlers
+    assert 'href="/extensie"' in client.get("/").text
+    static = client.get("/sitemap-static.xml").text
+    assert "/extensie<" in static and "/extensie/privacy<" in static
+
+
 def test_english_paths_301_to_their_dutch_names(client):
     """The one redirect layer this site keeps.
 
