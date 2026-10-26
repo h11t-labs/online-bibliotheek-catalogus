@@ -26,6 +26,10 @@
      breadcrumb trail is emitted separately so pages can set either or both. #}
   {% if jsonld %}<script type="application/ld+json">{{ jsonld | tojson }}</script>{% endif %}
   {% if breadcrumbs %}<script type="application/ld+json">{{ breadcrumbs | tojson }}</script>{% endif %}
+  {# Which browser this is, as a class on <html> (is-chrome, is-edge, is-chromium,
+     is-other, plus is-mobile); the .for-* rules below pick the wording that belongs
+     to it. Deferred: nothing waits for it, and without it the neutral wording stands. #}
+  <script src="/browser.js?v={{ app_version }}" defer></script>
   <script>
     // Apply the saved theme before first paint (avoids a flash). 'system' or
     // unset leaves the prefers-color-scheme media query in charge.
@@ -191,6 +195,15 @@
       cursor:pointer;box-shadow:var(--shadow)}
     .btn:hover{filter:brightness(1.06)}
     .btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line-strong);box-shadow:none}
+    /* Wording per browser (browser.js puts the class on <html>). .for-other is the
+       neutral text and the default: it is what shows without JavaScript, in a browser
+       that is neither Chrome nor Edge, and on a phone — where the Chrome or Edge
+       wording would invite an install that is not possible there. */
+    .for-chrome,.for-edge{display:none}
+    html.is-chrome:not(.is-mobile) .for-chrome,html.is-chromium:not(.is-mobile) .for-chrome,
+    html.is-edge:not(.is-mobile) .for-edge{display:block}
+    html.is-chrome:not(.is-mobile) .for-other,html.is-chromium:not(.is-mobile) .for-other,
+    html.is-edge:not(.is-mobile) .for-other{display:none}
 
     main{width:100%;max-width:1240px;margin:0 auto;padding:28px 24px 80px}
     .chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding:4px 11px;
