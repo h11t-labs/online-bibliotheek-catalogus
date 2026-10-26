@@ -235,8 +235,12 @@ URL in a stored detail page.
   on `<body>`, and around each borrowable e-book edition a container with its own
   `data-ppn`, `data-ebook="1"` (an e-reader can read it) or `"0"` (app only), and an
   `.ereader-slot` under its borrow button holding a quiet invitation to install the
-  extension. The extension marks `<html>` with `data-ereader-extension`, which hides
-  the invitation so it can fill the slot with its own button. The attributes and the
+  extension (one `.install-hint`, worded for the visitor's browser: `static/browser.js`
+  puts `is-chrome`, `is-edge`, `is-chromium` or `is-other`, plus `is-mobile`, on
+  `<html>` and the stylesheet picks the store that belongs to it; the store URLs live
+  in `STORE_URLS` in `app.py`). The extension marks `<html>` with
+  `data-ereader-extension`, which hides the invitation so it can fill the slot with
+  its own button. The attributes and the
   slot are a public API of the page: the extension breaks silently without them. The
   agreement itself is `CATALOGUS-CONTRACT.md` in the extension's repository
   (`h11t-labs/online-bibliotheek-catalogus-extension`).
