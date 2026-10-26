@@ -258,7 +258,15 @@ def test_stats_links_to_the_real_pages(client):
 
 # the e-reader extension: contract 2 (CATALOGUS-CONTRACT.md in the extension repo)
 
-HINT = '<a class="install-hint" href="/extensie">Zet dit e-book met één klik op je e-reader</a>'
+# the invitation under the borrow button: the neutral wording is what the HTML
+# carries by default (no JavaScript, a browser that is neither Chrome nor Edge); the
+# Chrome and Edge wordings sit next to it and the stylesheet picks one
+HINT = ('<span class="for-other">Met Chrome of Edge zet je dit e-book met één klik op je '
+        'e-reader. <a href="/extensie">Hoe werkt dat?&nbsp;→</a></span>')
+HINT_CHROME = ('<span class="for-chrome">Zet dit e-book met één klik op je e-reader. '
+               '<a href="/extensie#installeren">Installeer de extensie uit de Chrome Web Store&nbsp;→</a></span>')
+HINT_EDGE = ('<span class="for-edge">Zet dit e-book met één klik op je e-reader. '
+             '<a href="/extensie#installeren">Installeer de extensie uit Edge Add-ons&nbsp;→</a></span>')
 
 
 def _client_over(tmp_path, monkeypatch, records):
@@ -301,9 +309,15 @@ def test_ebook_edition_carries_its_ppn_and_an_ereader_slot(client):
     slot = body.index('<div class="ereader-slot">')
     button = body.index('class="borrow-btn ebook"')
     assert button < slot and "</a>" in body[button:slot]
-    assert HINT in body
-    # and the rule that hides the invitation once the extension announces itself
+    # the invitation is ONE .install-hint element (the extension removes it as a
+    # whole) holding the three wordings; the neutral one is the default
+    assert body.count('class="install-hint"') == 1
+    hint = body[body.index('<div class="install-hint">'):body.index("</div></div>", slot)]
+    assert HINT in hint and HINT_CHROME in hint and HINT_EDGE in hint
+    # and the rules that hide the invitation once the extension announces itself,
+    # and on a phone, where installing is not possible
     assert "html[data-ereader-extension] .install-hint{display:none}" in body
+    assert "html.is-mobile .install-hint{display:none}" in body
 
 
 def test_app_only_ebook_gets_no_slot(client, ro_conn):
@@ -371,6 +385,50 @@ def test_extension_pages(client):
     assert 'href="/extensie"' in client.get("/").text
     static = client.get("/sitemap-static.xml").text
     assert "/extensie<" in static and "/extensie/privacy<" in static
+
+
+def test_extension_page_installs_per_browser(client):
+    """The "Installeren" section carries one sentence and the buttons for each
+    browser; the stylesheet shows the one that belongs to the visitor. The neutral
+    wording is the default: another browser, a phone, no JavaScript."""
+    body = client.get("/extensie").text
+    section = body[body.index('<h2 id="installeren">'):body.index('<h2>Als het niet lukt</h2>')]
+    assert ("De extensie werkt in Chrome en Edge op een computer; alleen die twee kunnen een\n"
+            "        bestand rechtstreeks op je e-reader zetten.") in section
+    assert "Je gebruikt Chrome; daar werkt de extensie in." in section
+    assert "Je gebruikt Edge; daar werkt de extensie in." in section
+    # per browser its own store is the filled button, the other store the ghost one
+    chrome = section[section.index('<div class="for-chrome">'):section.index('<div class="for-edge">')]
+    assert '<a class="btn" href="/extensie#installeren">Toevoegen aan Chrome</a>' in chrome
+    assert '<a class="btn ghost" href="/extensie#installeren">Voor Edge: Edge Add-ons</a>' in chrome
+    edge = section[section.index('<div class="for-edge">'):section.index('<p class="soon">')]
+    assert '<a class="btn" href="/extensie#installeren">Toevoegen aan Edge</a>' in edge
+    assert '<a class="btn ghost" href="/extensie#installeren">Voor Chrome: Chrome Web Store</a>' in edge
+    other = section[section.index('<div class="for-other">'):section.index('<div class="for-chrome">')]
+    assert '<a class="btn ghost" href="/extensie#installeren">Chrome Web Store</a>' in other
+    assert '<a class="btn ghost" href="/extensie#installeren">Edge Add-ons</a>' in other
+    # the stores have not approved the listing: every button is a real link to the
+    # steps on this page, none is inert, and the steps themselves stay
+    assert "aria-disabled" not in body
+    assert section.count('class="btn') == 6 and "<span class=\"btn" not in section
+    assert "Ontwikkelaarsmodus" in section and 'class="soon"' in section
+
+
+def test_browser_script_is_served_and_loaded_on_every_page(client):
+    # the class on <html> that the per-browser wording hangs on comes from one small
+    # deferred script; the HTML itself never assumes a browser
+    r = client.get("/browser.js")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/javascript")
+    assert r.headers["cache-control"] == "public, max-age=86400"
+    for cls in ("is-chrome", "is-edge", "is-chromium", "is-other", "is-mobile"):
+        assert cls in r.text
+    assert "userAgentData" in r.text and "Edg\\/" in r.text
+    for path in ("/", CANON_001, "/extensie", "/boek/zzznope"):
+        body = client.get(path).text
+        assert '<script src="/browser.js?v=' in body and ' defer></script>' in body, path
+        # the shared rules that pick the wording, with the phone beating the browser
+        assert "html.is-chrome:not(.is-mobile) .for-chrome" in body, path
 
 
 def test_english_paths_301_to_their_dutch_names(client):
