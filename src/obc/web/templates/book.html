@@ -70,16 +70,33 @@
      repo). The element around a borrowable e-book edition says which edition it is
      (data-ppn) and whether an e-reader can read it (data-ebook); right under that
      edition's borrow button sits an .ereader-slot. Without the extension the slot
-     holds a quiet invitation in the voice of the meta rows. The extension announces
-     itself with data-ereader-extension on <html>; that hides the invitation and the
-     extension fills the slot with its own button — never both at once. */
+     holds an invitation for the browser at hand (the .for-* classes, base.html): in
+     Chrome or Edge a real button to that browser's store, as wide as the borrow
+     button and with its corners, but outlined so borrowing stays the main action;
+     in any other browser and without JavaScript one sentence and a link to /extensie,
+     because there is nothing to install. On a phone there is nothing: installing is not possible
+     there, and a sentence that only says what cannot be done is noise. The extension
+     announces itself with data-ereader-extension on <html>; that hides the whole
+     invitation (one .install-hint element, so the extension can also remove it) and
+     the extension fills the slot with its own button — never both at once. */
   .borrow-edition{display:flex;flex-direction:column;gap:6px}
-  .install-hint{display:block;font-size:13px;color:var(--ink-soft);text-align:center;
-    text-decoration:underline dotted;text-decoration-color:var(--accent);
-    text-underline-offset:3px;text-decoration-thickness:1.5px}
-  .install-hint:hover{color:var(--accent);text-decoration-style:solid}
+  .install-hint{display:block;font-size:13px;line-height:1.5;color:var(--ink-soft)}
+  /* the same hairline label the extension puts above its own button, so the
+     invitation sits where that button will appear and reads as one family */
+  .install-hint .via{display:flex;align-items:center;gap:.6em;margin:8px 0 6px;
+    font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft)}
+  .install-hint .via::after{content:"";flex:1 1 auto;height:1px;background:var(--line)}
+  .install-hint .for-other a{color:var(--accent);text-decoration:underline dotted;text-underline-offset:3px;
+    white-space:nowrap}
+  .install-hint .for-other a:hover{text-decoration-style:solid}
+  .install-btn{display:flex;align-items:center;justify-content:center;gap:7px;padding:10px 18px;
+    border-radius:14px;border:1px solid var(--line-strong);background:transparent;color:var(--ink);
+    font-size:14px;font-weight:600;text-decoration:none;transition:border-color .15s}
+  .install-btn svg{flex:none;color:var(--accent)}
+  .install-btn:hover{border-color:var(--accent)}
+  .install-note{margin:6px 0 0;font-size:12px;color:var(--ink-soft)}
   .edition .ereader-slot{margin-top:10px}
-  .edition .install-hint{text-align:left}
+  html.is-mobile .install-hint{display:none}
   html[data-ereader-extension] .install-hint{display:none}
   /* "Meer zoals dit" — LSA content-based recommendations (obc.similar), a
      horizontally-scrolling strip of small covers (images lazy-load as you scroll). */
@@ -148,7 +165,14 @@
   {% endif %}
 {% endfor %}
 {% macro ereader_slot() -%}
-<div class="ereader-slot"><a class="install-hint" href="/extensie">Zet dit e-book met één klik op je e-reader</a></div>
+<div class="ereader-slot"><div class="install-hint">
+  <div class="via">naar je e-reader</div>
+  <span class="for-other">Met Chrome of Edge zet je dit e-book er in één klik op. <a href="/extensie">Hoe werkt dat?&nbsp;→</a></span>
+  <div class="for-chrome"><a class="install-btn" href="{{ store_urls.chrome }}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Toevoegen aan Chrome</a>
+    <p class="install-note">Gratis. Daarna zet je e-books in één klik op je e-reader.</p></div>
+  <div class="for-edge"><a class="install-btn" href="{{ store_urls.edge }}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Toevoegen aan Edge</a>
+    <p class="install-note">Gratis. Daarna zet je e-books in één klik op je e-reader.</p></div>
+</div></div>
 {%- endmacro %}
 <main>
   <a class="back" href="javascript:history.back()">‹ Terug</a>

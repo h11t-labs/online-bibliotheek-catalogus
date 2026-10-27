@@ -204,6 +204,13 @@ except Exception:
     APP_VERSION = "dev"
 _templates.env.globals["app_version"] = APP_VERSION
 
+# Where the e-reader extension is installed from, per store. The stores have not
+# approved the listing yet, so both point at the steps on /extensie for now; the day
+# a listing goes live its URL goes here and nowhere else (book.html's invitation and
+# extensie.html's buttons both read these).
+STORE_URLS = {"chrome": "/extensie#installeren", "edge": "/extensie#installeren"}
+_templates.env.globals["store_urls"] = STORE_URLS
+
 
 # --------------------------------------------------------------------------- #
 # app + connection
@@ -586,6 +593,15 @@ def favicon():
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon_ico():
     return FileResponse(_STATIC / "favicon.svg", media_type="image/svg+xml")
+
+
+# One small script, loaded by base.html: which browser this is, as a class on <html>
+# (static/browser.js). Versioned in the URL (?v=app_version), so it can be cached for
+# a day without a changed script getting stuck behind the old one.
+@app.get("/browser.js", include_in_schema=False)
+def browser_js():
+    return FileResponse(_STATIC / "browser.js", media_type="text/javascript",
+                        headers={"Cache-Control": "public, max-age=86400"})
 
 
 # How many covers a browse landing page shows. It is an entry point, not a

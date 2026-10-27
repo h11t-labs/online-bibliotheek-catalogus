@@ -13,11 +13,12 @@
   .prose li{margin:5px 0}
   .prose code{font:.9em ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg-soft);
     border:1px solid var(--line);border-radius:4px;padding:.1em .35em}
-  /* The store buttons are placeholders until the stores have approved the
-     extension: visibly present but inert, so nobody ships this page thinking
-     the links are already there. They get an href the day the listings go live. */
+  /* The store buttons are real links (store_urls in app.py): to the listings once
+     the stores have approved the extension, to the steps below until then. Inside
+     .prose a link is accent-coloured and dotted, which a button must not inherit. */
   .stores{display:flex;flex-wrap:wrap;gap:10px;margin:4px 0 8px}
-  .stores .btn[aria-disabled]{opacity:.5;cursor:default}
+  .prose a.btn{color:var(--accent-ink);text-decoration:none}
+  .prose a.btn.ghost{color:var(--ink)}
   .soon{font-size:13.5px;color:var(--ink-soft);margin:0 0 18px}
   .note{margin-top:20px;font-size:13.5px;color:var(--ink-soft);
     border-top:1px solid var(--line);padding-top:14px}
@@ -52,12 +53,35 @@
     </ul>
 
     <h2 id="installeren">Installeren</h2>
-    <div class="stores">
-      <span class="btn ghost" aria-disabled="true">Chrome Web Store</span>
-      <span class="btn ghost" aria-disabled="true">Edge Add-ons</span>
+    {# One sentence and the buttons for the browser at hand (browser.js puts the
+       class on <html>; the .for-* rules are in base.html). The neutral version is
+       the default: another browser, a phone, and without JavaScript. #}
+    <div class="for-other">
+      <p>De extensie werkt in Chrome en Edge op een computer; alleen die twee kunnen een
+        bestand rechtstreeks op je e-reader zetten. In Safari, Firefox en op een telefoon
+        lukt dat niet. Open deze pagina in Chrome of Edge, of installeer daar vanuit de
+        winkel:</p>
+      <div class="stores">
+        <a class="btn ghost" href="{{ store_urls.chrome }}">Chrome Web Store</a>
+        <a class="btn ghost" href="{{ store_urls.edge }}">Edge Add-ons</a>
+      </div>
     </div>
-    <p class="soon">De extensie komt in de Chrome Web Store en in Edge Add-ons. Zodra die
-      akkoord zijn, werken deze knoppen en is de weg hieronder niet meer nodig.</p>
+    <div class="for-chrome">
+      <p>Je gebruikt Chrome; daar werkt de extensie in.</p>
+      <div class="stores">
+        <a class="btn" href="{{ store_urls.chrome }}">Toevoegen aan Chrome</a>
+        <a class="btn ghost" href="{{ store_urls.edge }}">Voor Edge: Edge Add-ons</a>
+      </div>
+    </div>
+    <div class="for-edge">
+      <p>Je gebruikt Edge; daar werkt de extensie in.</p>
+      <div class="stores">
+        <a class="btn" href="{{ store_urls.edge }}">Toevoegen aan Edge</a>
+        <a class="btn ghost" href="{{ store_urls.chrome }}">Voor Chrome: Chrome Web Store</a>
+      </div>
+    </div>
+    <p class="soon">De extensie komt in de Chrome Web Store en in Edge Add-ons. Zolang die
+      nog niet akkoord zijn, brengen de knoppen je naar de stappen hieronder.</p>
     <h3>Tot die tijd: zelf laden uit de nieuwste release</h3>
     <ol>
       <li>Download de zip van de
