@@ -79,12 +79,16 @@
      invitation (one .install-hint element, so the extension can also remove it) and
      the extension fills the slot with its own button — never both at once. */
   .borrow-edition{display:flex;flex-direction:column;gap:6px}
-  .install-hint{display:block;font-size:13px;line-height:1.45;color:var(--ink);padding:2px 15px 0}
-  .install-hint a{display:block;margin-top:3px;color:var(--accent);
-    text-decoration:underline dotted;text-underline-offset:3px}
+  .install-hint{display:block;font-size:13px;line-height:1.5;color:var(--ink-soft)}
+  /* the same hairline label the extension puts above its own button, so the
+     invitation sits where that button will appear and reads as one family */
+  .install-hint .via{display:flex;align-items:center;gap:.6em;margin:8px 0 6px;
+    font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft)}
+  .install-hint .via::after{content:"";flex:1 1 auto;height:1px;background:var(--line)}
+  .install-hint a{color:var(--accent);text-decoration:underline dotted;text-underline-offset:3px;
+    white-space:nowrap}
   .install-hint a:hover{text-decoration-style:solid}
   .edition .ereader-slot{margin-top:10px}
-  .edition .install-hint{padding:0}
   html.is-mobile .install-hint{display:none}
   html[data-ereader-extension] .install-hint{display:none}
   /* "Meer zoals dit" — LSA content-based recommendations (obc.similar), a
@@ -155,9 +159,10 @@
 {% endfor %}
 {% macro ereader_slot() -%}
 <div class="ereader-slot"><div class="install-hint">
-  <span class="for-other">Met Chrome of Edge zet je dit e-book met één klik op je e-reader. <a href="/extensie">Hoe werkt dat?&nbsp;→</a></span>
-  <span class="for-chrome">Zet dit e-book met één klik op je e-reader. <a href="{{ store_urls.chrome }}">Installeer uit de Chrome Web Store&nbsp;→</a></span>
-  <span class="for-edge">Zet dit e-book met één klik op je e-reader. <a href="{{ store_urls.edge }}">Installeer uit Edge Add-ons&nbsp;→</a></span>
+  <div class="via">naar je e-reader</div>
+  <span class="for-other">Met Chrome of Edge zet je dit e-book er in één klik op. <a href="/extensie">Hoe werkt dat?&nbsp;→</a></span>
+  <span class="for-chrome">Met de extensie voor Chrome zet je dit e-book er in één klik op. <a href="{{ store_urls.chrome }}">Installeren&nbsp;→</a></span>
+  <span class="for-edge">Met de extensie voor Edge zet je dit e-book er in één klik op. <a href="{{ store_urls.edge }}">Installeren&nbsp;→</a></span>
 </div></div>
 {%- endmacro %}
 <main>

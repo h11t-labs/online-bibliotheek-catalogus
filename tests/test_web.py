@@ -261,12 +261,12 @@ def test_stats_links_to_the_real_pages(client):
 # the invitation under the borrow button: the neutral wording is what the HTML
 # carries by default (no JavaScript, a browser that is neither Chrome nor Edge); the
 # Chrome and Edge wordings sit next to it and the stylesheet picks one
-HINT = ('<span class="for-other">Met Chrome of Edge zet je dit e-book met één klik op je '
-        'e-reader. <a href="/extensie">Hoe werkt dat?&nbsp;→</a></span>')
-HINT_CHROME = ('<span class="for-chrome">Zet dit e-book met één klik op je e-reader. '
-               '<a href="/extensie#installeren">Installeer uit de Chrome Web Store&nbsp;→</a></span>')
-HINT_EDGE = ('<span class="for-edge">Zet dit e-book met één klik op je e-reader. '
-             '<a href="/extensie#installeren">Installeer uit Edge Add-ons&nbsp;→</a></span>')
+HINT = ('<span class="for-other">Met Chrome of Edge zet je dit e-book er in één klik op. '
+        '<a href="/extensie">Hoe werkt dat?&nbsp;→</a></span>')
+HINT_CHROME = ('<span class="for-chrome">Met de extensie voor Chrome zet je dit e-book er in één klik op. '
+               '<a href="/extensie#installeren">Installeren&nbsp;→</a></span>')
+HINT_EDGE = ('<span class="for-edge">Met de extensie voor Edge zet je dit e-book er in één klik op. '
+             '<a href="/extensie#installeren">Installeren&nbsp;→</a></span>')
 
 
 def _client_over(tmp_path, monkeypatch, records):
@@ -314,6 +314,7 @@ def test_ebook_edition_carries_its_ppn_and_an_ereader_slot(client):
     assert body.count('class="install-hint"') == 1
     hint = body[body.index('<div class="install-hint">'):body.index("</div></div>", slot)]
     assert HINT in hint and HINT_CHROME in hint and HINT_EDGE in hint
+    assert '<div class="via">naar je e-reader</div>' in hint
     # and the rules that hide the invitation once the extension announces itself,
     # and on a phone, where installing is not possible
     assert "html[data-ereader-extension] .install-hint{display:none}" in body
