@@ -264,9 +264,9 @@ def test_stats_links_to_the_real_pages(client):
 HINT = ('<span class="for-other">Met Chrome of Edge zet je dit e-book met één klik op je '
         'e-reader. <a href="/extensie">Hoe werkt dat?&nbsp;→</a></span>')
 HINT_CHROME = ('<span class="for-chrome">Zet dit e-book met één klik op je e-reader. '
-               '<a href="/extensie#installeren">Installeer de extensie uit de Chrome Web Store&nbsp;→</a></span>')
+               '<a href="/extensie#installeren">Installeer uit de Chrome Web Store&nbsp;→</a></span>')
 HINT_EDGE = ('<span class="for-edge">Zet dit e-book met één klik op je e-reader. '
-             '<a href="/extensie#installeren">Installeer de extensie uit Edge Add-ons&nbsp;→</a></span>')
+             '<a href="/extensie#installeren">Installeer uit Edge Add-ons&nbsp;→</a></span>')
 
 
 def _client_over(tmp_path, monkeypatch, records):
@@ -473,6 +473,8 @@ def test_about_page(client):
     r = client.get("/over")
     assert r.status_code == 200
     assert "Over deze catalogus" in r.text
+    # the menu has no item for the extension; the About page is where it is found
+    assert 'href="/extensie"' in r.text
 
 
 def test_theme_switcher_present(client):
